@@ -50,6 +50,13 @@ export function createModule(subjectId, payload) {
   });
 }
 
+export function updateModule(moduleId, payload) {
+  return request(`/modules/${moduleId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
 export function createNoteGroup(moduleId, payload) {
   return request(`/modules/${moduleId}/note-groups`, {
     method: "POST",
@@ -180,6 +187,14 @@ export function listReviewQuestionCards(noteGroupId, mode, limit) {
     params.set("limit", String(limit));
   }
   return request(`/note-groups/${noteGroupId}/question-cards/review?${params.toString()}`);
+}
+
+export function listModuleReviewQuestionCards(moduleId, mode, limit) {
+  const params = new URLSearchParams({ mode });
+  if (limit) {
+    params.set("limit", String(limit));
+  }
+  return request(`/modules/${moduleId}/question-cards/review?${params.toString()}`);
 }
 
 export function createQuestionCard(noteGroupId, payload) {

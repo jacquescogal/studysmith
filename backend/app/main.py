@@ -42,6 +42,7 @@ from app.schemas import (
     JobOut,
     ModuleCreate,
     ModuleOut,
+    ModuleUpdate,
     NoteGroupCreate,
     NoteGroupOut,
     NoteGroupFinalizeRequest,
@@ -213,6 +214,30 @@ def create_module(payload: ModuleCreate, db: Session = Depends(get_db)):
     raise HTTPException(
         status_code=400, detail="Use /subjects/{subject_id}/modules instead"
     )
+
+
+@app.put("/modules/{module_id}", response_model=ModuleOut)
+def update_module(module_id: str, payload: ModuleUpdate, db: Session = Depends(get_db)):
+    module = db.get(Module, module_id)
+    if not module:
+        raise HTTPException(status_code=404, detail="Module not found")
+    if payload.title is None and payload.description is None:
+        raise HTTPException(status_code=400, detail="Provide fields to update")
+    if payload.title is not None:
+        title = payload.title.strip()
+        if not title:
+            raise HTTPException(status_code=400, detail="Title cannot be empty")
+        module.title = title
+    if payload.description is not None:
+        description = payload.description.strip()
+        module.description = description or None
+    try:
+        db.commit()
+        db.refresh(module)
+        return module
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Module title must be unique")
 
 
 @app.post("/modules/{module_id}/note-groups", response_model=NoteGroupOut)
@@ -741,6 +766,38 @@ def list_review_question_cards(
         raise HTTPException(status_code=404, detail="Note group not found")
     now = datetime.now(timezone.utc)
     query = db.query(QuestionCard).filter(QuestionCard.note_group_id == note_group_id)
+    if mode == "due":
+        query = query.filter(or_(QuestionCard.due_at <= now, QuestionCard.due_at.is_(None)))
+    elif mode == "queue":
+        pass
+    elif mode == "all":
+        pass
+    else:
+        raise HTTPException(status_code=400, detail="Invalid review mode")
+
+    query = query.order_by(QuestionCard.due_at.asc())
+    if mode == "queue":
+        query = query.limit(limit)
+    cards = query.all()
+    return {"question_cards": [_serialize_question_card(card) for card in cards]}
+
+
+@app.get("/modules/{module_id}/question-cards/review", response_model=QuestionCardList)
+def list_module_review_question_cards(
+    module_id: str,
+    mode: str = Query(default="due"),
+    limit: int = Query(default=10, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    module = db.get(Module, module_id)
+    if not module:
+        raise HTTPException(status_code=404, detail="Module not found")
+    now = datetime.now(timezone.utc)
+    query = (
+        db.query(QuestionCard)
+        .join(NoteGroup, QuestionCard.note_group_id == NoteGroup.id)
+        .filter(NoteGroup.module_id == module_id)
+    )
     if mode == "due":
         query = query.filter(or_(QuestionCard.due_at <= now, QuestionCard.due_at.is_(None)))
     elif mode == "queue":

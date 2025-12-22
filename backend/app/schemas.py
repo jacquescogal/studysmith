@@ -23,6 +23,11 @@ class ModuleCreate(BaseModel):
     description: Optional[str] = None
 
 
+class ModuleUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+
+
 class ModuleOut(BaseModel):
     id: str
     subject_id: str

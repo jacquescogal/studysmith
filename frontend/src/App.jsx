@@ -16,6 +16,7 @@ import {
   getJob,
   getNoteGroup,
   getTitleSuggestions,
+  listModuleReviewQuestionCards,
   listModules,
   listNoteGroups,
   listQuestionCards,
@@ -28,7 +29,8 @@ import {
   suggestTopicChips,
   updateNoteGroupTitle,
   updateQuestionCard,
-  updateStudyCard
+  updateStudyCard,
+  updateModule
 } from "./api";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -59,8 +61,22 @@ export default function App() {
   const [selectedModuleId, setSelectedModuleId] = useState("");
   const [newModuleTitle, setNewModuleTitle] = useState("");
   const [newModuleDescription, setNewModuleDescription] = useState("");
+  const [isModuleMetadataOpen, setIsModuleMetadataOpen] = useState(false);
+  const [moduleTitleDraft, setModuleTitleDraft] = useState("");
+  const [moduleDescriptionDraft, setModuleDescriptionDraft] = useState("");
+  const [moduleMetadataSaving, setModuleMetadataSaving] = useState(false);
+  const [moduleMetadataError, setModuleMetadataError] = useState("");
 
   const [noteGroups, setNoteGroups] = useState([]);
+  const [moduleNoteGroupStats, setModuleNoteGroupStats] = useState([]);
+  const [moduleStats, setModuleStats] = useState({
+    studyCount: 0,
+    questionCount: 0,
+    dueCount: 0,
+    staleCount: 0
+  });
+  const [moduleStatsLoading, setModuleStatsLoading] = useState(false);
+  const [moduleStatsError, setModuleStatsError] = useState("");
   const [selectedNoteGroupId, setSelectedNoteGroupId] = useState("");
   const [noteGroupMode, setNoteGroupMode] = useState("overview");
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -115,6 +131,7 @@ export default function App() {
   const [reviewQueue, setReviewQueue] = useState([]);
   const [reviewIndex, setReviewIndex] = useState(0);
   const [reviewMode, setReviewMode] = useState("due");
+  const [reviewScope, setReviewScope] = useState("note-group");
   const [reviewCount, setReviewCount] = useState(10);
   const [reviewError, setReviewError] = useState("");
   const [reviewAnswer, setReviewAnswer] = useState([]);
@@ -169,15 +186,18 @@ export default function App() {
     [noteGroups, selectedNoteGroupId]
   );
 
-  const noteGroupStats = useMemo(() => {
-    const now = Date.now();
-    const dueCount = questionCards.filter((card) => {
+  const getDueCount = (cards, now = Date.now()) =>
+    cards.filter((card) => {
       if (!card.due_at) {
         return true;
       }
       const dueTime = new Date(card.due_at).getTime();
       return Number.isNaN(dueTime) ? true : dueTime <= now;
     }).length;
+
+  const noteGroupStats = useMemo(() => {
+    const now = Date.now();
+    const dueCount = getDueCount(questionCards, now);
     const staleCount = questionCards.filter((card) => card.stale).length;
     return {
       studyCount: studyCards.length,
@@ -203,6 +223,24 @@ export default function App() {
       })),
     [noteGroups]
   );
+  const moduleNoteGroupStatsById = useMemo(() => {
+    const map = new Map();
+    moduleNoteGroupStats.forEach((group) => {
+      map.set(group.id, group);
+    });
+    return map;
+  }, [moduleNoteGroupStats]);
+  const resolveNoteGroupLabel = (noteGroupId) => {
+    if (!noteGroupId) {
+      return "";
+    }
+    const statsEntry = moduleNoteGroupStatsById.get(noteGroupId);
+    if (statsEntry) {
+      return statsEntry.title;
+    }
+    const group = noteGroups.find((item) => item.id === noteGroupId);
+    return group?.title || noteGroupId.slice(0, 8);
+  };
 
   const newChipDisplay = useMemo(() => {
     const merged = [...chipSuggestionNew, ...selectedNewChipLabels];
@@ -252,6 +290,7 @@ export default function App() {
       setChipFilterIds([]);
       return;
     }
+    setChipFilterIds([]);
     listTopicChips(selectedModuleId)
       .then((data) => setTopicChips(data))
       .catch((error) => setSidebarError(error.message));
@@ -266,14 +305,97 @@ export default function App() {
     listNoteGroups(selectedModuleId, chipFilterIds)
       .then((data) => {
         setNoteGroups(data);
-        if (!routeNoteGroupId) {
-          if (!data.some((group) => group.id === selectedNoteGroupId)) {
-            setSelectedNoteGroupId(data[0]?.id || "");
-          }
+        if (
+          !routeNoteGroupId &&
+          selectedNoteGroupId &&
+          !data.some((group) => group.id === selectedNoteGroupId)
+        ) {
+          setSelectedNoteGroupId("");
         }
       })
       .catch((error) => setSidebarError(error.message));
   }, [selectedModuleId, chipFilterIds, routeNoteGroupId, selectedNoteGroupId]);
+
+  useEffect(() => {
+    if (!selectedModuleId || selectedNoteGroupId || noteGroupMode === "create") {
+      setModuleNoteGroupStats([]);
+      setModuleStats({
+        studyCount: 0,
+        questionCount: 0,
+        dueCount: 0,
+        staleCount: 0
+      });
+      setModuleStatsError("");
+      setModuleStatsLoading(false);
+      return;
+    }
+    if (noteGroups.length === 0) {
+      setModuleNoteGroupStats([]);
+      setModuleStats({
+        studyCount: 0,
+        questionCount: 0,
+        dueCount: 0,
+        staleCount: 0
+      });
+      setModuleStatsError("");
+      setModuleStatsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    const loadStats = async () => {
+      setModuleStatsLoading(true);
+      setModuleStatsError("");
+      const now = Date.now();
+      try {
+        const stats = await Promise.all(
+          noteGroups.map(async (group) => {
+            const [studyResponse, questionResponse] = await Promise.all([
+              listStudyCards(group.id),
+              listQuestionCards(group.id)
+            ]);
+            const studyCount = studyResponse.study_cards?.length || 0;
+            const questionList = questionResponse.question_cards || [];
+            return {
+              id: group.id,
+              title: group.title || "Untitled note group",
+              studyCount,
+              questionCount: questionList.length,
+              dueCount: getDueCount(questionList, now),
+              staleCount: questionList.filter((card) => card.stale).length
+            };
+          })
+        );
+        if (cancelled) {
+          return;
+        }
+        setModuleNoteGroupStats(stats);
+        setModuleStats(
+          stats.reduce(
+            (acc, group) => ({
+              studyCount: acc.studyCount + group.studyCount,
+              questionCount: acc.questionCount + group.questionCount,
+              dueCount: acc.dueCount + group.dueCount,
+              staleCount: acc.staleCount + group.staleCount
+            }),
+            { studyCount: 0, questionCount: 0, dueCount: 0, staleCount: 0 }
+          )
+        );
+      } catch (error) {
+        if (!cancelled) {
+          setModuleStatsError(error.message || "Failed to load module stats");
+        }
+      } finally {
+        if (!cancelled) {
+          setModuleStatsLoading(false);
+        }
+      }
+    };
+
+    loadStats();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedModuleId, selectedNoteGroupId, noteGroupMode, noteGroups]);
 
   useEffect(() => {
     if (!selectedNoteGroupId) {
@@ -308,7 +430,9 @@ export default function App() {
     setChatError("");
     setIsChatOpen(false);
     setIsMetadataOpen(false);
+    setIsModuleMetadataOpen(false);
     setMetadataError("");
+    setModuleMetadataError("");
   }, [selectedNoteGroupId, selectedModuleId]);
 
   useEffect(() => {
@@ -325,7 +449,8 @@ export default function App() {
     setIsReviewing(false);
     setReviewFeedback(null);
     setReviewSummary(null);
-  }, [selectedNoteGroupId]);
+    setReviewScope("note-group");
+  }, [selectedNoteGroupId, selectedModuleId]);
 
   useEffect(() => {
     if (routeNoteGroupId && routeNoteGroupId !== selectedNoteGroupId) {
@@ -380,6 +505,31 @@ export default function App() {
     throw new Error("Job timed out");
   };
 
+  const handleSelectSubject = (option) => {
+    const nextId = option ? option.value : "";
+    setSelectedSubjectId(nextId);
+    setSelectedModuleId("");
+    setSelectedNoteGroupId("");
+    setNoteGroupMode("overview");
+    setReviewSummary(null);
+    setIsChatOpen(false);
+    setIsMetadataOpen(false);
+    setIsModuleMetadataOpen(false);
+    navigate("/");
+  };
+
+  const handleSelectModule = (option) => {
+    const nextId = option ? option.value : "";
+    setSelectedModuleId(nextId);
+    setSelectedNoteGroupId("");
+    setNoteGroupMode("overview");
+    setReviewSummary(null);
+    setIsChatOpen(false);
+    setIsMetadataOpen(false);
+    setIsModuleMetadataOpen(false);
+    navigate("/");
+  };
+
   const handleCreateSubject = async () => {
     if (!newSubjectTitle.trim()) {
       return;
@@ -392,6 +542,14 @@ export default function App() {
       });
       setSubjects((prev) => [subject, ...prev]);
       setSelectedSubjectId(subject.id);
+      setSelectedModuleId("");
+      setSelectedNoteGroupId("");
+      setNoteGroupMode("overview");
+      setReviewSummary(null);
+      setIsChatOpen(false);
+      setIsMetadataOpen(false);
+      setIsModuleMetadataOpen(false);
+      navigate("/");
       setNewSubjectTitle("");
       setNewSubjectDescription("");
     } catch (error) {
@@ -411,6 +569,13 @@ export default function App() {
       });
       setModules((prev) => [module, ...prev]);
       setSelectedModuleId(module.id);
+      setSelectedNoteGroupId("");
+      setNoteGroupMode("overview");
+      setReviewSummary(null);
+      setIsChatOpen(false);
+      setIsMetadataOpen(false);
+      setIsModuleMetadataOpen(false);
+      navigate("/");
       setNewModuleTitle("");
       setNewModuleDescription("");
     } catch (error) {
@@ -418,22 +583,28 @@ export default function App() {
     }
   };
 
-  const handleSelectNoteGroup = (option) => {
-    const nextId = option ? option.value : "";
-    setSelectedNoteGroupId(nextId);
+  const navigateToNoteGroup = (noteGroupId, panelOverride = "") => {
+    setSelectedNoteGroupId(noteGroupId);
     setNoteGroupMode("overview");
     setReviewSummary(null);
     setIsChatOpen(false);
     setIsMetadataOpen(false);
-    if (!nextId) {
+    setIsModuleMetadataOpen(false);
+    if (!noteGroupId) {
       navigate("/");
       return;
     }
-    if (routePanel) {
-      navigate(`/note-groups/${nextId}/${routePanel}`);
+    const nextPanel = panelOverride || routePanel;
+    if (nextPanel) {
+      navigate(`/note-groups/${noteGroupId}/${nextPanel}`);
       return;
     }
     navigate("/");
+  };
+
+  const handleSelectNoteGroup = (option) => {
+    const nextId = option ? option.value : "";
+    navigateToNoteGroup(nextId);
   };
 
   const handleStartCreateNoteGroup = () => {
@@ -442,6 +613,7 @@ export default function App() {
     setReviewSummary(null);
     setIsChatOpen(false);
     setIsMetadataOpen(false);
+    setIsModuleMetadataOpen(false);
     navigate("/");
   };
 
@@ -616,6 +788,42 @@ export default function App() {
     }
   };
 
+  const openModuleMetadataModal = () => {
+    if (!selectedModuleId) {
+      return;
+    }
+    setModuleTitleDraft(selectedModule?.title || "");
+    setModuleDescriptionDraft(selectedModule?.description || "");
+    setModuleMetadataError("");
+    setIsModuleMetadataOpen(true);
+  };
+
+  const handleSaveModuleMetadata = async () => {
+    if (!selectedModuleId) {
+      return;
+    }
+    const trimmedTitle = moduleTitleDraft.trim();
+    if (!trimmedTitle) {
+      setModuleMetadataError("Title cannot be empty.");
+      return;
+    }
+    setModuleMetadataSaving(true);
+    setModuleMetadataError("");
+    try {
+      const updated = await updateModule(selectedModuleId, {
+        title: trimmedTitle,
+        description: moduleDescriptionDraft.trim() || null
+      });
+      setModules((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+      setModuleTitleDraft(updated.title || "");
+      setModuleDescriptionDraft(updated.description || "");
+    } catch (error) {
+      setModuleMetadataError(error.message || "Failed to update module");
+    } finally {
+      setModuleMetadataSaving(false);
+    }
+  };
+
   const openMetadataModal = () => {
     if (!selectedNoteGroupId) {
       return;
@@ -727,18 +935,30 @@ export default function App() {
     }
   };
 
-  const startReview = async (mode) => {
-    if (!selectedNoteGroupId) {
+  const startReview = async (mode, scope = "note-group") => {
+    if (scope === "module") {
+      if (!selectedModuleId) {
+        return;
+      }
+    } else if (!selectedNoteGroupId) {
       return;
     }
     setReviewError("");
     setReviewMode(mode);
+    setReviewScope(scope);
     try {
-      const response = await listReviewQuestionCards(
-        selectedNoteGroupId,
-        mode,
-        mode === "queue" ? Number(reviewCount) || 10 : undefined
-      );
+      const response =
+        scope === "module"
+          ? await listModuleReviewQuestionCards(
+              selectedModuleId,
+              mode,
+              mode === "queue" ? Number(reviewCount) || 10 : undefined
+            )
+          : await listReviewQuestionCards(
+              selectedNoteGroupId,
+              mode,
+              mode === "queue" ? Number(reviewCount) || 10 : undefined
+            );
       const cards = response.question_cards || [];
       if (cards.length === 0) {
         setReviewQueue([]);
@@ -819,6 +1039,7 @@ export default function App() {
     const accuracy = answered ? Math.round((reviewStats.correct / answered) * 100) : 0;
     const avgSeconds = answered ? (totalMs / answered / 1000).toFixed(1) : "0.0";
     setReviewSummary({
+      scope: reviewScope,
       mode: reviewMode,
       answered,
       total,
@@ -960,6 +1181,7 @@ export default function App() {
     setNoteGroupMode("overview");
     setIsChatOpen(false);
     setIsMetadataOpen(false);
+    setIsModuleMetadataOpen(false);
     navigate("/");
   };
 
@@ -969,6 +1191,7 @@ export default function App() {
     setNoteGroupMode("overview");
     setIsChatOpen(false);
     setIsMetadataOpen(false);
+    setIsModuleMetadataOpen(false);
     navigate("/");
   };
 
@@ -977,6 +1200,7 @@ export default function App() {
     setNoteGroupMode("overview");
     setIsChatOpen(false);
     setIsMetadataOpen(false);
+    setIsModuleMetadataOpen(false);
     navigate("/");
   };
 
@@ -996,6 +1220,9 @@ export default function App() {
               <>
                 <h2>Review summary</h2>
                 <div className="review-meta">
+                  <span className="pill">
+                    Scope: {reviewSummary.scope === "module" ? "Module" : "Note group"}
+                  </span>
                   <span className="pill">Mode: {reviewSummary.mode}</span>
                   <span className="pill">
                     Reviewed: {reviewSummary.answered} / {reviewSummary.total}
@@ -1023,9 +1250,17 @@ export default function App() {
               <>
                 <div className="review-meta">
                   <span className="pill">
+                    Scope: {reviewScope === "module" ? "Module" : "Note group"}
+                  </span>
+                  <span className="pill">
                     Card {reviewIndex + 1} / {reviewQueue.length}
                   </span>
                   <span className="pill">Mode: {reviewMode}</span>
+                  {reviewScope === "module" && currentReviewCard ? (
+                    <span className="pill">
+                      Note group: {resolveNoteGroupLabel(currentReviewCard.note_group_id)}
+                    </span>
+                  ) : null}
                   {currentReviewCard ? (
                     <span className="pill">Due: {formatDueAt(currentReviewCard.due_at)}</span>
                   ) : null}
@@ -1107,23 +1342,29 @@ export default function App() {
             <div className="chat-modal-header">
               <div>
                 <h2>Chat with your notes</h2>
-                <p className="muted">Ask about this module or the current note group.</p>
+                <p className="muted">
+                  {selectedNoteGroupId
+                    ? "Ask about this module or the current note group."
+                    : "Ask about this module and its note groups."}
+                </p>
               </div>
               <button className="button ghost" type="button" onClick={() => setIsChatOpen(false)}>
                 Close
               </button>
             </div>
-            <div className="results-meta">
-              <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={scopeToNoteGroup && Boolean(selectedNoteGroupId)}
-                  onChange={(event) => setScopeToNoteGroup(event.target.checked)}
-                  disabled={!selectedNoteGroupId}
-                />
-                Scope to current note group
-              </label>
-            </div>
+            {selectedNoteGroupId ? (
+              <div className="results-meta">
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={scopeToNoteGroup && Boolean(selectedNoteGroupId)}
+                    onChange={(event) => setScopeToNoteGroup(event.target.checked)}
+                    disabled={!selectedNoteGroupId}
+                  />
+                  Scope to current note group
+                </label>
+              </div>
+            ) : null}
             <div className="chat">
               {chatMessages.length === 0 ? (
                 <p className="empty">Ask a question to get answers from your study cards.</p>
@@ -1147,7 +1388,11 @@ export default function App() {
                 type="text"
                 value={chatInput}
                 onChange={(event) => setChatInput(event.target.value)}
-                placeholder="Ask a question about this module or note group..."
+                placeholder={
+                  selectedNoteGroupId
+                    ? "Ask a question about this module or note group..."
+                    : "Ask a question about this module..."
+                }
                 disabled={!selectedModuleId}
               />
               <button
@@ -1159,6 +1404,56 @@ export default function App() {
                 {chatLoading ? "Sending..." : "Send"}
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+      {isModuleMetadataOpen ? (
+        <div className="meta-overlay">
+          <div className="meta-modal">
+            <div className="meta-modal-header">
+              <div>
+                <h2>Edit module metadata</h2>
+                <p className="muted">Update the module title and description.</p>
+              </div>
+              <button
+                className="button ghost"
+                type="button"
+                onClick={() => setIsModuleMetadataOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="field">
+              <label htmlFor="module-title">Module title</label>
+              <input
+                id="module-title"
+                type="text"
+                value={moduleTitleDraft}
+                onChange={(event) => setModuleTitleDraft(event.target.value)}
+                placeholder="Enter a module title"
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="module-description">Module description</label>
+              <input
+                id="module-description"
+                type="text"
+                value={moduleDescriptionDraft}
+                onChange={(event) => setModuleDescriptionDraft(event.target.value)}
+                placeholder="Optional description"
+              />
+            </div>
+            <div className="button-row">
+              <button
+                className="button primary"
+                type="button"
+                onClick={handleSaveModuleMetadata}
+                disabled={moduleMetadataSaving || !moduleTitleDraft.trim()}
+              >
+                {moduleMetadataSaving ? "Saving..." : "Save module"}
+              </button>
+            </div>
+            {moduleMetadataError ? <p className="error">{moduleMetadataError}</p> : null}
           </div>
         </div>
       ) : null}
@@ -1244,7 +1539,7 @@ export default function App() {
             classNamePrefix="select"
             options={subjectOptions}
             value={subjectOptions.find((option) => option.value === selectedSubjectId) || null}
-            onChange={(option) => setSelectedSubjectId(option ? option.value : "")}
+            onChange={handleSelectSubject}
             placeholder="Search subjects"
             isClearable
             maxMenuHeight={220}
@@ -1282,7 +1577,7 @@ export default function App() {
             classNamePrefix="select"
             options={moduleOptions}
             value={moduleOptions.find((option) => option.value === selectedModuleId) || null}
-            onChange={(option) => setSelectedModuleId(option ? option.value : "")}
+            onChange={handleSelectModule}
             placeholder={selectedSubjectId ? "Search modules" : "Select a subject"}
             isDisabled={!selectedSubjectId}
             isClearable
@@ -1405,7 +1700,11 @@ export default function App() {
             <p className="subhead">
               {noteGroupMode === "create"
                 ? "Paste raw text, pick a title, select topic chips, then generate study cards in one workflow."
-                : "Manage your note group, review questions, and chat with your study cards."}
+                : selectedNoteGroupId
+                  ? "Manage your note group, review questions, and chat with your study cards."
+                  : selectedModuleId
+                    ? "Review question cards across note groups, edit module metadata, and chat with your module study cards."
+                    : "Pick a subject and module to get started."}
             </p>
           </div>
           <div className="status-card">
@@ -1611,12 +1910,177 @@ export default function App() {
         ) : (
           <>
             {!selectedNoteGroupId ? (
-              <section className="panel">
-                <h2>Select a note group</h2>
-                <p className="muted">
-                  Pick a note group from the sidebar or create a new one to get started.
-                </p>
-              </section>
+              !selectedModuleId ? (
+                <section className="panel">
+                  <h2>Select a module</h2>
+                  <p className="muted">
+                    Choose a module to see its note groups, review cards, and chat with your notes.
+                  </p>
+                </section>
+              ) : (
+                <>
+                  <section className="panel">
+                    <h2>{selectedModule?.title || "Module overview"}</h2>
+                    <p className="muted">
+                      {selectedModule?.description ||
+                        "Review across note groups and manage module details."}
+                    </p>
+                    <div className="stats-grid">
+                      <div className="stat-card">
+                        <p className="label">Note groups</p>
+                        <p className="value">{noteGroups.length}</p>
+                      </div>
+                      <div className="stat-card">
+                        <p className="label">Study cards</p>
+                        <p className="value">
+                          {moduleStatsLoading ? "..." : moduleStats.studyCount}
+                        </p>
+                      </div>
+                      <div className="stat-card">
+                        <p className="label">Question cards</p>
+                        <p className="value">
+                          {moduleStatsLoading ? "..." : moduleStats.questionCount}
+                        </p>
+                      </div>
+                      <div className="stat-card">
+                        <p className="label">Due now</p>
+                        <p className="value">
+                          {moduleStatsLoading ? "..." : moduleStats.dueCount}
+                        </p>
+                      </div>
+                    </div>
+                    {moduleStatsLoading ? (
+                      <p className="muted">Loading module stats...</p>
+                    ) : null}
+                    {moduleStatsError ? <p className="error">{moduleStatsError}</p> : null}
+                    <div className="button-row">
+                      <button
+                        className="button primary"
+                        type="button"
+                        onClick={() => setIsChatOpen(true)}
+                        disabled={!selectedModuleId || isReviewOverlayVisible}
+                      >
+                        Open chat
+                      </button>
+                      <button
+                        className="button ghost"
+                        type="button"
+                        onClick={openModuleMetadataModal}
+                        disabled={!selectedModuleId || isReviewOverlayVisible}
+                      >
+                        Edit module metadata
+                      </button>
+                    </div>
+                  </section>
+                  <section className="panel">
+                    <h2>Review question cards</h2>
+                    <div className="results-meta">
+                      <div className="field inline">
+                        <label htmlFor="module-review-count">Count</label>
+                        <input
+                          id="module-review-count"
+                          type="number"
+                          min="1"
+                          max="200"
+                          value={reviewCount}
+                          onChange={(event) => setReviewCount(event.target.value)}
+                          disabled={isReviewing}
+                        />
+                      </div>
+                      <button
+                        className="button primary"
+                        type="button"
+                        onClick={() => startReview("due", "module")}
+                        disabled={!selectedModuleId || isReviewing}
+                      >
+                        Review due
+                      </button>
+                      <button
+                        className="button primary"
+                        type="button"
+                        onClick={() => startReview("queue", "module")}
+                        disabled={!selectedModuleId || isReviewing}
+                      >
+                        Review next
+                      </button>
+                      <button
+                        className="button ghost"
+                        type="button"
+                        onClick={() => startReview("all", "module")}
+                        disabled={!selectedModuleId || isReviewing}
+                      >
+                        Review all
+                      </button>
+                    </div>
+                    {reviewError ? <p className="error">{reviewError}</p> : null}
+                    <p className="muted">
+                      Review sessions open in a modal so you can stay focused.
+                    </p>
+                  </section>
+                  <section className="panel">
+                    <h2>Note groups in this module</h2>
+                    {chipFilterIds.length ? (
+                      <p className="muted">Filtered by selected topic chips.</p>
+                    ) : null}
+                    {noteGroups.length === 0 ? (
+                      <p className="muted">No note groups yet.</p>
+                    ) : (
+                      <div className="cards">
+                        {noteGroups.map((group) => {
+                          const stats = moduleNoteGroupStatsById.get(group.id);
+                          return (
+                            <article key={group.id} className="card">
+                              <div className="card-header">
+                                <h3>{group.title || "Untitled note group"}</h3>
+                                <span className="mono">{group.id.slice(0, 8)}</span>
+                              </div>
+                              <div className="review-meta">
+                                <span className="pill">
+                                  Study cards: {stats ? stats.studyCount : "—"}
+                                </span>
+                                <span className="pill">
+                                  Questions: {stats ? stats.questionCount : "—"}
+                                </span>
+                                <span className="pill">
+                                  Due: {stats ? stats.dueCount : "—"}
+                                </span>
+                                {stats ? (
+                                  <span className="pill stale">
+                                    Stale: {stats.staleCount}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div className="button-row">
+                                <button
+                                  className="button ghost"
+                                  type="button"
+                                  onClick={() => navigateToNoteGroup(group.id)}
+                                >
+                                  Open overview
+                                </button>
+                                <button
+                                  className="button ghost"
+                                  type="button"
+                                  onClick={() => navigateToNoteGroup(group.id, "study-cards")}
+                                >
+                                  Study cards
+                                </button>
+                                <button
+                                  className="button ghost"
+                                  type="button"
+                                  onClick={() => navigateToNoteGroup(group.id, "question-cards")}
+                                >
+                                  Question cards
+                                </button>
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </section>
+                </>
+              )
             ) : (
               <>
                 {!isStudyPage && !isQuestionPage ? (
