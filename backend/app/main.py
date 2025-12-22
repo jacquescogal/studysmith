@@ -972,7 +972,7 @@ def chat(payload: ChatRequest, db: Session = Depends(get_db)):
 
     results = collection.query(
         query_embeddings=[query_embedding],
-        n_results=5,
+        n_results=20,
         where=where,
     )
     ids = results.get("ids", [[]])[0]
@@ -1022,5 +1022,14 @@ def chat(payload: ChatRequest, db: Session = Depends(get_db)):
             if role in {"user", "assistant"} and content and content.strip():
                 history.append({"role": role, "content": content.strip()})
 
-    answer = generate_chat_response(payload.message, context_blocks, history)
-    return {"answer": answer, "study_card_refs": filtered_ids}
+    response = generate_chat_response(
+        payload.message,
+        context_blocks,
+        history,
+        filtered_ids,
+    )
+    used_refs = response.get("used_ref_ids", [])
+    if not isinstance(used_refs, list):
+        used_refs = []
+    used_refs = [ref for ref in used_refs if ref in filtered_ids]
+    return {"answer": response.get("answer", ""), "study_card_refs": used_refs}

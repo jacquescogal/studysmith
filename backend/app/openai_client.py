@@ -32,7 +32,7 @@ QUESTION_SYSTEM_PROMPT = (
 CHAT_SYSTEM_PROMPT = (
     "You are a study assistant. Answer the user's question using only the provided "
     "study card context. If the answer is not in the context, say you do not know. "
-    "Be concise and factual."
+    "Be concise and factual. Return JSON only with keys: answer, used_ref_ids."
 )
 
 TITLE_SYSTEM_PROMPT = (
@@ -193,14 +193,17 @@ def generate_chat_response(
     question: str,
     context_blocks: List[str],
     history: Optional[List[dict]] = None,
-) -> str:
+    ref_ids: Optional[List[str]] = None,
+) -> dict:
     client_instance = _require_client()
     context = "\n\n".join(context_blocks)
+    id_list = ", ".join(ref_ids or [])
     user_prompt = (
         f"Question: {question}\n\n"
+        f"Available study_card_ids: [{id_list}]\n\n"
         "Context:\n"
         f"{context}\n\n"
-        "Answer:"
+        "Return JSON as { \"answer\": \"...\", \"used_ref_ids\": [\"...\"] }."
     )
     messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
     if history:
@@ -210,8 +213,14 @@ def generate_chat_response(
         model=settings.openai_model,
         messages=messages,
         temperature=0.2,
+        response_format={"type": "json_object"},
     )
-    return response.choices[0].message.content.strip()
+    payload = _parse_json(response.choices[0].message.content)
+    answer = payload.get("answer", "").strip()
+    used_refs = payload.get("used_ref_ids", [])
+    if not isinstance(used_refs, list):
+        used_refs = []
+    return {"answer": answer, "used_ref_ids": used_refs}
 
 
 def generate_note_group_title_suggestions(module_title: str, raw_text: str) -> List[str]:
