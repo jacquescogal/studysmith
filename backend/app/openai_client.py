@@ -45,6 +45,14 @@ TOPIC_CHIP_SYSTEM_PROMPT = (
     "Chips should be short noun phrases."
 )
 
+FORMATTED_TEXT_SYSTEM_PROMPT = (
+    "Format the raw study text into clean, readable markdown. "
+    "Use the study card list to define sections. "
+    "Each section must map to exactly one study_card_id. "
+    "Do not invent facts or add new content. "
+    "Return JSON only."
+)
+
 
 client = OpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
 
@@ -181,7 +189,11 @@ def generate_question_cards(
     return question_cards
 
 
-def generate_chat_response(question: str, context_blocks: List[str]) -> str:
+def generate_chat_response(
+    question: str,
+    context_blocks: List[str],
+    history: Optional[List[dict]] = None,
+) -> str:
     client_instance = _require_client()
     context = "\n\n".join(context_blocks)
     user_prompt = (
@@ -190,12 +202,13 @@ def generate_chat_response(question: str, context_blocks: List[str]) -> str:
         f"{context}\n\n"
         "Answer:"
     )
+    messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
+    if history:
+        messages.extend(history)
+    messages.append({"role": "user", "content": user_prompt})
     response = client_instance.chat.completions.create(
         model=settings.openai_model,
-        messages=[
-            {"role": "system", "content": CHAT_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
+        messages=messages,
         temperature=0.2,
     )
     return response.choices[0].message.content.strip()
@@ -251,3 +264,31 @@ def suggest_topic_chips(module_chip_pool: List[dict], content: str) -> dict:
     if not isinstance(new_chips, list):
         new_chips = []
     return {"attach_chip_ids": attach_chip_ids, "new_chips": new_chips}
+
+
+def generate_formatted_sections(raw_text: str, study_cards: List[dict]) -> List[dict]:
+    client_instance = _require_client()
+    user_prompt = (
+        "Raw text:\n"
+        f"{raw_text}\n\n"
+        "Study cards (use these to define sections and map study_card_id values):\n"
+        f"{study_cards}\n\n"
+        "Output JSON as { \"sections\": [ { \"study_card_id\": \"...\", \"title\": \"...\", "
+        "\"content\": \"...\" } ] }."
+    )
+
+    response = client_instance.chat.completions.create(
+        model=settings.openai_model,
+        messages=[
+            {"role": "system", "content": FORMATTED_TEXT_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.2,
+        response_format={"type": "json_object"},
+    )
+
+    payload = _parse_json(response.choices[0].message.content)
+    sections = payload.get("sections", [])
+    if not isinstance(sections, list):
+        raise ValueError("OpenAI response did not include sections list")
+    return sections

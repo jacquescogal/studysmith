@@ -32,10 +32,12 @@ from app.fsrs_utils import initialize_question_card, review_question_card
 from app.openai_client import (
     embed_texts,
     generate_chat_response,
+    generate_formatted_sections,
     generate_note_group_title_suggestions,
     generate_study_cards_with_context,
     suggest_topic_chips,
 )
+from app.text_formatter import build_formatted_sections, sections_to_markdown
 from app.schemas import (
     ChatRequest,
     ChatResponse,
@@ -419,6 +421,19 @@ def finalize_note_group(
             raise HTTPException(status_code=422, detail="Generated study cards were empty")
 
         db.flush()
+        study_card_context = [
+            {"id": card.id, "title": card.title, "content": card.content}
+            for card in study_cards
+        ]
+        raw_sections = []
+        try:
+            raw_sections = generate_formatted_sections(raw_text, study_card_context)
+        except Exception:
+            raw_sections = []
+        formatted_sections = build_formatted_sections(raw_sections, study_card_context)
+        note_group.formatted_sections_json = json.dumps(formatted_sections)
+        note_group.formatted_text = sections_to_markdown(formatted_sections)
+
         embeddings = embed_texts([card.content for card in study_cards])
         ids = [card.id for card in study_cards]
         collection.upsert(
@@ -586,6 +601,14 @@ def list_study_cards(note_group_id: str, db: Session = Depends(get_db)):
         .all()
     )
     return {"study_cards": cards}
+
+
+@app.get("/study-cards/{study_card_id}", response_model=StudyCardOut)
+def get_study_card(study_card_id: str, db: Session = Depends(get_db)):
+    card = db.get(StudyCard, study_card_id)
+    if not card:
+        raise HTTPException(status_code=404, detail="Study card not found")
+    return card
 
 
 @app.post("/note-groups/{note_group_id}/study-cards", response_model=StudyCardOut)
@@ -976,11 +999,28 @@ def chat(payload: ChatRequest, db: Session = Depends(get_db)):
     card_by_id = {card.id: card for card in study_cards}
 
     context_blocks = []
+    question_context = []
+    if payload.question_prompt:
+        question_context.append(f"Prompt: {payload.question_prompt}")
+    if payload.user_answer:
+        question_context.append(f"Your answer: {payload.user_answer}")
+    if payload.correct_answer:
+        question_context.append(f"Correct answer: {payload.correct_answer}")
+    if question_context:
+        context_blocks.append("[Question Context] " + " | ".join(question_context))
     for card_id, doc in filtered:
         card = card_by_id.get(card_id)
         title = card.title if card and card.title else "Untitled"
         snippet = doc.strip()
         context_blocks.append(f"[{title} | {card_id}] {snippet}")
 
-    answer = generate_chat_response(payload.message, context_blocks)
+    history = []
+    if payload.history:
+        for item in payload.history[-10:]:
+            role = getattr(item, "role", None)
+            content = getattr(item, "content", None)
+            if role in {"user", "assistant"} and content and content.strip():
+                history.append({"role": role, "content": content.strip()})
+
+    answer = generate_chat_response(payload.message, context_blocks, history)
     return {"answer": answer, "study_card_refs": filtered_ids}

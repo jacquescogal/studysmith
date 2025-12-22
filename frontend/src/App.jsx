@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Select from "react-select";
 import {
@@ -15,6 +15,7 @@ import {
   generateQuestionCards,
   getJob,
   getNoteGroup,
+  getStudyCard,
   getTitleSuggestions,
   listModuleReviewQuestionCards,
   listModules,
@@ -47,6 +48,96 @@ const parseIndices = (text) =>
     .map((value) => Number(value.trim()))
     .filter((value) => Number.isInteger(value) && value >= 0);
 
+const renderInlineText = (text) => {
+  const segments = [];
+  const regex = /\*\*(.+?)\*\*/g;
+  let lastIndex = 0;
+  let match;
+  let keyIndex = 0;
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push(text.slice(lastIndex, match.index));
+    }
+    segments.push(
+      <strong key={`strong-${keyIndex}`}>{match[1]}</strong>
+    );
+    keyIndex += 1;
+    lastIndex = regex.lastIndex;
+  }
+  if (lastIndex < text.length) {
+    segments.push(text.slice(lastIndex));
+  }
+  return segments;
+};
+
+const renderMarkdownBlocks = (content) => {
+  if (!content) {
+    return null;
+  }
+  const elements = [];
+  const lines = content.split("\n");
+  let paragraphLines = [];
+  let listItems = [];
+  let blockIndex = 0;
+
+  const flushParagraph = () => {
+    if (paragraphLines.length === 0) {
+      return;
+    }
+    const text = paragraphLines.join(" ").trim();
+    elements.push(
+      <p key={`paragraph-${blockIndex}`}>{renderInlineText(text)}</p>
+    );
+    blockIndex += 1;
+    paragraphLines = [];
+  };
+
+  const flushList = () => {
+    if (listItems.length === 0) {
+      return;
+    }
+    elements.push(
+      <ul key={`list-${blockIndex}`}>
+        {listItems.map((item, index) => (
+          <li key={`list-item-${blockIndex}-${index}`}>{renderInlineText(item)}</li>
+        ))}
+      </ul>
+    );
+    blockIndex += 1;
+    listItems = [];
+  };
+
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      flushParagraph();
+      flushList();
+      return;
+    }
+    if (trimmed.startsWith("- ")) {
+      flushParagraph();
+      listItems.push(trimmed.slice(2).trim());
+      return;
+    }
+    flushList();
+    paragraphLines.push(trimmed);
+  });
+
+  flushParagraph();
+  flushList();
+  return elements;
+};
+
+const formatAnswerLabels = (card, indices) => {
+  if (!card || !Array.isArray(indices) || indices.length === 0) {
+    return "No answer";
+  }
+  const labels = indices
+    .map((index) => card.options?.[index])
+    .filter((option) => Boolean(option));
+  return labels.length ? labels.join(", ") : "No answer";
+};
+
 const selectStyles = {
   menuPortal: (base) => ({ ...base, zIndex: 9999 })
 };
@@ -66,6 +157,7 @@ export default function App() {
   const [moduleDescriptionDraft, setModuleDescriptionDraft] = useState("");
   const [moduleMetadataSaving, setModuleMetadataSaving] = useState(false);
   const [moduleMetadataError, setModuleMetadataError] = useState("");
+  const [moduleDueCounts, setModuleDueCounts] = useState({});
 
   const [noteGroups, setNoteGroups] = useState([]);
   const [moduleNoteGroupStats, setModuleNoteGroupStats] = useState([]);
@@ -79,6 +171,8 @@ export default function App() {
   const [moduleStatsError, setModuleStatsError] = useState("");
   const [selectedNoteGroupId, setSelectedNoteGroupId] = useState("");
   const [noteGroupMode, setNoteGroupMode] = useState("overview");
+  const [formattedSections, setFormattedSections] = useState([]);
+  const [isReadingOpen, setIsReadingOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isMetadataOpen, setIsMetadataOpen] = useState(false);
   const [metadataTitleDraft, setMetadataTitleDraft] = useState("");
@@ -146,6 +240,15 @@ export default function App() {
     totalMs: 0
   });
   const [reviewSummary, setReviewSummary] = useState(null);
+  const [reviewChatMessages, setReviewChatMessages] = useState([]);
+  const [reviewChatInput, setReviewChatInput] = useState("");
+  const [reviewChatError, setReviewChatError] = useState("");
+  const [reviewChatLoading, setReviewChatLoading] = useState(false);
+  const [reviewChatView, setReviewChatView] = useState("chat");
+  const [reviewChatCardId, setReviewChatCardId] = useState("");
+  const [reviewChatCardCache, setReviewChatCardCache] = useState({});
+  const [reviewChatCardLoading, setReviewChatCardLoading] = useState(false);
+  const [reviewChatCardError, setReviewChatCardError] = useState("");
   const [newQuestionType, setNewQuestionType] = useState("mcq");
   const [newQuestionPrompt, setNewQuestionPrompt] = useState("");
   const [newQuestionOptions, setNewQuestionOptions] = useState("");
@@ -165,6 +268,14 @@ export default function App() {
   const [chatError, setChatError] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [scopeToNoteGroup, setScopeToNoteGroup] = useState(false);
+  const [chatView, setChatView] = useState("chat");
+  const [chatCardId, setChatCardId] = useState("");
+  const [chatCardCache, setChatCardCache] = useState({});
+  const [chatCardLoading, setChatCardLoading] = useState(false);
+  const [chatCardError, setChatCardError] = useState("");
+  const readingContentRef = useRef(null);
+  const chatListRef = useRef(null);
+  const reviewChatListRef = useRef(null);
   const location = useLocation();
   const navigate = useNavigate();
   const routeMatch = location.pathname.match(/^\/note-groups\/([^/]+)\/(study-cards|question-cards)$/);
@@ -230,6 +341,13 @@ export default function App() {
     });
     return map;
   }, [moduleNoteGroupStats]);
+  const studyCardTitleById = useMemo(() => {
+    const map = new Map();
+    studyCards.forEach((card) => {
+      map.set(card.id, card.title || card.id.slice(0, 8));
+    });
+    return map;
+  }, [studyCards]);
   const resolveNoteGroupLabel = (noteGroupId) => {
     if (!noteGroupId) {
       return "";
@@ -241,6 +359,38 @@ export default function App() {
     const group = noteGroups.find((item) => item.id === noteGroupId);
     return group?.title || noteGroupId.slice(0, 8);
   };
+  const formatNoteGroupOptionLabel = (option, { context }) => {
+    if (context === "value") {
+      return option.label;
+    }
+    const statsEntry = moduleNoteGroupStatsById.get(option.value);
+    const dueCount = statsEntry?.dueCount;
+    return (
+      <div className="select-option">
+        <span>{option.label}</span>
+        {Number.isInteger(dueCount) && dueCount > 0 ? (
+          <span className="select-badge">{dueCount}</span>
+        ) : null}
+      </div>
+    );
+  };
+  const formatModuleOptionLabel = (option, { context }) => {
+    if (context === "value") {
+      return option.label;
+    }
+    const dueCount = moduleDueCounts[option.value];
+    return (
+      <div className="select-option">
+        <span>{option.label}</span>
+        {Number.isInteger(dueCount) && dueCount > 0 ? (
+          <span className="select-badge">{dueCount}</span>
+        ) : null}
+      </div>
+    );
+  };
+  const getSectionAnchor = (section, index) =>
+    section.anchor ||
+    `section-${index + 1}-${(section.study_card_id || "note").slice(0, 8)}`;
 
   const newChipDisplay = useMemo(() => {
     const merged = [...chipSuggestionNew, ...selectedNewChipLabels];
@@ -248,6 +398,8 @@ export default function App() {
   }, [chipSuggestionNew, selectedNewChipLabels]);
 
   const currentReviewCard = reviewQueue[reviewIndex];
+  const reviewNoteGroupId =
+    reviewScope === "module" ? currentReviewCard?.note_group_id : selectedNoteGroupId;
   const isReviewOverlayVisible = isReviewing || Boolean(reviewSummary);
   const formatDueAt = (value) => {
     if (!value) {
@@ -297,6 +449,47 @@ export default function App() {
   }, [selectedModuleId]);
 
   useEffect(() => {
+    if (modules.length === 0) {
+      setModuleDueCounts({});
+      return;
+    }
+    let cancelled = false;
+    const loadModuleCounts = async () => {
+      const now = Date.now();
+      try {
+        const entries = await Promise.all(
+          modules.map(async (module) => {
+            const groups = await listNoteGroups(module.id);
+            if (!groups.length) {
+              return [module.id, 0];
+            }
+            const dueCounts = await Promise.all(
+              groups.map(async (group) => {
+                const response = await listQuestionCards(group.id);
+                return getDueCount(response.question_cards || [], now);
+              })
+            );
+            const totalDue = dueCounts.reduce((sum, count) => sum + count, 0);
+            return [module.id, totalDue];
+          })
+        );
+        if (!cancelled) {
+          setModuleDueCounts(Object.fromEntries(entries));
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setModuleDueCounts({});
+          setSidebarError(error.message || "Failed to load module badge counts");
+        }
+      }
+    };
+    loadModuleCounts();
+    return () => {
+      cancelled = true;
+    };
+  }, [modules]);
+
+  useEffect(() => {
     if (!selectedModuleId) {
       setNoteGroups([]);
       setSelectedNoteGroupId("");
@@ -317,7 +510,7 @@ export default function App() {
   }, [selectedModuleId, chipFilterIds, routeNoteGroupId, selectedNoteGroupId]);
 
   useEffect(() => {
-    if (!selectedModuleId || selectedNoteGroupId || noteGroupMode === "create") {
+    if (!selectedModuleId) {
       setModuleNoteGroupStats([]);
       setModuleStats({
         studyCount: 0,
@@ -395,7 +588,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedModuleId, selectedNoteGroupId, noteGroupMode, noteGroups]);
+  }, [selectedModuleId, noteGroups]);
 
   useEffect(() => {
     if (!selectedNoteGroupId) {
@@ -403,6 +596,7 @@ export default function App() {
       setQuestionCards([]);
       setNoteGroupChipIds([]);
       setMetadataTitleDraft("");
+      setFormattedSections([]);
       return;
     }
     setStudyCardError("");
@@ -412,6 +606,7 @@ export default function App() {
       .then((data) => {
         setNoteGroupChipIds((data.topic_chips || []).map((chip) => chip.id));
         setMetadataTitleDraft(data.title || "");
+        setFormattedSections(data.formatted_sections || []);
         if (data.module_id && data.module_id !== selectedModuleId) {
           setSelectedModuleId(data.module_id);
         }
@@ -431,6 +626,7 @@ export default function App() {
     setIsChatOpen(false);
     setIsMetadataOpen(false);
     setIsModuleMetadataOpen(false);
+    setIsReadingOpen(false);
     setMetadataError("");
     setModuleMetadataError("");
   }, [selectedNoteGroupId, selectedModuleId]);
@@ -451,6 +647,47 @@ export default function App() {
     setReviewSummary(null);
     setReviewScope("note-group");
   }, [selectedNoteGroupId, selectedModuleId]);
+
+  useEffect(() => {
+    setReviewChatMessages([]);
+    setReviewChatInput("");
+    setReviewChatError("");
+    setReviewChatLoading(false);
+    setReviewChatView("chat");
+    setReviewChatCardId("");
+    setReviewChatCardLoading(false);
+    setReviewChatCardError("");
+  }, [reviewIndex, reviewSummary, selectedNoteGroupId, selectedModuleId]);
+
+  useEffect(() => {
+    if (!isChatOpen) {
+      return;
+    }
+    const container = chatListRef.current;
+    if (container) {
+      container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+    }
+  }, [chatMessages, isChatOpen]);
+
+  useEffect(() => {
+    if (!isChatOpen) {
+      return;
+    }
+    setChatView("chat");
+    setChatCardId("");
+    setChatCardLoading(false);
+    setChatCardError("");
+  }, [isChatOpen]);
+
+  useEffect(() => {
+    if (reviewChatView !== "chat") {
+      return;
+    }
+    const container = reviewChatListRef.current;
+    if (container) {
+      container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+    }
+  }, [reviewChatMessages, reviewChatView]);
 
   useEffect(() => {
     if (routeNoteGroupId && routeNoteGroupId !== selectedNoteGroupId) {
@@ -602,6 +839,17 @@ export default function App() {
     navigate("/");
   };
 
+  const handleJumpToSection = (anchor) => {
+    const container = readingContentRef.current;
+    if (!container || !anchor) {
+      return;
+    }
+    const target = container.querySelector(`#${anchor}`);
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
   const handleSelectNoteGroup = (option) => {
     const nextId = option ? option.value : "";
     navigateToNoteGroup(nextId);
@@ -720,6 +968,7 @@ export default function App() {
       const createdNoteGroup = response.note_group;
       setSelectedNoteGroupId(createdNoteGroup.id);
       setNoteGroupChipIds((createdNoteGroup.topic_chips || []).map((chip) => chip.id));
+      setFormattedSections(createdNoteGroup.formatted_sections || []);
       setStudyCards(response.study_cards || []);
       const groups = await listNoteGroups(selectedModuleId, chipFilterIds);
       setNoteGroups(groups);
@@ -1155,22 +1404,188 @@ export default function App() {
     setChatLoading(true);
     setChatError("");
     const message = chatInput.trim();
+    const history = chatMessages
+      .slice(-10)
+      .filter((item) => item?.content)
+      .map((item) => ({
+        role: item.role,
+        content: item.content
+      }));
     setChatInput("");
     setChatMessages((prev) => [...prev, { role: "user", content: message }]);
     try {
       const response = await sendChat({
         module_id: selectedModuleId,
         message,
-        note_group_id: scopeToNoteGroup ? selectedNoteGroupId || null : null
+        note_group_id: scopeToNoteGroup ? selectedNoteGroupId || null : null,
+        history
       });
       setChatMessages((prev) => [
         ...prev,
         { role: "assistant", content: response.answer, refs: response.study_card_refs || [] }
       ]);
+      if (response.study_card_refs && response.study_card_refs.length) {
+        response.study_card_refs.forEach((refId) => {
+          setChatCardCache((prev) => {
+            if (prev[refId]) {
+              return prev;
+            }
+            getStudyCard(refId)
+              .then((card) =>
+                setChatCardCache((next) => ({
+                  ...next,
+                  [refId]: card
+                }))
+              )
+              .catch(() => null);
+            return prev;
+          });
+        });
+      }
     } catch (error) {
       setChatError(error.message || "Chat failed");
     } finally {
       setChatLoading(false);
+    }
+  };
+
+  const handleSendReviewChat = async () => {
+    if (!selectedModuleId || !reviewNoteGroupId || !reviewChatInput.trim()) {
+      return;
+    }
+    setReviewChatLoading(true);
+    setReviewChatError("");
+    const message = reviewChatInput.trim();
+    const history = reviewChatMessages
+      .slice(-10)
+      .filter((item) => item?.content)
+      .map((item) => ({
+        role: item.role,
+        content: item.content
+      }));
+    setReviewChatInput("");
+    setReviewChatMessages((prev) => [...prev, { role: "user", content: message }]);
+    try {
+      const questionPrompt = currentReviewCard?.prompt || "";
+      const userAnswer = formatAnswerLabels(currentReviewCard, reviewAnswer);
+      const correctAnswer = formatAnswerLabels(
+        currentReviewCard,
+        currentReviewCard?.correct_option_indices || []
+      );
+      const response = await sendChat({
+        module_id: selectedModuleId,
+        message,
+        note_group_id: reviewNoteGroupId,
+        question_prompt: questionPrompt,
+        user_answer: userAnswer,
+        correct_answer: correctAnswer,
+        history
+      });
+      setReviewChatMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: response.answer, refs: response.study_card_refs || [] }
+      ]);
+      if (response.study_card_refs && response.study_card_refs.length) {
+        response.study_card_refs.forEach((refId) => {
+          setReviewChatCardCache((prev) => {
+            if (prev[refId]) {
+              return prev;
+            }
+            getStudyCard(refId)
+              .then((card) =>
+                setReviewChatCardCache((next) => ({
+                  ...next,
+                  [refId]: card
+                }))
+              )
+              .catch(() => null);
+            return prev;
+          });
+        });
+      }
+    } catch (error) {
+      setReviewChatError(error.message || "Chat failed");
+    } finally {
+      setReviewChatLoading(false);
+    }
+  };
+
+  const openReviewStudyCard = (studyCardId) => {
+    if (!studyCardId) {
+      return;
+    }
+    setReviewChatView("card");
+    setReviewChatCardId(studyCardId);
+    setReviewChatCardError("");
+    if (reviewChatCardCache[studyCardId]) {
+      return;
+    }
+    setReviewChatCardLoading(true);
+    getStudyCard(studyCardId)
+      .then((card) =>
+        setReviewChatCardCache((prev) => ({
+          ...prev,
+          [studyCardId]: card
+        }))
+      )
+      .catch((error) => setReviewChatCardError(error.message || "Failed to load study card"))
+      .finally(() => setReviewChatCardLoading(false));
+  };
+
+  const handleBackToReviewChat = () => {
+    setReviewChatView("chat");
+    setReviewChatCardId("");
+    setReviewChatCardError("");
+  };
+
+  const openChatStudyCard = (studyCardId) => {
+    if (!studyCardId) {
+      return;
+    }
+    setChatView("card");
+    setChatCardId(studyCardId);
+    setChatCardError("");
+    if (chatCardCache[studyCardId]) {
+      return;
+    }
+    setChatCardLoading(true);
+    getStudyCard(studyCardId)
+      .then((card) =>
+        setChatCardCache((prev) => ({
+          ...prev,
+          [studyCardId]: card
+        }))
+      )
+      .catch((error) => setChatCardError(error.message || "Failed to load study card"))
+      .finally(() => setChatCardLoading(false));
+  };
+
+  const handleBackToChat = () => {
+    setChatView("chat");
+    setChatCardId("");
+    setChatCardError("");
+  };
+
+  const handleChatKeyDown = (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      if (!chatLoading && selectedModuleId && chatInput.trim()) {
+        handleSendChat();
+      }
+    }
+  };
+
+  const handleReviewChatKeyDown = (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      if (
+        !reviewChatLoading &&
+        selectedModuleId &&
+        reviewNoteGroupId &&
+        reviewChatInput.trim()
+      ) {
+        handleSendReviewChat();
+      }
     }
   };
 
@@ -1215,80 +1630,87 @@ export default function App() {
     <div className="app">
       {isReviewOverlayVisible ? (
         <div className="review-overlay">
-          <div className="review-modal">
-            {reviewSummary ? (
-              <>
-                <h2>Review summary</h2>
-                <div className="review-meta">
-                  <span className="pill">
-                    Scope: {reviewSummary.scope === "module" ? "Module" : "Note group"}
-                  </span>
-                  <span className="pill">Mode: {reviewSummary.mode}</span>
-                  <span className="pill">
-                    Reviewed: {reviewSummary.answered} / {reviewSummary.total}
-                  </span>
-                  <span className="pill">Accuracy: {reviewSummary.accuracy}%</span>
-                  <span className="pill">Avg time: {reviewSummary.avgSeconds}s</span>
-                  {reviewSummary.remaining ? (
-                    <span className="pill">Remaining: {reviewSummary.remaining}</span>
-                  ) : null}
-                </div>
-                <p className="muted">
-                  Correct: {reviewSummary.correct} · Incorrect: {reviewSummary.incorrect}
-                </p>
-                <div className="button-row">
-                  <button
-                    className="button primary"
-                    type="button"
-                    onClick={() => setReviewSummary(null)}
-                  >
-                    Close summary
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="review-meta">
-                  <span className="pill">
-                    Scope: {reviewScope === "module" ? "Module" : "Note group"}
-                  </span>
-                  <span className="pill">
-                    Card {reviewIndex + 1} / {reviewQueue.length}
-                  </span>
-                  <span className="pill">Mode: {reviewMode}</span>
-                  {reviewScope === "module" && currentReviewCard ? (
+          <div className="review-layout">
+            <div className="review-modal">
+              {reviewSummary ? (
+                <>
+                  <h2>Review summary</h2>
+                  <div className="review-meta">
                     <span className="pill">
-                      Note group: {resolveNoteGroupLabel(currentReviewCard.note_group_id)}
+                      Scope: {reviewSummary.scope === "module" ? "Module" : "Note group"}
                     </span>
-                  ) : null}
+                    <span className="pill">Mode: {reviewSummary.mode}</span>
+                    <span className="pill">
+                      Reviewed: {reviewSummary.answered} / {reviewSummary.total}
+                    </span>
+                    <span className="pill">Accuracy: {reviewSummary.accuracy}%</span>
+                    <span className="pill">Avg time: {reviewSummary.avgSeconds}s</span>
+                    {reviewSummary.remaining ? (
+                      <span className="pill">Remaining: {reviewSummary.remaining}</span>
+                    ) : null}
+                  </div>
+                  <p className="muted">
+                    Correct: {reviewSummary.correct} · Incorrect: {reviewSummary.incorrect}
+                  </p>
+                  <div className="button-row">
+                    <button
+                      className="button primary"
+                      type="button"
+                      onClick={() => setReviewSummary(null)}
+                    >
+                      Close summary
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="review-meta">
+                    <span className="pill">
+                      Scope: {reviewScope === "module" ? "Module" : "Note group"}
+                    </span>
+                    <span className="pill">
+                      Card {reviewIndex + 1} / {reviewQueue.length}
+                    </span>
+                    <span className="pill">Mode: {reviewMode}</span>
+                    {reviewScope === "module" && currentReviewCard ? (
+                      <span className="pill">
+                        Note group: {resolveNoteGroupLabel(currentReviewCard.note_group_id)}
+                      </span>
+                    ) : null}
+                    {currentReviewCard ? (
+                      <span className="pill">Due: {formatDueAt(currentReviewCard.due_at)}</span>
+                    ) : null}
+                  </div>
+                  {reviewError ? <p className="error">{reviewError}</p> : null}
                   {currentReviewCard ? (
-                    <span className="pill">Due: {formatDueAt(currentReviewCard.due_at)}</span>
-                  ) : null}
-                </div>
-                {reviewError ? <p className="error">{reviewError}</p> : null}
-                {currentReviewCard ? (
-                  <>
-                    <h3>{currentReviewCard.prompt}</h3>
-                    <p className="muted">
-                      {currentReviewCard.type === "multi"
-                        ? "Select all that apply."
-                        : "Select the best answer."}
-                    </p>
+                    <>
+                      <h3>{currentReviewCard.prompt}</h3>
+                      <p className="muted">
+                        {currentReviewCard.type === "multi"
+                          ? "Select all that apply."
+                          : "Select the best answer."}
+                      </p>
                     <div className="review-options">
                       {currentReviewCard.options.map((option, optionIndex) => {
                         const isSelected = reviewAnswer.includes(optionIndex);
                         const isCorrect = reviewFeedback?.correctIndices?.includes(optionIndex);
                         const showIncorrect =
                           reviewFeedback && isSelected && !isCorrect;
+                        const showMissed =
+                          reviewFeedback &&
+                          currentReviewCard.type === "multi" &&
+                          isCorrect &&
+                          !isSelected;
+                        const showCorrect = isCorrect && !showMissed;
                         return (
                           <button
                             key={`${currentReviewCard.id}-${optionIndex}`}
                             type="button"
                             className={`review-option ${
                               isSelected ? "selected" : ""
-                            } ${isCorrect ? "correct" : ""} ${
+                            } ${showCorrect ? "correct" : ""} ${
                               showIncorrect ? "incorrect" : ""
-                            }`}
+                            } ${showMissed ? "missed" : ""}`}
                             onClick={() =>
                               reviewFeedback
                                 ? null
@@ -1296,43 +1718,162 @@ export default function App() {
                             }
                             disabled={Boolean(reviewFeedback)}
                           >
-                            {option}
+                            <span className="option-control">
+                              {currentReviewCard.type === "multi" ? (
+                                <span className={`option-box ${isSelected ? "checked" : ""}`}>
+                                  {isSelected ? "✓" : ""}
+                                </span>
+                              ) : (
+                                <span className={`option-radio ${isSelected ? "checked" : ""}`}>
+                                  <span className="option-radio-dot" />
+                                </span>
+                              )}
+                            </span>
+                            <span className="option-text">{option}</span>
                           </button>
                         );
                       })}
                     </div>
-                    {reviewFeedback ? (
-                      <p className={`review-feedback ${reviewFeedback.correct ? "ok" : "bad"}`}>
-                        {reviewFeedback.correct ? "Correct ✅" : "Incorrect ❌"}
+                      {reviewFeedback ? (
+                        <p className={`review-feedback ${reviewFeedback.correct ? "ok" : "bad"}`}>
+                          {reviewFeedback.correct ? "Correct ✅" : "Incorrect ❌"}
+                        </p>
+                      ) : null}
+                      <div className="button-row">
+                        <button
+                          className="button primary"
+                          type="button"
+                          onClick={() => submitReviewAnswer(currentReviewCard)}
+                          disabled={!reviewAnswer.length || Boolean(reviewFeedback)}
+                        >
+                          Submit answer
+                        </button>
+                        <button
+                          className="button ghost"
+                          type="button"
+                          onClick={nextReviewCard}
+                          disabled={!reviewFeedback}
+                        >
+                          {reviewIndex + 1 >= reviewQueue.length ? "Finish review" : "Next question"}
+                        </button>
+                        <button className="button ghost" type="button" onClick={endReview}>
+                          End review
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="muted">No review card loaded.</p>
+                  )}
+                </>
+              )}
+            </div>
+            {reviewFeedback && currentReviewCard ? (
+              <div className="review-chat-panel">
+                {reviewChatView === "card" ? (
+                  <>
+                    <div className="review-chat-header">
+                      <button
+                        className="back-button"
+                        type="button"
+                        onClick={handleBackToReviewChat}
+                      >
+                        ← Back to chat
+                      </button>
+                      <p className="muted">
+                        {reviewNoteGroupId
+                          ? `Scoped to ${resolveNoteGroupLabel(reviewNoteGroupId)}.`
+                          : "Scoped to current note group."}
                       </p>
+                    </div>
+                    {reviewChatCardLoading ? (
+                      <p className="muted">Loading study card...</p>
                     ) : null}
-                    <div className="button-row">
+                    {reviewChatCardError ? <p className="error">{reviewChatCardError}</p> : null}
+                    {reviewChatCardId && reviewChatCardCache[reviewChatCardId] ? (
+                      <div className="review-chat-card">
+                        <h3>
+                          {reviewChatCardCache[reviewChatCardId].title ||
+                            "Untitled study card"}
+                        </h3>
+                        <p>{reviewChatCardCache[reviewChatCardId].content}</p>
+                        {reviewChatCardCache[reviewChatCardId].topic_chips?.length ? (
+                          <div className="chip-grid">
+                            {reviewChatCardCache[reviewChatCardId].topic_chips.map((chip) => (
+                              <span key={chip.id} className="pill">
+                                {chip.label}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <div className="review-chat-header">
+                      <h3>Clarify this question</h3>
+                      <p className="muted">
+                        Scoped to {resolveNoteGroupLabel(reviewNoteGroupId)}.
+                      </p>
+                    </div>
+                    <div className="chat" ref={reviewChatListRef}>
+                      {reviewChatMessages.length === 0 ? (
+                        <p className="empty">Ask for clarity about the question or its sources.</p>
+                      ) : (
+                        reviewChatMessages.map((message, index) => (
+                          <div
+                            key={`${message.role}-${index}`}
+                            className={`chat-bubble ${message.role}`}
+                          >
+                            <p>{message.content}</p>
+                            {message.refs && message.refs.length ? (
+                              <ol className="chat-refs">
+                                {message.refs.map((refId) => {
+                                  const refCard = reviewChatCardCache[refId];
+                                  const title =
+                                    refCard?.title ||
+                                    `Study card ${refId.slice(0, 8)}`;
+                                  return (
+                                    <li key={refId}>
+                                      <button
+                                        className="link-button"
+                                        type="button"
+                                        onClick={() => openReviewStudyCard(refId)}
+                                      >
+                                        {title}
+                                      </button>
+                                    </li>
+                                  );
+                                })}
+                              </ol>
+                            ) : null}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    {reviewChatError ? <p className="error">{reviewChatError}</p> : null}
+                    <div className="chat-input">
+                      <textarea
+                        value={reviewChatInput}
+                        onChange={(event) => setReviewChatInput(event.target.value)}
+                        onKeyDown={handleReviewChatKeyDown}
+                        placeholder="Ask about this question..."
+                        rows={2}
+                        disabled={!reviewNoteGroupId}
+                      />
                       <button
                         className="button primary"
                         type="button"
-                        onClick={() => submitReviewAnswer(currentReviewCard)}
-                        disabled={!reviewAnswer.length || Boolean(reviewFeedback)}
+                        onClick={handleSendReviewChat}
+                        disabled={!reviewNoteGroupId || !reviewChatInput.trim() || reviewChatLoading}
                       >
-                        Submit answer
-                      </button>
-                      <button
-                        className="button ghost"
-                        type="button"
-                        onClick={nextReviewCard}
-                        disabled={!reviewFeedback}
-                      >
-                        {reviewIndex + 1 >= reviewQueue.length ? "Finish review" : "Next question"}
-                      </button>
-                      <button className="button ghost" type="button" onClick={endReview}>
-                        End review
+                        {reviewChatLoading ? "Sending..." : "Send"}
                       </button>
                     </div>
                   </>
-                ) : (
-                  <p className="muted">No review card loaded.</p>
                 )}
-              </>
-            )}
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -1365,45 +1906,159 @@ export default function App() {
                 </label>
               </div>
             ) : null}
-            <div className="chat">
-              {chatMessages.length === 0 ? (
-                <p className="empty">Ask a question to get answers from your study cards.</p>
-              ) : (
-                chatMessages.map((message, index) => (
-                  <div
-                    key={`${message.role}-${index}`}
-                    className={`chat-bubble ${message.role}`}
-                  >
-                    <p>{message.content}</p>
-                    {message.refs && message.refs.length ? (
-                      <p className="refs">Refs: {message.refs.join(", ")}</p>
+            {chatView === "card" ? (
+              <>
+                <div className="review-chat-header">
+                  <button className="back-button" type="button" onClick={handleBackToChat}>
+                    ← Back to chat
+                  </button>
+                  <p className="muted">
+                    {selectedNoteGroupId
+                      ? "Scoped to current note group."
+                      : "Scoped to selected module."}
+                  </p>
+                </div>
+                {chatCardLoading ? <p className="muted">Loading study card...</p> : null}
+                {chatCardError ? <p className="error">{chatCardError}</p> : null}
+                {chatCardId && chatCardCache[chatCardId] ? (
+                  <div className="chat-card">
+                    <h3>{chatCardCache[chatCardId].title || "Untitled study card"}</h3>
+                    <p>{chatCardCache[chatCardId].content}</p>
+                    {chatCardCache[chatCardId].topic_chips?.length ? (
+                      <div className="chip-grid">
+                        {chatCardCache[chatCardId].topic_chips.map((chip) => (
+                          <span key={chip.id} className="pill">
+                            {chip.label}
+                          </span>
+                        ))}
+                      </div>
                     ) : null}
                   </div>
-                ))
-              )}
-            </div>
-            {chatError ? <p className="error">{chatError}</p> : null}
-            <div className="chat-input">
-              <input
-                type="text"
-                value={chatInput}
-                onChange={(event) => setChatInput(event.target.value)}
-                placeholder={
-                  selectedNoteGroupId
-                    ? "Ask a question about this module or note group..."
-                    : "Ask a question about this module..."
-                }
-                disabled={!selectedModuleId}
-              />
+                ) : null}
+              </>
+            ) : (
+              <>
+                <div className="chat" ref={chatListRef}>
+                  {chatMessages.length === 0 ? (
+                    <p className="empty">Ask a question to get answers from your study cards.</p>
+                  ) : (
+                    chatMessages.map((message, index) => (
+                      <div
+                        key={`${message.role}-${index}`}
+                        className={`chat-bubble ${message.role}`}
+                      >
+                        <p>{message.content}</p>
+                        {message.refs && message.refs.length ? (
+                          <ol className="chat-refs">
+                            {message.refs.map((refId) => {
+                              const refCard = chatCardCache[refId];
+                              const title =
+                                refCard?.title || `Study card ${refId.slice(0, 8)}`;
+                              return (
+                                <li key={refId}>
+                                  <button
+                                    className="link-button"
+                                    type="button"
+                                    onClick={() => openChatStudyCard(refId)}
+                                  >
+                                    {title}
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          </ol>
+                        ) : null}
+                      </div>
+                    ))
+                  )}
+                </div>
+                {chatError ? <p className="error">{chatError}</p> : null}
+                <div className="chat-input">
+                  <textarea
+                    value={chatInput}
+                    onChange={(event) => setChatInput(event.target.value)}
+                    onKeyDown={handleChatKeyDown}
+                    placeholder={
+                      selectedNoteGroupId
+                        ? "Ask a question about this module or note group..."
+                        : "Ask a question about this module..."
+                    }
+                    rows={2}
+                    disabled={!selectedModuleId}
+                  />
+                  <button
+                    className="button primary"
+                    type="button"
+                    onClick={handleSendChat}
+                    disabled={!selectedModuleId || !chatInput.trim() || chatLoading}
+                  >
+                    {chatLoading ? "Sending..." : "Send"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
+      {isReadingOpen ? (
+        <div className="reading-overlay">
+          <div className="reading-modal">
+            <div className="reading-header">
+              <div>
+                <h2>Formatted notes</h2>
+                <p className="muted">Read-only source text mapped to your study cards.</p>
+              </div>
               <button
-                className="button primary"
+                className="button ghost"
                 type="button"
-                onClick={handleSendChat}
-                disabled={!selectedModuleId || !chatInput.trim() || chatLoading}
+                onClick={() => setIsReadingOpen(false)}
               >
-                {chatLoading ? "Sending..." : "Send"}
+                Close
               </button>
             </div>
+            {formattedSections.length === 0 ? (
+              <p className="muted">No formatted text available for this note group yet.</p>
+            ) : (
+              <div className="reading-body">
+                <aside className="reading-nav">
+                  <p className="label">Sections</p>
+                  {formattedSections.map((section, index) => {
+                    const anchor = getSectionAnchor(section, index);
+                    return (
+                      <button
+                        key={`nav-${anchor}`}
+                        className="reading-link"
+                        type="button"
+                        onClick={() => handleJumpToSection(anchor)}
+                      >
+                        {section.title || `Section ${index + 1}`}
+                      </button>
+                    );
+                  })}
+                </aside>
+                <div className="reading-content" ref={readingContentRef}>
+                  {formattedSections.map((section, index) => {
+                    const anchor = getSectionAnchor(section, index);
+                    const cardTitle = studyCardTitleById.get(section.study_card_id);
+                    return (
+                      <section key={anchor} id={anchor} className="reading-section">
+                        <div className="reading-section-header">
+                          <h3>{section.title || `Section ${index + 1}`}</h3>
+                          <span className="pill">
+                            Study card:{" "}
+                            {cardTitle ||
+                              (section.study_card_id ? section.study_card_id.slice(0, 8) : "—")}
+                          </span>
+                        </div>
+                        <div className="reading-section-body">
+                          {renderMarkdownBlocks(section.content)}
+                        </div>
+                      </section>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       ) : null}
@@ -1578,6 +2233,7 @@ export default function App() {
             options={moduleOptions}
             value={moduleOptions.find((option) => option.value === selectedModuleId) || null}
             onChange={handleSelectModule}
+            formatOptionLabel={formatModuleOptionLabel}
             placeholder={selectedSubjectId ? "Search modules" : "Select a subject"}
             isDisabled={!selectedSubjectId}
             isClearable
@@ -1622,6 +2278,7 @@ export default function App() {
             options={noteGroupOptions}
             value={noteGroupOptions.find((option) => option.value === selectedNoteGroupId) || null}
             onChange={handleSelectNoteGroup}
+            formatOptionLabel={formatNoteGroupOptionLabel}
             placeholder={selectedModuleId ? "Search note groups" : "Select a module"}
             isDisabled={!selectedModuleId}
             isClearable
@@ -2123,6 +2780,14 @@ export default function App() {
                         }
                       >
                         View question cards
+                      </button>
+                      <button
+                        className="button ghost"
+                        type="button"
+                        onClick={() => setIsReadingOpen(true)}
+                        disabled={!formattedSections.length}
+                      >
+                        Read clean text
                       </button>
                     <button
                       className="button ghost"

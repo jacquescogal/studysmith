@@ -10,10 +10,12 @@ from app.fsrs_utils import initialize_question_card
 from app.models import Job, NoteGroup, QuestionCard, StudyCard
 from app.openai_client import (
     embed_texts,
+    generate_formatted_sections,
     generate_note_group_title_suggestions,
     generate_question_cards,
     generate_study_cards,
 )
+from app.text_formatter import build_formatted_sections, sections_to_markdown
 
 
 JOB_TYPE_NOTE_GROUP_GENERATION = "NOTE_GROUP_GENERATION"
@@ -160,6 +162,19 @@ def run_note_group_generation(job_id: str) -> None:
 
         if not study_cards:
             raise ValueError("Generated study cards were empty")
+
+        study_card_context = [
+            {"id": card.id, "title": card.title, "content": card.content}
+            for card in study_cards
+        ]
+        raw_sections = []
+        try:
+            raw_sections = generate_formatted_sections(note_group.raw_text, study_card_context)
+        except Exception:
+            raw_sections = []
+        formatted_sections = build_formatted_sections(raw_sections, study_card_context)
+        note_group.formatted_sections_json = json.dumps(formatted_sections)
+        note_group.formatted_text = sections_to_markdown(formatted_sections)
 
         embeddings = embed_texts([card.content for card in study_cards])
         collection = get_collection()

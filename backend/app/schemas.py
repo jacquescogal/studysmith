@@ -43,11 +43,20 @@ class NoteGroupCreate(BaseModel):
     title: Optional[str] = None
 
 
+class NoteGroupSectionOut(BaseModel):
+    study_card_id: str
+    title: str
+    content: str
+    anchor: str
+
+
 class NoteGroupOut(BaseModel):
     id: str
     module_id: str
     title: Optional[str] = None
     raw_text: str
+    formatted_text: Optional[str] = None
+    formatted_sections: List["NoteGroupSectionOut"] = []
     generation_status: str
     topic_chips: List["TopicChipOut"] = []
     suggested_titles: List[str] = []
@@ -110,6 +119,15 @@ class ChatRequest(BaseModel):
     module_id: str
     message: str
     note_group_id: Optional[str] = None
+    question_prompt: Optional[str] = None
+    user_answer: Optional[str] = None
+    correct_answer: Optional[str] = None
+    history: Optional[List["ChatHistoryItem"]] = None
+
+
+class ChatHistoryItem(BaseModel):
+    role: str
+    content: str
 
 
 class ChatResponse(BaseModel):
@@ -119,6 +137,7 @@ class ChatResponse(BaseModel):
 
 NoteGroupOut.update_forward_refs()
 StudyCardOut.update_forward_refs()
+ChatRequest.update_forward_refs()
 
 
 class JobOut(BaseModel):

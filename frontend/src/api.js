@@ -143,6 +143,10 @@ export function listStudyCards(noteGroupId) {
   return request(`/note-groups/${noteGroupId}/study-cards`);
 }
 
+export function getStudyCard(studyCardId) {
+  return request(`/study-cards/${studyCardId}`);
+}
+
 export function createStudyCard(noteGroupId, payload) {
   return request(`/note-groups/${noteGroupId}/study-cards`, {
     method: "POST",

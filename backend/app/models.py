@@ -71,6 +71,8 @@ class NoteGroup(Base):
     module_id = Column(String, ForeignKey("modules.id"), nullable=False)
     title = Column(String)
     raw_text = Column(Text, nullable=False)
+    formatted_text = Column(Text)
+    formatted_sections_json = Column(Text)
     generation_status = Column(String, default="created")
     suggested_titles_json = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -92,6 +94,16 @@ class NoteGroup(Base):
             return []
         try:
             data = json.loads(self.suggested_titles_json)
+        except json.JSONDecodeError:
+            return []
+        return data if isinstance(data, list) else []
+
+    @property
+    def formatted_sections(self) -> list[dict]:
+        if not self.formatted_sections_json:
+            return []
+        try:
+            data = json.loads(self.formatted_sections_json)
         except json.JSONDecodeError:
             return []
         return data if isinstance(data, list) else []

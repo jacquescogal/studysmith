@@ -340,6 +340,27 @@ textarea {
   line-height: 1.5;
 }
 
+.select-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.select-badge {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .options {
   margin: 12px 0 0;
   padding-left: 18px;
@@ -376,8 +397,14 @@ textarea {
   backdrop-filter: blur(4px);
 }
 
+.review-layout {
+  position: relative;
+  width: 100%;
+}
+
 .review-modal {
   width: min(720px, 100%);
+  margin: 0 auto;
   max-height: 90vh;
   overflow-y: auto;
   background: #fffdf9;
@@ -449,6 +476,108 @@ textarea {
   margin-bottom: 16px;
 }
 
+.reading-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(31, 27, 22, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 9998;
+  backdrop-filter: blur(4px);
+}
+
+.reading-modal {
+  width: min(1100px, 100%);
+  max-height: 90vh;
+  overflow: hidden;
+  background: #fffdf9;
+  border-radius: 24px;
+  padding: 24px;
+  border: 1px solid rgba(31, 27, 22, 0.08);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.reading-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.reading-body {
+  display: flex;
+  gap: 18px;
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
+}
+
+.reading-nav {
+  width: 220px;
+  border-right: 1px solid rgba(31, 27, 22, 0.08);
+  padding-right: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.reading-link {
+  border: none;
+  background: rgba(31, 27, 22, 0.06);
+  padding: 8px 10px;
+  border-radius: 12px;
+  text-align: left;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.reading-link:hover {
+  background: rgba(31, 27, 22, 0.12);
+}
+
+.reading-content {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 8px;
+}
+
+.reading-section {
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(31, 27, 22, 0.08);
+  box-shadow: 0 10px 24px rgba(31, 27, 22, 0.08);
+  margin-bottom: 16px;
+  background: #fffdf9;
+  border-left: 4px solid var(--accent);
+}
+
+.reading-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.reading-section-body p {
+  margin: 0 0 10px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.reading-section-body ul {
+  margin: 0 0 10px;
+  padding-left: 20px;
+  color: var(--muted);
+}
+
 .review-meta {
   display: flex;
   gap: 10px;
@@ -462,7 +591,68 @@ textarea {
   margin: 12px 0 16px;
 }
 
+.review-chat-panel {
+  position: fixed;
+  right: 32px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: min(380px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  background: #fffdf9;
+  border-radius: 24px;
+  padding: 20px;
+  border: 1px solid rgba(31, 27, 22, 0.08);
+  box-shadow: var(--shadow);
+}
+
+.review-chat-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.review-chat-panel .chat-bubble {
+  max-width: 100%;
+}
+
+.review-chat-card h3 {
+  margin-top: 0;
+}
+
+.chat-card h3 {
+  margin-top: 0;
+}
+
+.chat-refs {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+
+.chat-refs li {
+  margin-bottom: 6px;
+}
+
+.link-button {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
 .review-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   text-align: left;
   border: 1px solid var(--border);
   background: #fff;
@@ -471,6 +661,55 @@ textarea {
   font-weight: 600;
   cursor: pointer;
   transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.review-option .option-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.review-option .option-box {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 2px solid rgba(31, 27, 22, 0.3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.review-option .option-box.checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.review-option .option-radio {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid rgba(31, 27, 22, 0.3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.review-option .option-radio-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.review-option .option-radio.checked {
+  border-color: var(--accent);
+}
+
+.review-option .option-radio.checked .option-radio-dot {
+  background: var(--accent);
 }
 
 .review-option.selected {
@@ -484,6 +723,11 @@ textarea {
 }
 
 .review-option.incorrect {
+  border-color: rgba(177, 46, 46, 0.6);
+  background: rgba(177, 46, 46, 0.12);
+}
+
+.review-option.missed {
   border-color: rgba(177, 46, 46, 0.6);
   background: rgba(177, 46, 46, 0.12);
 }
@@ -565,6 +809,9 @@ textarea {
   gap: 12px;
   margin-bottom: 16px;
   min-height: 120px;
+  height: 260px;
+  overflow-y: auto;
+  scroll-behavior: smooth;
 }
 
 .chat-bubble {
@@ -598,8 +845,13 @@ textarea {
   align-items: center;
 }
 
-.chat-input input {
+.chat-input input,
+.chat-input textarea {
   flex: 1;
+}
+
+.chat-input textarea {
+  resize: none;
 }
 
 .toggle {
@@ -801,5 +1053,34 @@ textarea {
   .page-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .review-layout {
+    flex-direction: column;
+  }
+
+  .reading-body {
+    flex-direction: column;
+  }
+
+  .reading-nav {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid rgba(31, 27, 22, 0.08);
+    padding-right: 0;
+    padding-bottom: 12px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .review-layout {
+    width: 100%;
+  }
+
+  .review-chat-panel {
+    position: static;
+    transform: none;
+    margin-top: 16px;
+    width: 100%;
   }
 }
