@@ -61,6 +61,8 @@ class Module(Base):
     subject_id = Column(String, ForeignKey("subjects.id"), nullable=False)
     title = Column(String, nullable=False, unique=True)
     description = Column(Text)
+    goal = Column(Text, nullable=True)
+    scope = Column(Text, nullable=True)
     settings_json = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -183,6 +185,7 @@ class TopicChip(Base):
     id = Column(String, primary_key=True, default=_uuid)
     module_id = Column(String, ForeignKey("modules.id"), nullable=False)
     label = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
