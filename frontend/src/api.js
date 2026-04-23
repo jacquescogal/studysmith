@@ -39,6 +39,12 @@ export function createSubject(payload) {
   });
 }
 
+export function deleteSubject(subjectId) {
+  return request(`/subjects/${subjectId}`, {
+    method: "DELETE"
+  });
+}
+
 export function listModules(subjectId) {
   return request(`/subjects/${subjectId}/modules`);
 }
@@ -54,6 +60,12 @@ export function updateModule(moduleId, payload) {
   return request(`/modules/${moduleId}`, {
     method: "PUT",
     body: JSON.stringify(payload)
+  });
+}
+
+export function deleteModule(moduleId) {
+  return request(`/modules/${moduleId}`, {
+    method: "DELETE"
   });
 }
 
@@ -73,8 +85,28 @@ export function listNoteGroups(moduleId, chipIds = []) {
   return request(`/modules/${moduleId}/note-groups${suffix}`);
 }
 
+export function checkNoteGroupSource(payload) {
+  return request("/note-groups/source-check", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateNoteGroupOrder(moduleId, noteGroupIds) {
+  return request(`/modules/${moduleId}/note-groups/order`, {
+    method: "PUT",
+    body: JSON.stringify({ note_group_ids: noteGroupIds })
+  });
+}
+
 export function getNoteGroup(noteGroupId) {
   return request(`/note-groups/${noteGroupId}`);
+}
+
+export function deleteNoteGroup(noteGroupId) {
+  return request(`/note-groups/${noteGroupId}`, {
+    method: "DELETE"
+  });
 }
 
 export function updateNoteGroupTitle(noteGroupId, payload) {
@@ -100,6 +132,13 @@ export function suggestTopicChips(payload) {
 
 export function finalizeNoteGroup(payload) {
   return request("/note-groups/finalize", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function autoCreateNoteGroup(payload) {
+  return request("/note-groups/auto", {
     method: "POST",
     body: JSON.stringify(payload)
   });
@@ -137,6 +176,33 @@ export function generateNoteGroup(noteGroupId) {
 
 export function getJob(jobId) {
   return request(`/jobs/${jobId}`);
+}
+
+export function listJobs({ type, status, moduleId } = {}) {
+  const params = new URLSearchParams();
+  if (type) {
+    params.set("type", type);
+  }
+  if (status) {
+    params.set("status", status);
+  }
+  if (moduleId) {
+    params.set("module_id", moduleId);
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return request(`/jobs${suffix}`);
+}
+
+export function cancelJob(jobId) {
+  return request(`/jobs/${jobId}/cancel`, {
+    method: "POST"
+  });
+}
+
+export function retryAutoJob(jobId) {
+  return request(`/jobs/${jobId}/retry`, {
+    method: "POST"
+  });
 }
 
 export function listStudyCards(noteGroupId) {
@@ -183,6 +249,24 @@ export function generateQuestionCards(noteGroupId, payload) {
 
 export function listQuestionCards(noteGroupId) {
   return request(`/note-groups/${noteGroupId}/question-cards`);
+}
+
+export function getNoteGroupQuestionTimeline(noteGroupId, chipIds = []) {
+  const params = new URLSearchParams();
+  if (chipIds.length) {
+    params.set("chip_ids", chipIds.join(","));
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return request(`/note-groups/${noteGroupId}/question-cards/timeline${suffix}`);
+}
+
+export function getModuleQuestionTimeline(moduleId, chipIds = []) {
+  const params = new URLSearchParams();
+  if (chipIds.length) {
+    params.set("chip_ids", chipIds.join(","));
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return request(`/modules/${moduleId}/question-cards/timeline${suffix}`);
 }
 
 export function listReviewQuestionCards(noteGroupId, mode, limit) {
