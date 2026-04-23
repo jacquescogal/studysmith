@@ -37,6 +37,7 @@ from app.openai_client import (
     embed_texts,
     generate_chat_response,
     generate_formatted_sections,
+    generate_module_intent_response,
     generate_note_group_title_suggestions,
     generate_study_cards_with_context,
     suggest_topic_chips,
@@ -45,6 +46,8 @@ from app.text_formatter import build_formatted_sections, sections_to_markdown
 from app.schemas import (
     ChatRequest,
     ChatResponse,
+    IntentChatRequest,
+    IntentChatResponse,
     JobOut,
     ModuleCreate,
     ModuleOut,
@@ -119,6 +122,20 @@ def _validate_additional_instructions(value: str) -> None:
         )
 
 
+def _validate_chip_label(label: str) -> None:
+    stripped = label.strip()
+    if len(stripped) > 20:
+        raise HTTPException(
+            status_code=400,
+            detail="Chip label must be 20 characters or fewer",
+        )
+    if len(stripped.split()) > 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Chip label must be 2 words or fewer",
+        )
+
+
 def _ensure_module_settings_column() -> None:
     if engine.url.get_backend_name() != "sqlite":
         return
@@ -129,9 +146,39 @@ def _ensure_module_settings_column() -> None:
             conn.execute(text("ALTER TABLE modules ADD COLUMN settings_json TEXT"))
             conn.commit()
 
+
+def _ensure_module_intent_columns() -> None:
+    if engine.url.get_backend_name() != "sqlite":
+        return
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(modules)"))
+        columns = {row[1] for row in result}
+        statements = []
+        if "goal" not in columns:
+            statements.append("ALTER TABLE modules ADD COLUMN goal TEXT")
+        if "scope" not in columns:
+            statements.append("ALTER TABLE modules ADD COLUMN scope TEXT")
+        for statement in statements:
+            conn.execute(text(statement))
+        if statements:
+            conn.commit()
+
+
+def _ensure_topic_chip_description_column() -> None:
+    if engine.url.get_backend_name() != "sqlite":
+        return
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(topic_chips)"))
+        columns = {row[1] for row in result}
+        if "description" not in columns:
+            conn.execute(text("ALTER TABLE topic_chips ADD COLUMN description TEXT"))
+            conn.commit()
+
 Base.metadata.create_all(bind=engine)
 _ensure_note_group_source_columns()
 _ensure_module_settings_column()
+_ensure_module_intent_columns()
+_ensure_topic_chip_description_column()
 
 app = FastAPI(title="Study System API")
 
@@ -357,6 +404,23 @@ def health_check():
     return {"status": "ok"}
 
 
+@app.post("/modules/intent-chat", response_model=IntentChatResponse)
+def module_intent_chat(payload: IntentChatRequest):
+    result = generate_module_intent_response(
+        message=payload.message,
+        history=[item.dict() for item in (payload.history or [])],
+        current_title=payload.current_title,
+        current_goal=payload.current_goal,
+        current_scope=payload.current_scope,
+    )
+    return {
+        "assistant_message": result.get("assistant_message", ""),
+        "title": result.get("title"),
+        "goal": result.get("goal"),
+        "scope": result.get("scope"),
+    }
+
+
 @app.get("/subjects", response_model=list[SubjectOut])
 def list_subjects(db: Session = Depends(get_db)):
     return db.query(Subject).order_by(Subject.created_at.desc()).all()
@@ -444,6 +508,8 @@ def create_subject_module(
         subject_id=subject_id,
         title=title,
         description=payload.description,
+        goal=payload.goal.strip() if payload.goal else None,
+        scope=payload.scope.strip() if payload.scope else None,
         settings_json=json.dumps(DEFAULT_MODULE_SETTINGS),
     )
     db.add(module)
@@ -473,7 +539,13 @@ def update_module(module_id: str, payload: ModuleUpdate, db: Session = Depends(g
     module = db.get(Module, module_id)
     if not module:
         raise HTTPException(status_code=404, detail="Module not found")
-    if payload.title is None and payload.description is None and payload.settings is None:
+    if (
+        payload.title is None
+        and payload.description is None
+        and payload.goal is None
+        and payload.scope is None
+        and payload.settings is None
+    ):
         raise HTTPException(status_code=400, detail="Provide fields to update")
     if payload.title is not None:
         title = payload.title.strip()
@@ -483,6 +555,10 @@ def update_module(module_id: str, payload: ModuleUpdate, db: Session = Depends(g
     if payload.description is not None:
         description = payload.description.strip()
         module.description = description or None
+    if payload.goal is not None:
+        module.goal = payload.goal.strip() or None
+    if payload.scope is not None:
+        module.scope = payload.scope.strip() or None
     if payload.settings is not None:
         if not isinstance(payload.settings, dict):
             raise HTTPException(status_code=400, detail="Settings must be an object")
@@ -967,7 +1043,8 @@ def create_topic_chip(
     label = payload.label.strip()
     if not label:
         raise HTTPException(status_code=400, detail="Label cannot be empty")
-    chip = TopicChip(module_id=module_id, label=label)
+    _validate_chip_label(label)
+    chip = TopicChip(module_id=module_id, label=label, description=payload.description)
     db.add(chip)
     db.commit()
     db.refresh(chip)
