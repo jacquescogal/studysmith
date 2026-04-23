@@ -1,22 +1,131 @@
-Study System Implementation Reference
+# Flashcard Study
 
-Technologies
-Frontend: React
-Backend: Python (FastAPI)
-Vector DB: ChromaDB
-AI: OpenAI Embeddings and GPT
-Database: Sqlite
+An application that allows for quick creation of flashcards and delegates checking to objective agent tutors.
 
-Implementation Notes (Current UI)
+Paste in raw study text — lecture notes, textbook excerpts, articles — and the system generates structured study cards and quiz questions automatically. A built-in spaced repetition scheduler surfaces the right questions at the right time, and a RAG-powered chat lets you query your own notes like a tutor.
 
-- Note group creation is a guided workflow: paste raw text → title suggestions → topic chips → finalize.
-- Note group overview shows stats and navigation links; study cards and question cards are routed pages.
-- Reviews run in a modal with FSRS scheduling; submit shows instant feedback, then manual next.
-- Topic chip editing and note group title changes are handled in a metadata modal.
+---
 
-Overview
+## Concept
 
-This document defines the domain model, behavioural rules, API contracts, background processing, and AI prompt templates for an AI-assisted study system. It is intended to be a canonical implementation reference while remaining non-prescriptive on storage schema and infrastructure choices.
+Content is organised in layers. Each layer narrows the retrieval scope for AI search (RAG), so answers are always grounded in the relevant slice of your material.
+
+```
+Subject
+└── Module          ← RAG boundary: search scoped to this module's cards
+    └── Note Group  ← RAG boundary: optionally narrowed to this note group
+        ├── Study Cards   ← atomic facts, embedded in ChromaDB
+        └── Question Cards ← MCQ / multi-answer, FSRS-scheduled
+```
+
+**Topic Chips** are reusable concept tags that live at the module level and attach to note groups and individual study cards. They can be renamed or merged, and are used to filter retrieval and review sessions.
+
+---
+
+## Features
+
+### Card Creation
+- **Wizard workflow** — paste text, get AI title suggestions, pick topic chips, review generated study cards before committing
+- **Auto workflow** — paste text and walk away; study cards and question cards are generated as a background job, with retry support
+- **Manual** — create or edit study cards by hand at any time
+
+### Study & Review
+- **FSRS spaced repetition** — question cards are scheduled using the Free Spaced Repetition Scheduler algorithm
+- **Due / queue / all modes** — review only what's due, preview upcoming cards, or drill everything
+- **Stale detection** — editing a study card automatically marks dependent question cards as stale and queues regeneration
+
+### AI Tutor Chat
+- Ask questions scoped to a module or a specific note group
+- Answers are grounded in your own study cards via vector similarity search
+- Response cites which study cards were used
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | React + Vite |
+| Backend | Python, FastAPI |
+| Relational DB | SQLite |
+| Vector DB | ChromaDB (on-disk) |
+| Embeddings | OpenAI `text-embedding-ada-002` |
+| Generation | OpenAI GPT (chat completions) |
+| Scheduling | FSRS |
+
+---
+
+## Current State & Limitations
+
+- **OpenAI only.** The backend is currently hardwired to the OpenAI SDK. Swapping providers requires editing `backend/app/openai_client.py` directly.
+- **Local only.** There is no auth, multi-user support, or cloud deployment path yet.
+- **Manual setup.** Running the app requires setting up a Python venv and Node environment separately (see below).
+
+---
+
+## Setup
+
+### Requirements
+- Python 3.10+
+- Node.js 18+
+- An OpenAI API key
+
+### Backend
+
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+Create `backend/.env`:
+
+```env
+OPENAI_API_KEY=sk-...
+```
+
+Start the API:
+
+```bash
+uvicorn app.main:app --reload --port 8000
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open [http://localhost:5173](http://localhost:5173).
+
+> The frontend talks to `http://localhost:8000` by default. Override with `VITE_API_BASE_URL` in a `frontend/.env` file if needed.
+
+### Schema changes
+
+If you have a database from an older version and see errors, delete `backend/study.db` and `backend/chroma/` then restart. The schema is recreated on startup.
+
+---
+
+## Roadmap
+
+- [ ] **Model-agnostic provider** — abstract the AI client so any OpenAI-compatible endpoint (Anthropic, Gemini, Ollama, etc.) can be configured via env vars without code changes
+- [ ] **Single executable** — bundle backend and frontend into one runnable binary so setup is just "provide key, double-click, open browser"
+- [x] Module-level review page with cross-note-group scheduling
+- [x] Due-count badge per note group in the sidebar
+- [x] Dropdown search for topic chip selection (replaces toggle list for large chip pools)
+
+---
+
+## Contributing
+
+Pull requests welcome. There is no test suite yet — if you add one, place backend tests in `backend/tests/` and frontend tests in `frontend/src/__tests__/`.
+
+---
+
+## Implementation Reference
 
 Domain Model
 Subject

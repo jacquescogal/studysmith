@@ -1895,6 +1895,31 @@ export default function App() {
     }
   };
 
+  const handleNoteGroupChipSelectChange = async (selected) => {
+    if (!selectedNoteGroupId) {
+      return;
+    }
+    const newIds = (selected || []).map((opt) => opt.value);
+    const toAdd = newIds.filter((id) => !noteGroupChipIds.includes(id));
+    const toRemove = noteGroupChipIds.filter((id) => !newIds.includes(id));
+    let lastChips = null;
+    try {
+      for (const chipId of toAdd) {
+        lastChips = await attachTopicChips(selectedNoteGroupId, { chip_ids: [chipId] });
+      }
+      for (const chipId of toRemove) {
+        lastChips = await detachTopicChip(selectedNoteGroupId, chipId);
+      }
+      if (lastChips) {
+        setNoteGroupChipIds(lastChips.map((chip) => chip.id));
+      } else {
+        setNoteGroupChipIds(newIds);
+      }
+    } catch (error) {
+      setStudyCardError(error.message || "Failed to update topic chips");
+    }
+  };
+
   const reorderNoteGroups = (items, sourceId, targetId) => {
     if (sourceId === targetId) {
       return items;
@@ -3438,24 +3463,23 @@ export default function App() {
                 rows={4}
                 disabled={!selectedNoteGroupId}
               />
-              <div className="chip-grid">
-                {topicChips.map((chip) => (
-                  <label key={chip.id} className="chip-toggle">
-                    <input
-                      type="checkbox"
-                      checked={newStudyCardChipIds.includes(chip.id)}
-                      onChange={() =>
-                        setNewStudyCardChipIds((prev) =>
-                          prev.includes(chip.id)
-                            ? prev.filter((id) => id !== chip.id)
-                            : [...prev, chip.id]
-                        )
-                      }
-                    />
-                    {chip.label}
-                  </label>
-                ))}
-              </div>
+              {chipOptions.length > 0 ? (
+                <Select
+                  className="select"
+                  classNamePrefix="select"
+                  options={chipOptions}
+                  value={chipOptions.filter((opt) => newStudyCardChipIds.includes(opt.value))}
+                  onChange={(selected) =>
+                    setNewStudyCardChipIds((selected || []).map((opt) => opt.value))
+                  }
+                  placeholder="Assign topic chips"
+                  isMulti
+                  isClearable
+                  maxMenuHeight={200}
+                  menuPortalTarget={document.body}
+                  styles={selectStyles}
+                />
+              ) : null}
               <div className="button-row">
                 <button
                   className="button primary"
@@ -3671,24 +3695,23 @@ export default function App() {
             </div>
             {metadataError ? <p className="error">{metadataError}</p> : null}
             <div className="divider">Topic chips</div>
-            <div className="chip-grid">
-              {topicChips.length === 0 ? (
-                <p className="muted">Create chips to tag and filter note groups.</p>
-              ) : (
-                topicChips.map((chip) => (
-                  <label key={chip.id} className="chip-toggle">
-                    <input
-                      type="checkbox"
-                      checked={noteGroupChipIds.includes(chip.id)}
-                      onChange={(event) =>
-                        handleToggleNoteGroupChip(chip.id, event.target.checked)
-                      }
-                    />
-                    {chip.label}
-                  </label>
-                ))
-              )}
-            </div>
+            {topicChips.length === 0 ? (
+              <p className="muted">Create chips to tag and filter note groups.</p>
+            ) : (
+              <Select
+                className="select"
+                classNamePrefix="select"
+                options={chipOptions}
+                value={chipOptions.filter((opt) => noteGroupChipIds.includes(opt.value))}
+                onChange={handleNoteGroupChipSelectChange}
+                placeholder="Search and assign topic chips"
+                isMulti
+                isClearable
+                maxMenuHeight={220}
+                menuPortalTarget={document.body}
+                styles={selectStyles}
+              />
+            )}
             <div className="form-inline">
               <input
                 type="text"
