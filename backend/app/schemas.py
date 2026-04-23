@@ -21,11 +21,15 @@ class SubjectOut(BaseModel):
 class ModuleCreate(BaseModel):
     title: str
     description: Optional[str] = None
+    goal: Optional[str] = None
+    scope: Optional[str] = None
 
 
 class ModuleUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
+    goal: Optional[str] = None
+    scope: Optional[str] = None
     settings: Optional[dict] = None
 
 
@@ -34,6 +38,8 @@ class ModuleOut(BaseModel):
     subject_id: str
     title: str
     description: Optional[str] = None
+    goal: Optional[str] = None
+    scope: Optional[str] = None
     settings: dict = Field(default_factory=dict)
 
     class Config:
@@ -84,12 +90,14 @@ class StudyCardOut(BaseModel):
 
 class TopicChipCreate(BaseModel):
     label: str
+    description: Optional[str] = None
 
 
 class TopicChipOut(BaseModel):
     id: str
     module_id: str
     label: str
+    description: Optional[str] = None
 
     class Config:
         orm_mode = True
@@ -162,6 +170,26 @@ class ChatHistoryItem(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     study_card_refs: List[str]
+
+
+class IntentChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class IntentChatRequest(BaseModel):
+    message: str
+    history: Optional[List[IntentChatMessage]] = None
+    current_title: Optional[str] = None
+    current_goal: Optional[str] = None
+    current_scope: Optional[str] = None
+
+
+class IntentChatResponse(BaseModel):
+    assistant_message: str
+    title: Optional[str] = None
+    goal: Optional[str] = None
+    scope: Optional[str] = None
 
 
 NoteGroupOut.update_forward_refs()
