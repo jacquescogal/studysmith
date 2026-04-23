@@ -24,8 +24,10 @@ QUESTION_SYSTEM_PROMPT = (
     "Every question must reference which Study Cards support the answer. "
     "Create MCQ or multi-answer questions. Avoid ambiguity; test understanding. "
     "Prefer scenario-based questions when appropriate. "
+    "If more than one option is correct, set type to 'multi'. "
     "Return JSON only. Each question must include: type ('mcq' or 'multi'), "
     "prompt, options (4 short strings), correct_option_indices (array of integers), "
+    "option_explanations (array of 4 short strings aligned with options), "
     "and study_card_refs (array of studyCardId strings)."
 )
 
@@ -73,20 +75,31 @@ def _parse_json(text: str) -> dict:
         return json.loads(match.group(0))
 
 
-def generate_study_cards(module_title: str, module_description: Optional[str], raw_text: str) -> List[dict]:
+def generate_study_cards(
+    module_title: str,
+    module_description: Optional[str],
+    raw_text: str,
+    additional_instructions: Optional[str] = None,
+) -> List[dict]:
     client_instance = _require_client()
     module_context = f"Module context: {module_title}"
     if module_description:
         module_context += f" ({module_description})"
 
+    instruction_block = ""
+    if additional_instructions:
+        instruction_block = (
+            f"Additional generation instructions: {additional_instructions}\n"
+        )
     user_prompt = (
         f"{module_context}\n"
+        f"{instruction_block}"
         f"Raw text: {raw_text}\n"
         "Output: list of Study Cards with { title?, content, key_terms? } in JSON."
     )
 
     response = client_instance.chat.completions.create(
-        model=settings.openai_model,
+        model=settings.openai_generation_model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
@@ -108,23 +121,30 @@ def generate_study_cards_with_context(
     note_group_title: str,
     raw_text: str,
     chip_labels: List[str],
+    additional_instructions: Optional[str] = None,
 ) -> List[dict]:
     client_instance = _require_client()
     module_context = f"Module context: {module_title}"
     if module_description:
         module_context += f" ({module_description})"
 
+    instruction_block = ""
+    if additional_instructions:
+        instruction_block = (
+            f"Additional generation instructions: {additional_instructions}\n"
+        )
     user_prompt = (
         f"{module_context}\n"
         f"Note group title: {note_group_title}\n"
         f"Topic chips: {chip_labels}\n"
+        f"{instruction_block}"
         f"Raw text: {raw_text}\n"
         "Output JSON as { \"study_cards\": [ { \"title\": \"...\", \"content\": \"...\", "
         "\"topic_chips\": [\"...\"] } ] }."
     )
 
     response = client_instance.chat.completions.create(
-        model=settings.openai_model,
+        model=settings.openai_generation_model,
         messages=[
             {"role": "system", "content": STUDY_CARD_CONTEXT_PROMPT},
             {"role": "user", "content": user_prompt},
@@ -154,9 +174,16 @@ def generate_question_cards(
     existing_questions: List[str],
     count: int,
     difficulty: str,
+    additional_instructions: Optional[str] = None,
 ) -> List[dict]:
     client_instance = _require_client()
+    instruction_block = ""
+    if additional_instructions:
+        instruction_block = (
+            f"Additional generation instructions:\n{additional_instructions}\n\n"
+        )
     user_prompt = (
+        f"{instruction_block}"
         "Study cards:\n"
         f"{study_cards}\n\n"
         "Existing questions (avoid repeating these):\n"
@@ -164,7 +191,9 @@ def generate_question_cards(
         "Rules:\n"
         "- Use only the provided studyCardId values in study_card_refs.\n"
         "- Provide exactly 4 options per question.\n"
+        "- Provide option_explanations with 4 short strings aligned to the options.\n"
         "- correct_option_indices must be 0-based indices into options.\n"
+        "- If more than one correct index is provided, type must be 'multi'.\n"
         "- For multi-answer, include all correct indices.\n\n"
         f"Desired count (suggestion): {count}\n"
         f"Difficulty: {difficulty}\n\n"
@@ -173,7 +202,7 @@ def generate_question_cards(
     )
 
     response = client_instance.chat.completions.create(
-        model=settings.openai_model,
+        model=settings.openai_generation_model,
         messages=[
             {"role": "system", "content": QUESTION_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
@@ -210,7 +239,7 @@ def generate_chat_response(
         messages.extend(history)
     messages.append({"role": "user", "content": user_prompt})
     response = client_instance.chat.completions.create(
-        model=settings.openai_model,
+        model=settings.openai_chat_model,
         messages=messages,
         temperature=0.2,
         response_format={"type": "json_object"},
@@ -231,7 +260,7 @@ def generate_note_group_title_suggestions(module_title: str, raw_text: str) -> L
         "Return exactly three title suggestions. Output JSON as { \"titles\": [\"...\", \"...\", \"...\"] }."
     )
     response = client_instance.chat.completions.create(
-        model=settings.openai_model,
+        model=settings.openai_generation_model,
         messages=[
             {"role": "system", "content": TITLE_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
@@ -257,7 +286,7 @@ def suggest_topic_chips(module_chip_pool: List[dict], content: str) -> dict:
         "Output JSON as { \"attach_chip_ids\": [\"...\"], \"new_chips\": [\"...\"] }."
     )
     response = client_instance.chat.completions.create(
-        model=settings.openai_model,
+        model=settings.openai_generation_model,
         messages=[
             {"role": "system", "content": TOPIC_CHIP_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
@@ -287,7 +316,7 @@ def generate_formatted_sections(raw_text: str, study_cards: List[dict]) -> List[
     )
 
     response = client_instance.chat.completions.create(
-        model=settings.openai_model,
+        model=settings.openai_generation_model,
         messages=[
             {"role": "system", "content": FORMATTED_TEXT_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},

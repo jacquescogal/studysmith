@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SubjectCreate(BaseModel):
@@ -26,6 +26,7 @@ class ModuleCreate(BaseModel):
 class ModuleUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
+    settings: Optional[dict] = None
 
 
 class ModuleOut(BaseModel):
@@ -33,6 +34,7 @@ class ModuleOut(BaseModel):
     subject_id: str
     title: str
     description: Optional[str] = None
+    settings: dict = Field(default_factory=dict)
 
     class Config:
         orm_mode = True
@@ -54,10 +56,14 @@ class NoteGroupOut(BaseModel):
     id: str
     module_id: str
     title: Optional[str] = None
+    source: Optional[str] = None
+    additional_generation_instructions: Optional[str] = None
     raw_text: str
     formatted_text: Optional[str] = None
     formatted_sections: List["NoteGroupSectionOut"] = []
     generation_status: str
+    created_at: datetime
+    sort_order: Optional[int] = None
     topic_chips: List["TopicChipOut"] = []
     suggested_titles: List[str] = []
 
@@ -101,9 +107,18 @@ class QuestionCardOut(BaseModel):
     options: List[str]
     correct_option_indices: List[int]
     study_card_refs: List[str]
+    option_explanations: List[str] = []
     stale: bool
     due_at: Optional[datetime] = None
     last_review_at: Optional[datetime] = None
+    stability: Optional[float] = None
+    difficulty: Optional[float] = None
+    elapsed_days: Optional[int] = None
+    scheduled_days: Optional[int] = None
+    reps: Optional[int] = None
+    lapses: Optional[int] = None
+    state: Optional[int] = None
+    step: Optional[int] = None
 
 
 class QuestionCardList(BaseModel):
@@ -113,6 +128,20 @@ class QuestionCardList(BaseModel):
 class QuestionCardGenerate(BaseModel):
     count: Optional[int] = 6
     difficulty: Optional[str] = "mixed"
+
+
+class QuestionTimelineOut(BaseModel):
+    due: int
+    week: int
+    month: int
+    six_months: int
+    long_term: int
+
+
+class QuestionTimelineResponse(BaseModel):
+    timeline: QuestionTimelineOut
+    question_count: int
+    stale_count: int
 
 
 class ChatRequest(BaseModel):
@@ -173,6 +202,7 @@ class QuestionCardCreate(BaseModel):
     options: List[str]
     correct_option_indices: List[int]
     study_card_refs: List[str]
+    option_explanations: Optional[List[str]] = None
 
 
 class QuestionCardUpdate(BaseModel):
@@ -181,6 +211,7 @@ class QuestionCardUpdate(BaseModel):
     options: Optional[List[str]] = None
     correct_option_indices: Optional[List[int]] = None
     study_card_refs: Optional[List[str]] = None
+    option_explanations: Optional[List[str]] = None
 
 
 class QuestionCardReview(BaseModel):
@@ -219,10 +250,31 @@ class NoteGroupTopicChipSuggestResponse(BaseModel):
     new_chips: List[str]
 
 
+class NoteGroupSourceCheckRequest(BaseModel):
+    source: str
+
+
+class NoteGroupSourceMatch(BaseModel):
+    id: str
+    module_id: str
+    title: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        orm_mode = True
+
+
+class NoteGroupSourceCheckResponse(BaseModel):
+    normalized: str
+    duplicates: List[NoteGroupSourceMatch] = []
+
+
 class NoteGroupFinalizeRequest(BaseModel):
     module_id: str
     raw_text: str
     title: str
+    source: str
+    additional_generation_instructions: Optional[str] = None
     existing_chip_ids: List[str] = []
     new_chip_labels: List[str] = []
 
@@ -230,3 +282,15 @@ class NoteGroupFinalizeRequest(BaseModel):
 class NoteGroupFinalizeResponse(BaseModel):
     note_group: NoteGroupOut
     study_cards: List[StudyCardOut]
+
+
+class NoteGroupAutoRequest(BaseModel):
+    module_id: str
+    raw_text: str
+    source: str
+    question_count: Optional[int] = None
+    additional_generation_instructions: Optional[str] = None
+
+
+class NoteGroupOrderUpdate(BaseModel):
+    note_group_ids: List[str]

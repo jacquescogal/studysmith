@@ -48,6 +48,14 @@ const parseIndices = (text) =>
     .map((value) => Number(value.trim()))
     .filter((value) => Number.isInteger(value) && value >= 0);
 
+const DUE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
+const SIX_MONTHS_MS = 182 * 24 * 60 * 60 * 1000;
+const MASTERY_MAX = 10;
+const MASTERY_LOW_MAX = 3;
+const MASTERY_MEDIUM_MAX = 6;
+
 const renderInlineText = (text) => {
   const segments = [];
   const regex = /\*\*(.+?)\*\*/g;
@@ -132,8 +140,11 @@ const formatAnswerLabels = (card, indices) => {
   if (!card || !Array.isArray(indices) || indices.length === 0) {
     return "No answer";
   }
+  const options = card.reviewChoices
+    ? card.reviewChoices.map((choice) => choice.text)
+    : card.reviewOptions || card.options || [];
   const labels = indices
-    .map((index) => card.options?.[index])
+    .map((index) => options?.[index])
     .filter((option) => Boolean(option));
   return labels.length ? labels.join(", ") : "No answer";
 };
@@ -166,6 +177,13 @@ export default function App() {
     questionCount: 0,
     dueCount: 0,
     staleCount: 0
+  });
+  const [moduleQuestionTimeline, setModuleQuestionTimeline] = useState({
+    due: 0,
+    week: 0,
+    month: 0,
+    sixMonths: 0,
+    longTerm: 0
   });
   const [moduleStatsLoading, setModuleStatsLoading] = useState(false);
   const [moduleStatsError, setModuleStatsError] = useState("");
@@ -210,6 +228,7 @@ export default function App() {
   const [newStudyCardTitle, setNewStudyCardTitle] = useState("");
   const [newStudyCardContent, setNewStudyCardContent] = useState("");
   const [newStudyCardChipIds, setNewStudyCardChipIds] = useState([]);
+  const [isStudyCreateOpen, setIsStudyCreateOpen] = useState(false);
   const [editingStudyCardId, setEditingStudyCardId] = useState("");
   const [editingStudyCard, setEditingStudyCard] = useState({
     title: "",
@@ -222,6 +241,10 @@ export default function App() {
   const [questionJobStatus, setQuestionJobStatus] = useState("idle");
   const [questionCount, setQuestionCount] = useState(6);
   const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
+  const [isQuestionCreateOpen, setIsQuestionCreateOpen] = useState(false);
+  const [masteryFilter, setMasteryFilter] = useState("all");
+  const [isQuestionFocusOpen, setIsQuestionFocusOpen] = useState(false);
+  const [focusQuestionCardId, setFocusQuestionCardId] = useState("");
   const [reviewQueue, setReviewQueue] = useState([]);
   const [reviewIndex, setReviewIndex] = useState(0);
   const [reviewMode, setReviewMode] = useState("due");
@@ -239,6 +262,7 @@ export default function App() {
     total: 0,
     totalMs: 0
   });
+  const [reviewRefreshToken, setReviewRefreshToken] = useState(0);
   const [reviewSummary, setReviewSummary] = useState(null);
   const [reviewChatMessages, setReviewChatMessages] = useState([]);
   const [reviewChatInput, setReviewChatInput] = useState("");
@@ -296,6 +320,10 @@ export default function App() {
     () => noteGroups.find((group) => group.id === selectedNoteGroupId),
     [noteGroups, selectedNoteGroupId]
   );
+  const focusQuestionCard = useMemo(
+    () => questionCards.find((card) => card.id === focusQuestionCardId),
+    [questionCards, focusQuestionCardId]
+  );
 
   const getDueCount = (cards, now = Date.now()) =>
     cards.filter((card) => {
@@ -303,20 +331,202 @@ export default function App() {
         return true;
       }
       const dueTime = new Date(card.due_at).getTime();
-      return Number.isNaN(dueTime) ? true : dueTime <= now;
+      return Number.isNaN(dueTime) ? true : dueTime <= now + DUE_WINDOW_MS;
     }).length;
+
+  const buildTimeline = (cards, now) =>
+    cards.reduce(
+      (acc, card) => {
+        if (!card.due_at) {
+          acc.due += 1;
+          return acc;
+        }
+        const dueTime = new Date(card.due_at).getTime();
+        if (Number.isNaN(dueTime)) {
+          acc.due += 1;
+          return acc;
+        }
+        const diff = dueTime - now;
+        if (diff <= DUE_WINDOW_MS) {
+          acc.due += 1;
+        } else if (diff <= WEEK_MS) {
+          acc.week += 1;
+        } else if (diff <= MONTH_MS) {
+          acc.month += 1;
+        } else if (diff <= SIX_MONTHS_MS) {
+          acc.sixMonths += 1;
+        } else {
+          acc.longTerm += 1;
+        }
+        return acc;
+      },
+      {
+        due: 0,
+        week: 0,
+        month: 0,
+        sixMonths: 0,
+        longTerm: 0
+      }
+    );
+
+  const buildReviewCard = (card) => {
+    const options = Array.isArray(card.options) ? card.options : [];
+    const explanations = Array.isArray(card.option_explanations)
+      ? card.option_explanations
+      : [];
+    if (!options.length) {
+      return {
+        ...card,
+        reviewOptions: options,
+        reviewCorrectIndices: card.correct_option_indices || [],
+        reviewOptionExplanations: explanations,
+        reviewChoices: []
+      };
+    }
+    const indices = options.map((_, idx) => idx);
+    for (let i = indices.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [indices[i], indices[j]] = [indices[j], indices[i]];
+    }
+    const newIndexByOld = new Map();
+    indices.forEach((oldIndex, newIndex) => {
+      newIndexByOld.set(oldIndex, newIndex);
+    });
+    const reviewChoices = indices.map((idx) => ({
+      text: options[idx],
+      explanation: explanations[idx] || "",
+      originalIndex: idx
+    }));
+    const reviewOptions = reviewChoices.map((choice) => choice.text);
+    const reviewOptionExplanations = reviewChoices.map((choice) => choice.explanation);
+    const reviewCorrectIndices = (card.correct_option_indices || [])
+      .map((idx) => newIndexByOld.get(idx))
+      .filter((idx) => Number.isInteger(idx));
+    return {
+      ...card,
+      reviewOptions,
+      reviewCorrectIndices,
+      reviewOptionExplanations,
+      reviewChoices
+    };
+  };
+
+  const getMasteryScore = (card) => {
+    const difficulty = Number(card?.difficulty);
+    if (!Number.isFinite(difficulty) || difficulty <= 0) {
+      return null;
+    }
+    const score = MASTERY_MAX - difficulty;
+    return Math.max(0, Math.min(MASTERY_MAX, score));
+  };
+
+  const getMasteryTier = (score) => {
+    if (score === null) {
+      return "unknown";
+    }
+    if (score <= MASTERY_LOW_MAX) {
+      return "low";
+    }
+    if (score <= MASTERY_MEDIUM_MAX) {
+      return "medium";
+    }
+    return "high";
+  };
+
+  const filteredStudyCards = useMemo(() => {
+    if (!chipFilterIds.length) {
+      return studyCards;
+    }
+    return studyCards.filter((card) =>
+      (card.topic_chips || []).some((chip) => chipFilterIds.includes(chip.id))
+    );
+  }, [studyCards, chipFilterIds]);
+
+  const filteredQuestionCards = useMemo(() => {
+    if (!chipFilterIds.length) {
+      return questionCards;
+    }
+    const allowedStudyIds = new Set(filteredStudyCards.map((card) => card.id));
+    return questionCards.filter((card) =>
+      (card.study_card_refs || []).some((refId) => allowedStudyIds.has(refId))
+    );
+  }, [questionCards, filteredStudyCards, chipFilterIds]);
+
+  const questionCardsForDisplay = useMemo(() => {
+    const filtered =
+      masteryFilter === "all"
+        ? filteredQuestionCards
+        : filteredQuestionCards.filter((card) => {
+            const score = getMasteryScore(card);
+            const tier = getMasteryTier(score);
+            return tier === masteryFilter;
+          });
+    return [...filtered].sort((a, b) => {
+      const scoreA = getMasteryScore(a);
+      const scoreB = getMasteryScore(b);
+      if (scoreA === null && scoreB === null) {
+        return 0;
+      }
+      if (scoreA === null) {
+        return 1;
+      }
+      if (scoreB === null) {
+        return -1;
+      }
+      return scoreA - scoreB;
+    });
+  }, [filteredQuestionCards, masteryFilter]);
+
+  const questionTimeline = useMemo(() => {
+    const now = Date.now();
+    return buildTimeline(filteredQuestionCards, now);
+  }, [filteredQuestionCards]);
 
   const noteGroupStats = useMemo(() => {
     const now = Date.now();
-    const dueCount = getDueCount(questionCards, now);
-    const staleCount = questionCards.filter((card) => card.stale).length;
+    const dueCount = getDueCount(filteredQuestionCards, now);
+    const staleCount = filteredQuestionCards.filter((card) => card.stale).length;
     return {
-      studyCount: studyCards.length,
-      questionCount: questionCards.length,
+      studyCount: filteredStudyCards.length,
+      questionCount: filteredQuestionCards.length,
       dueCount,
       staleCount
     };
-  }, [questionCards, studyCards]);
+  }, [filteredQuestionCards, filteredStudyCards]);
+
+  const sectionNavItems = useMemo(() => {
+    if (noteGroupMode === "create") {
+      return [
+        { id: "step-raw", label: "Paste raw text" },
+        { id: "step-title", label: "Choose a title" },
+        { id: "step-chips", label: "Select topic chips" },
+        { id: "step-finalize", label: "Generate study cards" }
+      ];
+    }
+    if (!selectedModuleId) {
+      return [];
+    }
+    if (!selectedNoteGroupId) {
+      return [
+        { id: "module-overview", label: "Module overview" },
+        { id: "module-review", label: "Review queue" },
+        { id: "module-timeline", label: "Question timeline" },
+        { id: "module-note-groups", label: "Note groups" }
+      ];
+    }
+    if (isStudyPage) {
+      return [{ id: "study-list", label: "Study cards" }];
+    }
+    if (isQuestionPage) {
+      return [
+        { id: "question-review", label: "Review" },
+        { id: "question-timeline", label: "Timeline" },
+        { id: "question-list", label: "Question cards" },
+        { id: "question-generate", label: "Generate" }
+      ];
+    }
+    return [{ id: "note-group-overview", label: "Overview" }];
+  }, [noteGroupMode, selectedModuleId, selectedNoteGroupId, isStudyPage, isQuestionPage]);
 
   const subjectOptions = useMemo(
     () => subjects.map((subject) => ({ value: subject.id, label: subject.title })),
@@ -325,6 +535,14 @@ export default function App() {
   const moduleOptions = useMemo(
     () => modules.map((module) => ({ value: module.id, label: module.title })),
     [modules]
+  );
+  const chipOptions = useMemo(
+    () => topicChips.map((chip) => ({ value: chip.id, label: chip.label })),
+    [topicChips]
+  );
+  const chipFilterValue = useMemo(
+    () => chipOptions.filter((option) => chipFilterIds.includes(option.value)),
+    [chipOptions, chipFilterIds]
   );
   const noteGroupOptions = useMemo(
     () =>
@@ -341,6 +559,18 @@ export default function App() {
     });
     return map;
   }, [moduleNoteGroupStats]);
+  const moduleNoteGroupsForDisplay = useMemo(() => {
+    if (!chipFilterIds.length || moduleStatsLoading) {
+      return noteGroups;
+    }
+    return noteGroups.filter((group) => {
+      const statsEntry = moduleNoteGroupStatsById.get(group.id);
+      if (!statsEntry) {
+        return true;
+      }
+      return statsEntry.studyCount > 0 || statsEntry.questionCount > 0;
+    });
+  }, [noteGroups, chipFilterIds, moduleNoteGroupStatsById, moduleStatsLoading]);
   const studyCardTitleById = useMemo(() => {
     const map = new Map();
     studyCards.forEach((card) => {
@@ -375,10 +605,10 @@ export default function App() {
     );
   };
   const formatModuleOptionLabel = (option, { context }) => {
-    if (context === "value") {
+    const dueCount = moduleDueCounts[option.value];
+    if (context === "value" && !(Number.isInteger(dueCount) && dueCount > 0)) {
       return option.label;
     }
-    const dueCount = moduleDueCounts[option.value];
     return (
       <div className="select-option">
         <span>{option.label}</span>
@@ -391,15 +621,31 @@ export default function App() {
   const getSectionAnchor = (section, index) =>
     section.anchor ||
     `section-${index + 1}-${(section.study_card_id || "note").slice(0, 8)}`;
-
   const newChipDisplay = useMemo(() => {
     const merged = [...chipSuggestionNew, ...selectedNewChipLabels];
     return Array.from(new Set(merged));
   }, [chipSuggestionNew, selectedNewChipLabels]);
 
   const currentReviewCard = reviewQueue[reviewIndex];
+  const reviewCardType = useMemo(() => {
+    if (!currentReviewCard) {
+      return "mcq";
+    }
+    const correctIndices =
+      currentReviewCard.reviewCorrectIndices ||
+      currentReviewCard.correct_option_indices ||
+      [];
+    if (currentReviewCard.type === "mcq" && correctIndices.length > 1) {
+      return "multi";
+    }
+    return currentReviewCard.type || "mcq";
+  }, [currentReviewCard]);
   const reviewNoteGroupId =
     reviewScope === "module" ? currentReviewCard?.note_group_id : selectedNoteGroupId;
+  const reviewCardRefs = currentReviewCard?.study_card_refs || [];
+  const reviewRefsMessage = reviewCardRefs.length
+    ? "The relevant study cards are:"
+    : "The relevant study cards are: no study card is linked to this question.";
   const isReviewOverlayVisible = isReviewing || Boolean(reviewSummary);
   const formatDueAt = (value) => {
     if (!value) {
@@ -411,6 +657,26 @@ export default function App() {
     }
     return date.toUTCString();
   };
+  const formatReviewAt = (value) => {
+    if (!value) {
+      return "Never";
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return "Never";
+    }
+    return date.toUTCString();
+  };
+  const focusMasteryScore = focusQuestionCard
+    ? getMasteryScore(focusQuestionCard)
+    : null;
+  const focusMasteryTier = getMasteryTier(focusMasteryScore);
+  const focusCardType =
+    focusQuestionCard &&
+    focusQuestionCard.type === "mcq" &&
+    (focusQuestionCard.correct_option_indices || []).length > 1
+      ? "multi"
+      : focusQuestionCard?.type || "mcq";
 
   useEffect(() => {
     listSubjects()
@@ -487,7 +753,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [modules]);
+  }, [modules, reviewRefreshToken]);
 
   useEffect(() => {
     if (!selectedModuleId) {
@@ -495,7 +761,7 @@ export default function App() {
       setSelectedNoteGroupId("");
       return;
     }
-    listNoteGroups(selectedModuleId, chipFilterIds)
+    listNoteGroups(selectedModuleId)
       .then((data) => {
         setNoteGroups(data);
         if (
@@ -507,7 +773,7 @@ export default function App() {
         }
       })
       .catch((error) => setSidebarError(error.message));
-  }, [selectedModuleId, chipFilterIds, routeNoteGroupId, selectedNoteGroupId]);
+  }, [selectedModuleId, routeNoteGroupId, selectedNoteGroupId]);
 
   useEffect(() => {
     if (!selectedModuleId) {
@@ -517,6 +783,13 @@ export default function App() {
         questionCount: 0,
         dueCount: 0,
         staleCount: 0
+      });
+      setModuleQuestionTimeline({
+        due: 0,
+        week: 0,
+        month: 0,
+        sixMonths: 0,
+        longTerm: 0
       });
       setModuleStatsError("");
       setModuleStatsLoading(false);
@@ -529,6 +802,13 @@ export default function App() {
         questionCount: 0,
         dueCount: 0,
         staleCount: 0
+      });
+      setModuleQuestionTimeline({
+        due: 0,
+        week: 0,
+        month: 0,
+        sixMonths: 0,
+        longTerm: 0
       });
       setModuleStatsError("");
       setModuleStatsLoading(false);
@@ -546,15 +826,30 @@ export default function App() {
               listStudyCards(group.id),
               listQuestionCards(group.id)
             ]);
-            const studyCount = studyResponse.study_cards?.length || 0;
+            const studyCardsList = studyResponse.study_cards || [];
             const questionList = questionResponse.question_cards || [];
+            let filteredStudyCardsList = studyCardsList;
+            let filteredQuestionList = questionList;
+            if (chipFilterIds.length) {
+              filteredStudyCardsList = studyCardsList.filter((card) =>
+                (card.topic_chips || []).some((chip) => chipFilterIds.includes(chip.id))
+              );
+              const allowedStudyIds = new Set(
+                filteredStudyCardsList.map((card) => card.id)
+              );
+              filteredQuestionList = questionList.filter((card) =>
+                (card.study_card_refs || []).some((refId) => allowedStudyIds.has(refId))
+              );
+            }
+            const timeline = buildTimeline(filteredQuestionList, now);
             return {
               id: group.id,
               title: group.title || "Untitled note group",
-              studyCount,
-              questionCount: questionList.length,
-              dueCount: getDueCount(questionList, now),
-              staleCount: questionList.filter((card) => card.stale).length
+              studyCount: filteredStudyCardsList.length,
+              questionCount: filteredQuestionList.length,
+              dueCount: getDueCount(filteredQuestionList, now),
+              staleCount: filteredQuestionList.filter((card) => card.stale).length,
+              timeline
             };
           })
         );
@@ -573,9 +868,34 @@ export default function App() {
             { studyCount: 0, questionCount: 0, dueCount: 0, staleCount: 0 }
           )
         );
+        setModuleQuestionTimeline(
+          stats.reduce(
+            (acc, group) => ({
+              due: acc.due + group.timeline.due,
+              week: acc.week + group.timeline.week,
+              month: acc.month + group.timeline.month,
+              sixMonths: acc.sixMonths + group.timeline.sixMonths,
+              longTerm: acc.longTerm + group.timeline.longTerm
+            }),
+            {
+              due: 0,
+              week: 0,
+              month: 0,
+              sixMonths: 0,
+              longTerm: 0
+            }
+          )
+        );
       } catch (error) {
         if (!cancelled) {
           setModuleStatsError(error.message || "Failed to load module stats");
+          setModuleQuestionTimeline({
+            due: 0,
+            week: 0,
+            month: 0,
+            sixMonths: 0,
+            longTerm: 0
+          });
         }
       } finally {
         if (!cancelled) {
@@ -588,7 +908,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedModuleId, noteGroups]);
+  }, [selectedModuleId, noteGroups, chipFilterIds, reviewRefreshToken]);
 
   useEffect(() => {
     if (!selectedNoteGroupId) {
@@ -627,6 +947,10 @@ export default function App() {
     setIsMetadataOpen(false);
     setIsModuleMetadataOpen(false);
     setIsReadingOpen(false);
+    setIsQuestionFocusOpen(false);
+    setFocusQuestionCardId("");
+    setIsQuestionCreateOpen(false);
+    setIsStudyCreateOpen(false);
     setMetadataError("");
     setModuleMetadataError("");
   }, [selectedNoteGroupId, selectedModuleId]);
@@ -688,6 +1012,32 @@ export default function App() {
       container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
     }
   }, [reviewChatMessages, reviewChatView]);
+
+  useEffect(() => {
+    if (!reviewFeedback || !currentReviewCard) {
+      return;
+    }
+    const refs = currentReviewCard.study_card_refs || [];
+    if (!refs.length) {
+      return;
+    }
+    refs.forEach((refId) => {
+      setReviewChatCardCache((prev) => {
+        if (prev[refId]) {
+          return prev;
+        }
+        getStudyCard(refId)
+          .then((card) =>
+            setReviewChatCardCache((next) => ({
+              ...next,
+              [refId]: card
+            }))
+          )
+          .catch(() => null);
+        return prev;
+      });
+    });
+  }, [reviewFeedback, currentReviewCard]);
 
   useEffect(() => {
     if (routeNoteGroupId && routeNoteGroupId !== selectedNoteGroupId) {
@@ -970,7 +1320,7 @@ export default function App() {
       setNoteGroupChipIds((createdNoteGroup.topic_chips || []).map((chip) => chip.id));
       setFormattedSections(createdNoteGroup.formatted_sections || []);
       setStudyCards(response.study_cards || []);
-      const groups = await listNoteGroups(selectedModuleId, chipFilterIds);
+      const groups = await listNoteGroups(selectedModuleId);
       setNoteGroups(groups);
       const chips = await listTopicChips(selectedModuleId);
       setTopicChips(chips);
@@ -1017,10 +1367,12 @@ export default function App() {
     setModuleChipLabel("");
   };
 
-  const handleToggleFilterChip = (chipId) => {
-    setChipFilterIds((prev) =>
-      prev.includes(chipId) ? prev.filter((id) => id !== chipId) : [...prev, chipId]
-    );
+  const handleChipFilterSelect = (options) => {
+    const nextIds = options ? options.map((option) => option.value) : [];
+    setChipFilterIds(nextIds);
+  };
+  const handleResetChipFilters = () => {
+    setChipFilterIds([]);
   };
 
   const handleToggleNoteGroupChip = async (chipId, isChecked) => {
@@ -1121,9 +1473,15 @@ export default function App() {
       setNewStudyCardTitle("");
       setNewStudyCardContent("");
       setNewStudyCardChipIds([]);
+      setIsStudyCreateOpen(false);
     } catch (error) {
       setStudyCardError(error.message || "Failed to create study card");
     }
+  };
+
+  const openStudyCreateModal = () => {
+    setStudyCardError("");
+    setIsStudyCreateOpen(true);
   };
 
   const handleEditStudyCard = (card) => {
@@ -1215,7 +1573,8 @@ export default function App() {
         setReviewError("No cards available for this review mode.");
         return;
       }
-      setReviewQueue(cards);
+      const reviewCards = cards.map((card) => buildReviewCard(card));
+      setReviewQueue(reviewCards);
       setReviewIndex(0);
       setReviewAnswer([]);
       setReviewStartTime(Date.now());
@@ -1225,7 +1584,7 @@ export default function App() {
         correct: 0,
         incorrect: 0,
         answered: 0,
-        total: cards.length,
+        total: reviewCards.length,
         totalMs: 0
       });
       setIsReviewing(true);
@@ -1254,8 +1613,9 @@ export default function App() {
     if (reviewFeedback) {
       return;
     }
-    const correct = card.correct_option_indices.slice().sort().join(",") ===
-      reviewAnswer.slice().sort().join(",");
+    const correctIndices = card.reviewCorrectIndices || card.correct_option_indices || [];
+    const correct =
+      correctIndices.slice().sort().join(",") === reviewAnswer.slice().sort().join(",");
     const responseTimeMs = reviewStartTime ? Date.now() - reviewStartTime : 0;
     try {
       const updated = await reviewQuestionCard(card.id, {
@@ -1267,7 +1627,7 @@ export default function App() {
       );
       setReviewFeedback({
         correct,
-        correctIndices: card.correct_option_indices || []
+        correctIndices
       });
       setReviewStats((prev) => ({
         correct: prev.correct + (correct ? 1 : 0),
@@ -1298,6 +1658,7 @@ export default function App() {
       accuracy,
       avgSeconds
     });
+    setReviewRefreshToken((prev) => prev + 1);
     setIsReviewing(false);
     setReviewQueue([]);
     setReviewIndex(0);
@@ -1348,9 +1709,15 @@ export default function App() {
       setNewQuestionOptions("");
       setNewQuestionCorrectIndices("");
       setNewQuestionRefs([]);
+      setIsQuestionCreateOpen(false);
     } catch (error) {
       setQuestionCardError(error.message || "Failed to create question card");
     }
+  };
+
+  const openQuestionCreateModal = () => {
+    setQuestionCardError("");
+    setIsQuestionCreateOpen(true);
   };
 
   const handleEditQuestionCard = (card) => {
@@ -1395,6 +1762,16 @@ export default function App() {
     } catch (error) {
       setQuestionCardError(error.message || "Failed to delete question card");
     }
+  };
+
+  const openQuestionFocus = (cardId) => {
+    setFocusQuestionCardId(cardId);
+    setIsQuestionFocusOpen(true);
+  };
+
+  const closeQuestionFocus = () => {
+    setIsQuestionFocusOpen(false);
+    setFocusQuestionCardId("");
   };
 
   const handleSendChat = async () => {
@@ -1470,7 +1847,9 @@ export default function App() {
       const userAnswer = formatAnswerLabels(currentReviewCard, reviewAnswer);
       const correctAnswer = formatAnswerLabels(
         currentReviewCard,
-        currentReviewCard?.correct_option_indices || []
+        currentReviewCard?.reviewCorrectIndices ||
+          currentReviewCard?.correct_option_indices ||
+          []
       );
       const response = await sendChat({
         module_id: selectedModuleId,
@@ -1686,54 +2065,73 @@ export default function App() {
                     <>
                       <h3>{currentReviewCard.prompt}</h3>
                       <p className="muted">
-                        {currentReviewCard.type === "multi"
+                        {reviewCardType === "multi"
                           ? "Select all that apply."
                           : "Select the best answer."}
                       </p>
-                    <div className="review-options">
-                      {currentReviewCard.options.map((option, optionIndex) => {
-                        const isSelected = reviewAnswer.includes(optionIndex);
-                        const isCorrect = reviewFeedback?.correctIndices?.includes(optionIndex);
-                        const showIncorrect =
-                          reviewFeedback && isSelected && !isCorrect;
-                        const showMissed =
-                          reviewFeedback &&
-                          currentReviewCard.type === "multi" &&
-                          isCorrect &&
-                          !isSelected;
-                        const showCorrect = isCorrect && !showMissed;
-                        return (
-                          <button
-                            key={`${currentReviewCard.id}-${optionIndex}`}
-                            type="button"
-                            className={`review-option ${
-                              isSelected ? "selected" : ""
-                            } ${showCorrect ? "correct" : ""} ${
-                              showIncorrect ? "incorrect" : ""
-                            } ${showMissed ? "missed" : ""}`}
-                            onClick={() =>
-                              reviewFeedback
-                                ? null
-                                : toggleReviewAnswer(optionIndex, currentReviewCard.type)
-                            }
-                            disabled={Boolean(reviewFeedback)}
-                          >
-                            <span className="option-control">
-                              {currentReviewCard.type === "multi" ? (
-                                <span className={`option-box ${isSelected ? "checked" : ""}`}>
-                                  {isSelected ? "✓" : ""}
+                      <div className="review-options">
+                        {(currentReviewCard.reviewChoices ||
+                          (currentReviewCard.reviewOptions ||
+                            currentReviewCard.options ||
+                            []).map((option, index) => {
+                            const fallbackExplanations =
+                              currentReviewCard.reviewOptionExplanations ||
+                              currentReviewCard.option_explanations ||
+                              [];
+                            return {
+                              text: option,
+                              explanation: fallbackExplanations[index] || ""
+                            };
+                          })).map((choice, optionIndex) => {
+                          const explanation = choice.explanation;
+                          const isSelected = reviewAnswer.includes(optionIndex);
+                          const isCorrect = reviewFeedback?.correctIndices?.includes(optionIndex);
+                          const showIncorrect =
+                            reviewFeedback && isSelected && !isCorrect;
+                          const showMissed =
+                            reviewFeedback &&
+                            reviewCardType === "multi" &&
+                            isCorrect &&
+                            !isSelected;
+                          const showCorrect = isCorrect && !showMissed;
+                          return (
+                            <div key={`${currentReviewCard.id}-${optionIndex}`} className="review-option-item">
+                              <button
+                                type="button"
+                                className={`review-option ${
+                                  isSelected ? "selected" : ""
+                                } ${showCorrect ? "correct" : ""} ${
+                                  showIncorrect ? "incorrect" : ""
+                                } ${showMissed ? "missed" : ""}`}
+                                onClick={() =>
+                                  reviewFeedback
+                                    ? null
+                                    : toggleReviewAnswer(optionIndex, reviewCardType)
+                                }
+                                disabled={Boolean(reviewFeedback)}
+                              >
+                                <span className="option-control">
+                                  {reviewCardType === "multi" ? (
+                                    <span className={`option-box ${isSelected ? "checked" : ""}`}>
+                                      {isSelected ? "✓" : ""}
+                                    </span>
+                                  ) : (
+                                    <span className={`option-radio ${isSelected ? "checked" : ""}`}>
+                                      <span className="option-radio-dot" />
+                                    </span>
+                                  )}
                                 </span>
-                              ) : (
-                                <span className={`option-radio ${isSelected ? "checked" : ""}`}>
-                                  <span className="option-radio-dot" />
-                                </span>
-                              )}
-                            </span>
-                            <span className="option-text">{option}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
+                                <span className="option-text">{choice.text}</span>
+                              </button>
+                              {reviewFeedback && explanation ? (
+                                <div className="review-explanation-bubble">
+                                  {explanation}
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
                       {reviewFeedback ? (
                         <p className={`review-feedback ${reviewFeedback.correct ? "ok" : "bad"}`}>
                           {reviewFeedback.correct ? "Correct ✅" : "Incorrect ❌"}
@@ -1817,6 +2215,31 @@ export default function App() {
                       </p>
                     </div>
                     <div className="chat" ref={reviewChatListRef}>
+                      {currentReviewCard ? (
+                        <div className="chat-bubble assistant">
+                          <p>{reviewRefsMessage}</p>
+                          {reviewCardRefs.length ? (
+                            <ol className="chat-refs">
+                              {reviewCardRefs.map((refId) => {
+                                const refCard = reviewChatCardCache[refId];
+                                const title =
+                                  refCard?.title || `Study card ${refId.slice(0, 8)}`;
+                                return (
+                                  <li key={refId}>
+                                    <button
+                                      className="link-button"
+                                      type="button"
+                                      onClick={() => openReviewStudyCard(refId)}
+                                    >
+                                      {title}
+                                    </button>
+                                  </li>
+                                );
+                              })}
+                            </ol>
+                          ) : null}
+                        </div>
+                      ) : null}
                       {reviewChatMessages.length === 0 ? (
                         <p className="empty">Ask for clarity about the question or its sources.</p>
                       ) : (
@@ -2062,6 +2485,217 @@ export default function App() {
           </div>
         </div>
       ) : null}
+      {isQuestionFocusOpen && focusQuestionCard ? (
+        <div className="focus-overlay">
+          <div className="focus-modal">
+            <div className="meta-modal-header">
+              <div>
+                <h2>Question focus</h2>
+                <p className="muted">Mastery and scheduling details for this card.</p>
+              </div>
+              <button className="button ghost" type="button" onClick={closeQuestionFocus}>
+                Close
+              </button>
+            </div>
+            <p className="muted">
+              {focusCardType.toUpperCase()} · {focusQuestionCard.id.slice(0, 8)}
+            </p>
+            <div className="stats-grid">
+              <div className="stat-card">
+                <p className="label">Mastery</p>
+                <p className={`value mastery-value ${focusMasteryTier}`}>
+                  {focusMasteryScore !== null ? focusMasteryScore.toFixed(1) : "—"}
+                </p>
+              </div>
+              <div className="stat-card">
+                <p className="label">Reps</p>
+                <p className="value">{focusQuestionCard.reps ?? 0}</p>
+              </div>
+              <div className="stat-card">
+                <p className="label">Last review</p>
+                <p className="value">{formatReviewAt(focusQuestionCard.last_review_at)}</p>
+              </div>
+              <div className="stat-card">
+                <p className="label">Due</p>
+                <p className="value">{formatDueAt(focusQuestionCard.due_at)}</p>
+              </div>
+            </div>
+            <div className="focus-question">
+              <p>{focusQuestionCard.prompt}</p>
+              <ul className="options">
+                {focusQuestionCard.options.map((option, optionIndex) => {
+                  const isCorrect =
+                    focusQuestionCard.correct_option_indices.includes(optionIndex);
+                  return (
+                    <li key={`${focusQuestionCard.id}-${optionIndex}`} className={isCorrect ? "correct" : ""}>
+                      {option}
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="refs">
+                Refs:{" "}
+                {focusQuestionCard.study_card_refs?.length
+                  ? focusQuestionCard.study_card_refs.join(", ")
+                  : "—"}
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {isStudyCreateOpen ? (
+        <div className="meta-overlay">
+          <div className="meta-modal">
+            <div className="meta-modal-header">
+              <div>
+                <h2>Create study card</h2>
+                <p className="muted">Add a custom study card to this note group.</p>
+              </div>
+              <button
+                className="button ghost"
+                type="button"
+                onClick={() => setIsStudyCreateOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="form-block">
+              <input
+                type="text"
+                value={newStudyCardTitle}
+                onChange={(event) => setNewStudyCardTitle(event.target.value)}
+                placeholder="New study card title"
+                disabled={!selectedNoteGroupId}
+              />
+              <textarea
+                value={newStudyCardContent}
+                onChange={(event) => setNewStudyCardContent(event.target.value)}
+                placeholder="New study card content"
+                rows={4}
+                disabled={!selectedNoteGroupId}
+              />
+              <div className="chip-grid">
+                {topicChips.map((chip) => (
+                  <label key={chip.id} className="chip-toggle">
+                    <input
+                      type="checkbox"
+                      checked={newStudyCardChipIds.includes(chip.id)}
+                      onChange={() =>
+                        setNewStudyCardChipIds((prev) =>
+                          prev.includes(chip.id)
+                            ? prev.filter((id) => id !== chip.id)
+                            : [...prev, chip.id]
+                        )
+                      }
+                    />
+                    {chip.label}
+                  </label>
+                ))}
+              </div>
+              <div className="button-row">
+                <button
+                  className="button primary"
+                  type="button"
+                  onClick={handleCreateStudyCard}
+                  disabled={!selectedNoteGroupId || !newStudyCardContent.trim()}
+                >
+                  Add study card
+                </button>
+                <button
+                  className="button ghost"
+                  type="button"
+                  onClick={() => setIsStudyCreateOpen(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+              {studyCardError ? <p className="error">{studyCardError}</p> : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {isQuestionCreateOpen ? (
+        <div className="meta-overlay">
+          <div className="meta-modal">
+            <div className="meta-modal-header">
+              <div>
+                <h2>Create question card</h2>
+                <p className="muted">Build a custom question for this note group.</p>
+              </div>
+              <button
+                className="button ghost"
+                type="button"
+                onClick={() => setIsQuestionCreateOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="form-block">
+              <select
+                value={newQuestionType}
+                onChange={(event) => setNewQuestionType(event.target.value)}
+              >
+                <option value="mcq">MCQ</option>
+                <option value="multi">Multi-answer</option>
+              </select>
+              <textarea
+                value={newQuestionPrompt}
+                onChange={(event) => setNewQuestionPrompt(event.target.value)}
+                placeholder="Question prompt"
+                rows={3}
+              />
+              <textarea
+                value={newQuestionOptions}
+                onChange={(event) => setNewQuestionOptions(event.target.value)}
+                placeholder="Options (one per line)"
+                rows={4}
+              />
+              <input
+                type="text"
+                value={newQuestionCorrectIndices}
+                onChange={(event) => setNewQuestionCorrectIndices(event.target.value)}
+                placeholder="Correct option indices (comma-separated)"
+              />
+              <div className="chip-grid">
+                {studyCards.map((card) => (
+                  <label key={card.id} className="chip-toggle">
+                    <input
+                      type="checkbox"
+                      checked={newQuestionRefs.includes(card.id)}
+                      onChange={() =>
+                        setNewQuestionRefs((prev) =>
+                          prev.includes(card.id)
+                            ? prev.filter((id) => id !== card.id)
+                            : [...prev, card.id]
+                        )
+                      }
+                    />
+                    {card.title || card.id.slice(0, 6)}
+                  </label>
+                ))}
+              </div>
+              <div className="button-row">
+                <button
+                  className="button primary"
+                  type="button"
+                  onClick={handleCreateQuestionCard}
+                  disabled={!selectedNoteGroupId || !newQuestionPrompt.trim()}
+                >
+                  Add question card
+                </button>
+                <button
+                  className="button ghost"
+                  type="button"
+                  onClick={() => setIsQuestionCreateOpen(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+              {questionCardError ? <p className="error">{questionCardError}</p> : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
       {isModuleMetadataOpen ? (
         <div className="meta-overlay">
           <div className="meta-modal">
@@ -2297,22 +2931,6 @@ export default function App() {
           >
             Create new note group
           </button>
-          <div className="chip-filter">
-            {topicChips.length === 0 ? (
-              <span className="muted">No topic chips yet.</span>
-            ) : (
-              topicChips.map((chip) => (
-                <label key={chip.id} className="chip-toggle">
-                  <input
-                    type="checkbox"
-                    checked={chipFilterIds.includes(chip.id)}
-                    onChange={() => handleToggleFilterChip(chip.id)}
-                  />
-                  {chip.label}
-                </label>
-              ))
-            )}
-          </div>
         </div>
         {sidebarError ? <p className="error">{sidebarError}</p> : null}
       </aside>
@@ -2364,31 +2982,12 @@ export default function App() {
                     : "Pick a subject and module to get started."}
             </p>
           </div>
-          <div className="status-card">
-            <div>
-              <p className="label">Subject</p>
-              <p className="value">{selectedSubject ? selectedSubject.title : "None"}</p>
-            </div>
-            <div>
-              <p className="label">Module</p>
-              <p className="value">{selectedModule ? selectedModule.title : "None"}</p>
-            </div>
-            <div>
-              <p className="label">Note Group</p>
-              <p className="value">
-                {noteGroupMode === "create"
-                  ? "Creating..."
-                  : selectedNoteGroup
-                    ? selectedNoteGroup.title || "Untitled"
-                    : "None"}
-              </p>
-            </div>
-          </div>
         </header>
-
-        {noteGroupMode === "create" ? (
-          <>
-            <section className="panel">
+        <div className="content-layout">
+          <div className="content-main">
+            {noteGroupMode === "create" ? (
+              <>
+            <section className="panel" id="step-raw">
               <h2>1. Paste raw text</h2>
               <div className="field">
                 <label htmlFor="raw-text">Raw text</label>
@@ -2412,7 +3011,7 @@ export default function App() {
               {titleError ? <p className="error">{titleError}</p> : null}
             </section>
 
-            <section className="panel">
+            <section className="panel" id="step-title">
               <h2>2. Choose a title</h2>
               {titleSuggestions.length > 0 ? (
                 <div className="suggestions">
@@ -2443,7 +3042,7 @@ export default function App() {
               </div>
             </section>
 
-            <section className="panel">
+            <section className="panel" id="step-chips">
               <h2>3. Select topic chips</h2>
               <button
                 className="button ghost"
@@ -2529,7 +3128,7 @@ export default function App() {
               </div>
             </section>
 
-            <section className="panel">
+            <section className="panel" id="step-finalize">
               <h2>4. Generate study cards</h2>
               <div className="summary">
                 <p>
@@ -2563,697 +3162,853 @@ export default function App() {
               </button>
               {finalizeError ? <p className="error">{finalizeError}</p> : null}
             </section>
-          </>
-        ) : (
-          <>
-            {!selectedNoteGroupId ? (
-              !selectedModuleId ? (
-                <section className="panel">
-                  <h2>Select a module</h2>
-                  <p className="muted">
-                    Choose a module to see its note groups, review cards, and chat with your notes.
-                  </p>
-                </section>
-              ) : (
-                <>
-                  <section className="panel">
-                    <h2>{selectedModule?.title || "Module overview"}</h2>
-                    <p className="muted">
-                      {selectedModule?.description ||
-                        "Review across note groups and manage module details."}
-                    </p>
-                    <div className="stats-grid">
-                      <div className="stat-card">
-                        <p className="label">Note groups</p>
-                        <p className="value">{noteGroups.length}</p>
-                      </div>
-                      <div className="stat-card">
-                        <p className="label">Study cards</p>
-                        <p className="value">
-                          {moduleStatsLoading ? "..." : moduleStats.studyCount}
-                        </p>
-                      </div>
-                      <div className="stat-card">
-                        <p className="label">Question cards</p>
-                        <p className="value">
-                          {moduleStatsLoading ? "..." : moduleStats.questionCount}
-                        </p>
-                      </div>
-                      <div className="stat-card">
-                        <p className="label">Due now</p>
-                        <p className="value">
-                          {moduleStatsLoading ? "..." : moduleStats.dueCount}
-                        </p>
-                      </div>
-                    </div>
-                    {moduleStatsLoading ? (
-                      <p className="muted">Loading module stats...</p>
-                    ) : null}
-                    {moduleStatsError ? <p className="error">{moduleStatsError}</p> : null}
-                    <div className="button-row">
-                      <button
-                        className="button primary"
-                        type="button"
-                        onClick={() => setIsChatOpen(true)}
-                        disabled={!selectedModuleId || isReviewOverlayVisible}
-                      >
-                        Open chat
-                      </button>
-                      <button
-                        className="button ghost"
-                        type="button"
-                        onClick={openModuleMetadataModal}
-                        disabled={!selectedModuleId || isReviewOverlayVisible}
-                      >
-                        Edit module metadata
-                      </button>
-                    </div>
-                  </section>
-                  <section className="panel">
-                    <h2>Review question cards</h2>
-                    <div className="results-meta">
-                      <div className="field inline">
-                        <label htmlFor="module-review-count">Count</label>
-                        <input
-                          id="module-review-count"
-                          type="number"
-                          min="1"
-                          max="200"
-                          value={reviewCount}
-                          onChange={(event) => setReviewCount(event.target.value)}
-                          disabled={isReviewing}
-                        />
-                      </div>
-                      <button
-                        className="button primary"
-                        type="button"
-                        onClick={() => startReview("due", "module")}
-                        disabled={!selectedModuleId || isReviewing}
-                      >
-                        Review due
-                      </button>
-                      <button
-                        className="button primary"
-                        type="button"
-                        onClick={() => startReview("queue", "module")}
-                        disabled={!selectedModuleId || isReviewing}
-                      >
-                        Review next
-                      </button>
-                      <button
-                        className="button ghost"
-                        type="button"
-                        onClick={() => startReview("all", "module")}
-                        disabled={!selectedModuleId || isReviewing}
-                      >
-                        Review all
-                      </button>
-                    </div>
-                    {reviewError ? <p className="error">{reviewError}</p> : null}
-                    <p className="muted">
-                      Review sessions open in a modal so you can stay focused.
-                    </p>
-                  </section>
-                  <section className="panel">
-                    <h2>Note groups in this module</h2>
-                    {chipFilterIds.length ? (
-                      <p className="muted">Filtered by selected topic chips.</p>
-                    ) : null}
-                    {noteGroups.length === 0 ? (
-                      <p className="muted">No note groups yet.</p>
-                    ) : (
-                      <div className="cards">
-                        {noteGroups.map((group) => {
-                          const stats = moduleNoteGroupStatsById.get(group.id);
-                          return (
-                            <article key={group.id} className="card">
-                              <div className="card-header">
-                                <h3>{group.title || "Untitled note group"}</h3>
-                                <span className="mono">{group.id.slice(0, 8)}</span>
-                              </div>
-                              <div className="review-meta">
-                                <span className="pill">
-                                  Study cards: {stats ? stats.studyCount : "—"}
-                                </span>
-                                <span className="pill">
-                                  Questions: {stats ? stats.questionCount : "—"}
-                                </span>
-                                <span className="pill">
-                                  Due: {stats ? stats.dueCount : "—"}
-                                </span>
-                                {stats ? (
-                                  <span className="pill stale">
-                                    Stale: {stats.staleCount}
-                                  </span>
-                                ) : null}
-                              </div>
-                              <div className="button-row">
-                                <button
-                                  className="button ghost"
-                                  type="button"
-                                  onClick={() => navigateToNoteGroup(group.id)}
-                                >
-                                  Open overview
-                                </button>
-                                <button
-                                  className="button ghost"
-                                  type="button"
-                                  onClick={() => navigateToNoteGroup(group.id, "study-cards")}
-                                >
-                                  Study cards
-                                </button>
-                                <button
-                                  className="button ghost"
-                                  type="button"
-                                  onClick={() => navigateToNoteGroup(group.id, "question-cards")}
-                                >
-                                  Question cards
-                                </button>
-                              </div>
-                            </article>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </section>
-                </>
-              )
+              </>
             ) : (
               <>
-                {!isStudyPage && !isQuestionPage ? (
-                  <section className="panel">
-                    <h2>{selectedNoteGroup?.title || "Untitled note group"}</h2>
-                    <p className="muted">Snapshot of your current note group.</p>
-                    <div className="stats-grid">
-                      <div className="stat-card">
-                        <p className="label">Study cards</p>
-                        <p className="value">{noteGroupStats.studyCount}</p>
-                      </div>
-                      <div className="stat-card">
-                        <p className="label">Question cards</p>
-                        <p className="value">{noteGroupStats.questionCount}</p>
-                      </div>
-                      <div className="stat-card">
-                        <p className="label">Due now</p>
-                        <p className="value">{noteGroupStats.dueCount}</p>
-                      </div>
-                      <div className="stat-card">
-                        <p className="label">Stale questions</p>
-                        <p className="value">{noteGroupStats.staleCount}</p>
-                      </div>
-                    </div>
-                    <div className="button-row">
-                      <button
-                        className="button primary"
-                        type="button"
-                        onClick={() =>
-                          navigate(`/note-groups/${selectedNoteGroupId}/study-cards`)
-                        }
-                      >
-                        View study cards
-                      </button>
-                      <button
-                        className="button ghost"
-                        type="button"
-                        onClick={() =>
-                          navigate(`/note-groups/${selectedNoteGroupId}/question-cards`)
-                        }
-                      >
-                        View question cards
-                      </button>
-                      <button
-                        className="button ghost"
-                        type="button"
-                        onClick={() => setIsReadingOpen(true)}
-                        disabled={!formattedSections.length}
-                      >
-                        Read clean text
-                      </button>
-                    <button
-                      className="button ghost"
-                      type="button"
-                      onClick={openMetadataModal}
-                      disabled={!selectedNoteGroupId || isReviewOverlayVisible}
-                    >
-                      Edit metadata
-                    </button>
-                      <button
-                        className="button ghost"
-                        type="button"
-                        onClick={() => setIsChatOpen(true)}
-                        disabled={!selectedModuleId || isReviewOverlayVisible}
-                      >
-                        Open chat
-                      </button>
-                    </div>
-                  </section>
-                ) : null}
-
-                {isStudyPage ? (
-                  <>
-                    <section className="panel page-header">
-                      <button className="back-button" type="button" onClick={handleBackToOverview}>
-                        ← Back
-                      </button>
-                      <div>
-                        <h2>Study cards</h2>
-                        <p className="muted">Manage study cards for this note group.</p>
-                      </div>
-                    </section>
-                    <section className="results">
-                      <div className="results-header">
-                        <h2>Study cards</h2>
-                      </div>
-                    {studyCardError ? <p className="error">{studyCardError}</p> : null}
-                    <div className="form-block">
-                      <input
-                        type="text"
-                        value={newStudyCardTitle}
-                        onChange={(event) => setNewStudyCardTitle(event.target.value)}
-                        placeholder="New study card title"
-                        disabled={!selectedNoteGroupId}
-                      />
-                      <textarea
-                        value={newStudyCardContent}
-                        onChange={(event) => setNewStudyCardContent(event.target.value)}
-                        placeholder="New study card content"
-                        rows={4}
-                        disabled={!selectedNoteGroupId}
-                      />
-                      <div className="chip-grid">
-                        {topicChips.map((chip) => (
-                          <label key={chip.id} className="chip-toggle">
-                            <input
-                              type="checkbox"
-                              checked={newStudyCardChipIds.includes(chip.id)}
-                              onChange={() =>
-                                setNewStudyCardChipIds((prev) =>
-                                  prev.includes(chip.id)
-                                    ? prev.filter((id) => id !== chip.id)
-                                    : [...prev, chip.id]
-                                )
-                              }
-                            />
-                            {chip.label}
-                          </label>
-                        ))}
-                      </div>
-                      <button
-                        className="button primary"
-                        type="button"
-                        onClick={handleCreateStudyCard}
-                        disabled={!selectedNoteGroupId || !newStudyCardContent.trim()}
-                      >
-                        Add study card
-                      </button>
-                    </div>
-                    <div className="cards">
-                      {studyCards.length === 0 ? (
-                        <p className="empty">No study cards yet.</p>
-                      ) : (
-                        studyCards.map((card) => (
-                          <article key={card.id} className="card">
-                            <div className="card-header">
-                              <h3>{card.title || "Untitled card"}</h3>
-                              <span className="mono">{card.id.slice(0, 8)}</span>
-                            </div>
-                            {editingStudyCardId === card.id ? (
-                              <div className="form-block">
-                                <input
-                                  type="text"
-                                  value={editingStudyCard.title}
-                                  onChange={(event) =>
-                                    setEditingStudyCard((prev) => ({
-                                      ...prev,
-                                      title: event.target.value
-                                    }))
-                                  }
-                                />
-                                <textarea
-                                  value={editingStudyCard.content}
-                                  onChange={(event) =>
-                                    setEditingStudyCard((prev) => ({
-                                      ...prev,
-                                      content: event.target.value
-                                    }))
-                                  }
-                                  rows={4}
-                                />
-                                <div className="chip-grid">
-                                  {topicChips.map((chip) => (
-                                    <label key={chip.id} className="chip-toggle">
-                                      <input
-                                        type="checkbox"
-                                        checked={editingStudyCard.chipIds.includes(chip.id)}
-                                        onChange={() =>
-                                          setEditingStudyCard((prev) => ({
-                                            ...prev,
-                                            chipIds: prev.chipIds.includes(chip.id)
-                                              ? prev.chipIds.filter((id) => id !== chip.id)
-                                              : [...prev.chipIds, chip.id]
-                                          }))
-                                        }
-                                      />
-                                      {chip.label}
-                                    </label>
-                                  ))}
-                                </div>
-                                <div className="button-row">
-                                  <button
-                                    className="button primary"
-                                    type="button"
-                                    onClick={() => handleSaveStudyCard(card.id)}
-                                  >
-                                    Save
-                                  </button>
-                                  <button
-                                    className="button ghost"
-                                    type="button"
-                                    onClick={() => setEditingStudyCardId("")}
-                                  >
-                                    Cancel
-                                  </button>
-                                </div>
-                              </div>
-                            ) : (
-                              <>
-                                <p>{card.content}</p>
-                                <div className="chip-grid">
-                                  {(card.topic_chips || []).map((chip) => (
-                                    <span key={chip.id} className="pill">
-                                      {chip.label}
-                                    </span>
-                                  ))}
-                                </div>
-                                <div className="button-row">
-                                  <button
-                                    className="button ghost"
-                                    type="button"
-                                    onClick={() => handleEditStudyCard(card)}
-                                  >
-                                    Edit
-                                  </button>
-                                  <button
-                                    className="button ghost"
-                                    type="button"
-                                    onClick={() => handleDeleteStudyCard(card.id)}
-                                  >
-                                    Delete
-                                  </button>
-                                </div>
-                              </>
-                            )}
-                          </article>
-                        ))
-                      )}
-                    </div>
-                    </section>
-                  </>
-                ) : null}
-
-                {isQuestionPage ? (
-                  <>
-                    <section className="panel page-header">
-                      <button className="back-button" type="button" onClick={handleBackToOverview}>
-                        ← Back
-                      </button>
-                      <div>
-                        <h2>Question cards</h2>
-                        <p className="muted">Review, generate, and edit question cards.</p>
-                      </div>
-                    </section>
+                {!selectedNoteGroupId ? (
+                  !selectedModuleId ? (
                     <section className="panel">
-                      <h2>Review question cards</h2>
-                      <div className="results-meta">
-                        <div className="field inline">
-                          <label htmlFor="review-count">Count</label>
-                          <input
-                            id="review-count"
-                            type="number"
-                            min="1"
-                            max="200"
-                            value={reviewCount}
-                            onChange={(event) => setReviewCount(event.target.value)}
-                            disabled={isReviewing}
-                          />
-                        </div>
-                        <button
-                          className="button primary"
-                          type="button"
-                          onClick={() => startReview("due")}
-                          disabled={!selectedNoteGroupId || isReviewing}
-                        >
-                          Review due
-                        </button>
-                        <button
-                          className="button primary"
-                          type="button"
-                          onClick={() => startReview("queue")}
-                          disabled={!selectedNoteGroupId || isReviewing}
-                        >
-                          Review next
-                        </button>
-                        <button
-                          className="button ghost"
-                          type="button"
-                          onClick={() => startReview("all")}
-                          disabled={!selectedNoteGroupId || isReviewing}
-                        >
-                          Review all
-                        </button>
-                      </div>
-                      {reviewError ? <p className="error">{reviewError}</p> : null}
+                      <h2>Select a module</h2>
                       <p className="muted">
-                        Review sessions open in a modal so you can stay focused.
+                        Choose a module to see its note groups, review cards, and chat with your notes.
                       </p>
                     </section>
-
-                    <section className="results">
-                      <div className="results-header">
-                        <h2>Question cards</h2>
+                  ) : (
+                    <>
+                      <section className="panel" id="module-overview">
+                        <h2>{selectedModule?.title || "Module overview"}</h2>
+                        <p className="muted">
+                          {selectedModule?.description ||
+                            "Review across note groups and manage module details."}
+                        </p>
+                        <div className="filter-row">
+                          <div className="filter-label">
+                            <span>Filter note groups</span>
+                            {chipFilterIds.length ? (
+                              <span className="filter-badge">{chipFilterIds.length}</span>
+                            ) : null}
+                          </div>
+                          <div className="filter-controls">
+                            <Select
+                              className="select"
+                              classNamePrefix="select"
+                              options={chipOptions}
+                              value={chipFilterValue}
+                              onChange={handleChipFilterSelect}
+                              placeholder="Search topic chips"
+                              isMulti
+                              isClearable
+                              isDisabled={!selectedModuleId || chipOptions.length === 0}
+                              maxMenuHeight={220}
+                              menuPortalTarget={document.body}
+                              styles={selectStyles}
+                            />
+                            <button
+                              className="button ghost small"
+                              type="button"
+                              onClick={handleResetChipFilters}
+                              disabled={!chipFilterIds.length}
+                            >
+                              Reset
+                            </button>
+                          </div>
+                        </div>
+                        <div className="stats-grid">
+                          <div className="stat-card">
+                            <p className="label">Note groups</p>
+                            <p className="value">{moduleNoteGroupsForDisplay.length}</p>
+                          </div>
+                          <div className="stat-card">
+                            <p className="label">Study cards</p>
+                            <p className="value">
+                              {moduleStatsLoading ? "..." : moduleStats.studyCount}
+                            </p>
+                          </div>
+                          <div className="stat-card">
+                            <p className="label">Question cards</p>
+                            <p className="value">
+                              {moduleStatsLoading ? "..." : moduleStats.questionCount}
+                            </p>
+                          </div>
+                          <div className="stat-card">
+                            <p className="label">Due now</p>
+                            <p className="value">
+                              {moduleStatsLoading ? "..." : moduleStats.dueCount}
+                            </p>
+                          </div>
+                        </div>
+                        {moduleStatsLoading ? (
+                          <p className="muted">Loading module stats...</p>
+                        ) : null}
+                        {moduleStatsError ? <p className="error">{moduleStatsError}</p> : null}
+                        <div className="button-row">
+                          <button
+                            className="button primary"
+                            type="button"
+                            onClick={() => setIsChatOpen(true)}
+                            disabled={!selectedModuleId || isReviewOverlayVisible}
+                          >
+                            Open chat
+                          </button>
+                          <button
+                            className="button ghost"
+                            type="button"
+                            onClick={openModuleMetadataModal}
+                            disabled={!selectedModuleId || isReviewOverlayVisible}
+                          >
+                            Edit module metadata
+                          </button>
+                        </div>
+                      </section>
+                      <section className="panel" id="module-review">
+                        <h2>Review question cards</h2>
                         <div className="results-meta">
                           <div className="field inline">
-                            <label htmlFor="question-count">Count</label>
+                            <label htmlFor="module-review-count">Count</label>
                             <input
-                              id="question-count"
+                              id="module-review-count"
                               type="number"
                               min="1"
-                              max="20"
-                              value={questionCount}
-                              onChange={(event) => setQuestionCount(event.target.value)}
+                              max="200"
+                              value={reviewCount}
+                              onChange={(event) => setReviewCount(event.target.value)}
+                              disabled={isReviewing}
                             />
                           </div>
                           <button
                             className="button primary"
                             type="button"
-                            onClick={handleGenerateQuestions}
-                            disabled={studyCards.length === 0 || isGeneratingQuestions}
+                            onClick={() => startReview("due", "module")}
+                            disabled={!selectedModuleId || isReviewing}
                           >
-                            {isGeneratingQuestions ? "Generating..." : "Generate questions"}
+                            Review due
                           </button>
-                          {questionJobStatus !== "idle" ? (
-                            <span className={`pill status-${questionJobStatus}`}>
-                              {questionJobStatus}
-                            </span>
-                          ) : null}
+                          <button
+                            className="button primary"
+                            type="button"
+                            onClick={() => startReview("queue", "module")}
+                            disabled={!selectedModuleId || isReviewing}
+                          >
+                            Review next
+                          </button>
+                          <button
+                            className="button ghost"
+                            type="button"
+                            onClick={() => startReview("all", "module")}
+                            disabled={!selectedModuleId || isReviewing}
+                          >
+                            Review all
+                          </button>
                         </div>
-                      </div>
-                      {questionCardError ? (
-                        <p className="error">{questionCardError}</p>
-                      ) : null}
-                      <div className="form-block">
-                        <select
-                          value={newQuestionType}
-                          onChange={(event) => setNewQuestionType(event.target.value)}
-                        >
-                          <option value="mcq">MCQ</option>
-                          <option value="multi">Multi-answer</option>
-                        </select>
-                        <textarea
-                          value={newQuestionPrompt}
-                          onChange={(event) => setNewQuestionPrompt(event.target.value)}
-                          placeholder="Question prompt"
-                          rows={3}
-                        />
-                        <textarea
-                          value={newQuestionOptions}
-                          onChange={(event) => setNewQuestionOptions(event.target.value)}
-                          placeholder="Options (one per line)"
-                          rows={4}
-                        />
-                        <input
-                          type="text"
-                          value={newQuestionCorrectIndices}
-                          onChange={(event) => setNewQuestionCorrectIndices(event.target.value)}
-                          placeholder="Correct option indices (comma-separated)"
-                        />
-                        <div className="chip-grid">
-                          {studyCards.map((card) => (
-                            <label key={card.id} className="chip-toggle">
-                              <input
-                                type="checkbox"
-                                checked={newQuestionRefs.includes(card.id)}
-                                onChange={() =>
-                                  setNewQuestionRefs((prev) =>
-                                    prev.includes(card.id)
-                                      ? prev.filter((id) => id !== card.id)
-                                      : [...prev, card.id]
-                                  )
-                                }
-                              />
-                              {card.title || card.id.slice(0, 6)}
-                            </label>
-                          ))}
+                        {reviewError ? <p className="error">{reviewError}</p> : null}
+                        <p className="muted">
+                          Review sessions open in a modal so you can stay focused.
+                        </p>
+                      </section>
+                      <section className="panel" id="module-timeline">
+                        <h2>Question timeline</h2>
+                        <div className="stats-grid">
+                          <div className="stat-card">
+                            <p className="label">Due</p>
+                            <p className="value">
+                              {moduleStatsLoading ? "..." : moduleQuestionTimeline.due}
+                            </p>
+                          </div>
+                          <div className="stat-card">
+                            <p className="label">&lt; 1 week</p>
+                            <p className="value">
+                              {moduleStatsLoading ? "..." : moduleQuestionTimeline.week}
+                            </p>
+                          </div>
+                          <div className="stat-card">
+                            <p className="label">&lt; 1 month</p>
+                            <p className="value">
+                              {moduleStatsLoading ? "..." : moduleQuestionTimeline.month}
+                            </p>
+                          </div>
+                          <div className="stat-card">
+                            <p className="label">&lt; 6 months</p>
+                            <p className="value">
+                              {moduleStatsLoading ? "..." : moduleQuestionTimeline.sixMonths}
+                            </p>
+                          </div>
+                          <div className="stat-card">
+                            <p className="label">&gt; 6 months</p>
+                            <p className="value">
+                              {moduleStatsLoading ? "..." : moduleQuestionTimeline.longTerm}
+                            </p>
+                          </div>
                         </div>
+                        <p className="muted">
+                          Due includes anything scheduled within the next 24 hours.
+                        </p>
+                      </section>
+                      <section className="panel" id="module-note-groups">
+                        <h2>Note groups in this module</h2>
+                        {chipFilterIds.length ? (
+                          <p className="muted">Filtered by selected topic chips.</p>
+                        ) : null}
+                        {moduleNoteGroupsForDisplay.length === 0 ? (
+                          <p className="muted">
+                            {chipFilterIds.length
+                              ? "No note groups match the selected topic chips."
+                              : "No note groups yet."}
+                          </p>
+                        ) : (
+                          <div className="cards">
+                            {moduleNoteGroupsForDisplay.map((group) => {
+                              const stats = moduleNoteGroupStatsById.get(group.id);
+                              return (
+                                <article key={group.id} className="card">
+                                  <div className="card-header">
+                                    <h3>{group.title || "Untitled note group"}</h3>
+                                    <span className="mono">{group.id.slice(0, 8)}</span>
+                                  </div>
+                                  <div className="review-meta">
+                                    <span className="pill">
+                                      Study cards: {stats ? stats.studyCount : "—"}
+                                    </span>
+                                    <span className="pill">
+                                      Questions: {stats ? stats.questionCount : "—"}
+                                    </span>
+                                    <span className="pill">
+                                      Due: {stats ? stats.dueCount : "—"}
+                                    </span>
+                                    {stats ? (
+                                      <span className="pill stale">
+                                        Stale: {stats.staleCount}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  <div className="button-row">
+                                    <button
+                                      className="button ghost"
+                                      type="button"
+                                      onClick={() => navigateToNoteGroup(group.id)}
+                                    >
+                                      Open overview
+                                    </button>
+                                    <button
+                                      className="button ghost"
+                                      type="button"
+                                      onClick={() =>
+                                        navigateToNoteGroup(group.id, "study-cards")
+                                      }
+                                    >
+                                      Study cards
+                                    </button>
+                                    <button
+                                      className="button ghost"
+                                      type="button"
+                                      onClick={() =>
+                                        navigateToNoteGroup(group.id, "question-cards")
+                                      }
+                                    >
+                                      Question cards
+                                    </button>
+                                  </div>
+                                </article>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </section>
+                    </>
+                  )
+                ) : (
+                  <>
+                    {!isStudyPage && !isQuestionPage ? (
+                      <section className="panel" id="note-group-overview">
+                        <h2>{selectedNoteGroup?.title || "Untitled note group"}</h2>
+                        <p className="muted">Snapshot of your current note group.</p>
+                        <div className="filter-row">
+                          <div className="filter-label">
+                            <span>Filter note groups</span>
+                            {chipFilterIds.length ? (
+                              <span className="filter-badge">{chipFilterIds.length}</span>
+                            ) : null}
+                          </div>
+                          <div className="filter-controls">
+                            <Select
+                              className="select"
+                              classNamePrefix="select"
+                              options={chipOptions}
+                              value={chipFilterValue}
+                              onChange={handleChipFilterSelect}
+                              placeholder="Search topic chips"
+                              isMulti
+                              isClearable
+                              isDisabled={!selectedModuleId || chipOptions.length === 0}
+                              maxMenuHeight={220}
+                              menuPortalTarget={document.body}
+                              styles={selectStyles}
+                            />
+                            <button
+                              className="button ghost small"
+                              type="button"
+                              onClick={handleResetChipFilters}
+                              disabled={!chipFilterIds.length}
+                            >
+                              Reset
+                            </button>
+                          </div>
+                        </div>
+                        <div className="stats-grid">
+                          <div className="stat-card">
+                            <p className="label">Study cards</p>
+                            <p className="value">{noteGroupStats.studyCount}</p>
+                          </div>
+                          <div className="stat-card">
+                            <p className="label">Question cards</p>
+                            <p className="value">{noteGroupStats.questionCount}</p>
+                          </div>
+                          <div className="stat-card">
+                            <p className="label">Due now</p>
+                            <p className="value">{noteGroupStats.dueCount}</p>
+                          </div>
+                          <div className="stat-card">
+                            <p className="label">Stale questions</p>
+                            <p className="value">{noteGroupStats.staleCount}</p>
+                          </div>
+                        </div>
+                        <div className="button-row">
+                          <button
+                            className="button primary"
+                            type="button"
+                            onClick={() =>
+                              navigate(`/note-groups/${selectedNoteGroupId}/study-cards`)
+                            }
+                          >
+                            View study cards
+                          </button>
+                          <button
+                            className="button ghost"
+                            type="button"
+                            onClick={() =>
+                              navigate(`/note-groups/${selectedNoteGroupId}/question-cards`)
+                            }
+                          >
+                            View question cards
+                          </button>
+                          <button
+                            className="button ghost"
+                            type="button"
+                            onClick={() => setIsReadingOpen(true)}
+                            disabled={!formattedSections.length}
+                          >
+                            Read clean text
+                          </button>
                         <button
                           className="button ghost"
                           type="button"
-                          onClick={handleCreateQuestionCard}
-                          disabled={!selectedNoteGroupId || !newQuestionPrompt.trim()}
+                          onClick={openMetadataModal}
+                          disabled={!selectedNoteGroupId || isReviewOverlayVisible}
                         >
-                          Add question card
+                          Edit metadata
                         </button>
-                      </div>
-                      <div className="cards">
-                        {questionCards.length === 0 ? (
-                          <p className="empty">No questions yet.</p>
-                        ) : (
-                          questionCards.map((card, index) => (
-                            <article key={card.id} className="card">
-                              <div className="card-header">
-                                <h3>
-                                  Q{index + 1}. {card.type.toUpperCase()}
-                                </h3>
-                                <span className="mono">{card.id.slice(0, 8)}</span>
-                              </div>
-                              {editingQuestionCardId === card.id ? (
-                                <div className="form-block">
-                                  <select
-                                    value={editingQuestionCard.type}
-                                    onChange={(event) =>
-                                      setEditingQuestionCard((prev) => ({
-                                        ...prev,
-                                        type: event.target.value
-                                      }))
-                                    }
-                                  >
-                                    <option value="mcq">MCQ</option>
-                                    <option value="multi">Multi-answer</option>
-                                  </select>
-                                  <textarea
-                                    value={editingQuestionCard.prompt}
-                                    onChange={(event) =>
-                                      setEditingQuestionCard((prev) => ({
-                                        ...prev,
-                                        prompt: event.target.value
-                                      }))
-                                    }
-                                    rows={3}
-                                  />
-                                  <textarea
-                                    value={editingQuestionCard.optionsText}
-                                    onChange={(event) =>
-                                      setEditingQuestionCard((prev) => ({
-                                        ...prev,
-                                        optionsText: event.target.value
-                                      }))
-                                    }
-                                    rows={4}
-                                  />
-                                  <input
-                                    type="text"
-                                    value={editingQuestionCard.correctIndicesText}
-                                    onChange={(event) =>
-                                      setEditingQuestionCard((prev) => ({
-                                        ...prev,
-                                        correctIndicesText: event.target.value
-                                      }))
-                                    }
-                                  />
-                                  <div className="chip-grid">
-                                    {studyCards.map((studyCard) => (
-                                      <label key={studyCard.id} className="chip-toggle">
-                                        <input
-                                          type="checkbox"
-                                          checked={editingQuestionCard.refs.includes(studyCard.id)}
-                                          onChange={() =>
-                                            setEditingQuestionCard((prev) => ({
-                                              ...prev,
-                                              refs: prev.refs.includes(studyCard.id)
-                                                ? prev.refs.filter((id) => id !== studyCard.id)
-                                                : [...prev.refs, studyCard.id]
-                                            }))
-                                          }
-                                        />
-                                        {studyCard.title || studyCard.id.slice(0, 6)}
-                                      </label>
-                                    ))}
-                                  </div>
-                                  <div className="button-row">
-                                    <button
-                                      className="button primary"
-                                      type="button"
-                                      onClick={() => handleSaveQuestionCard(card.id)}
-                                    >
-                                      Save
-                                    </button>
-                                    <button
-                                      className="button ghost"
-                                      type="button"
-                                      onClick={() => setEditingQuestionCardId("")}
-                                    >
-                                      Cancel
-                                    </button>
-                                  </div>
+                          <button
+                            className="button ghost"
+                            type="button"
+                            onClick={() => setIsChatOpen(true)}
+                            disabled={!selectedModuleId || isReviewOverlayVisible}
+                          >
+                            Open chat
+                          </button>
+                        </div>
+                      </section>
+                    ) : null}
+
+                    {isStudyPage ? (
+                      <>
+                        <section className="panel page-header">
+                          <button className="back-button" type="button" onClick={handleBackToOverview}>
+                            ← Back
+                          </button>
+                          <div>
+                            <h2>Study cards</h2>
+                            <p className="muted">Manage study cards for this note group.</p>
+                          </div>
+                        </section>
+                        <section className="results">
+                          <div className="results-header">
+                            <h2>Study cards</h2>
+                            <div className="results-meta">
+                              <button
+                                className="button primary"
+                                type="button"
+                                onClick={openStudyCreateModal}
+                                disabled={!selectedNoteGroupId}
+                              >
+                                Create study card
+                              </button>
+                            </div>
+                          </div>
+                        {studyCardError ? <p className="error">{studyCardError}</p> : null}
+                        <div className="cards" id="study-list">
+                          {filteredStudyCards.length === 0 ? (
+                              <p className="empty">
+                                {chipFilterIds.length
+                                  ? "No study cards match the filter."
+                                  : "No study cards yet."}
+                              </p>
+                          ) : (
+                            filteredStudyCards.map((card) => (
+                              <article key={card.id} className="card">
+                                <div className="card-header">
+                                  <h3>{card.title || "Untitled card"}</h3>
+                                  <span className="mono">{card.id.slice(0, 8)}</span>
                                 </div>
-                              ) : (
-                                <>
-                                  <p>{card.prompt}</p>
-                                  {card.stale ? <span className="pill stale">Stale</span> : null}
-                                  <ul className="options">
-                                    {card.options.map((option, optionIndex) => {
-                                      const isCorrect =
-                                        card.correct_option_indices.includes(optionIndex);
-                                      return (
-                                        <li
-                                          key={`${card.id}-${optionIndex}`}
-                                          className={isCorrect ? "correct" : ""}
-                                        >
-                                          {option}
-                                        </li>
-                                      );
-                                    })}
-                                  </ul>
-                                  <p className="refs">Refs: {card.study_card_refs.join(", ")}</p>
-                                  <div className="button-row">
-                                    <button
-                                      className="button ghost"
-                                      type="button"
-                                      onClick={() => handleEditQuestionCard(card)}
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      className="button ghost"
-                                      type="button"
-                                      onClick={() => handleDeleteQuestionCard(card.id)}
-                                    >
-                                      Delete
-                                    </button>
+                                {editingStudyCardId === card.id ? (
+                                  <div className="form-block">
+                                    <input
+                                      type="text"
+                                      value={editingStudyCard.title}
+                                      onChange={(event) =>
+                                        setEditingStudyCard((prev) => ({
+                                          ...prev,
+                                          title: event.target.value
+                                        }))
+                                      }
+                                    />
+                                    <textarea
+                                      value={editingStudyCard.content}
+                                      onChange={(event) =>
+                                        setEditingStudyCard((prev) => ({
+                                          ...prev,
+                                          content: event.target.value
+                                        }))
+                                      }
+                                      rows={4}
+                                    />
+                                    <div className="chip-grid">
+                                      {topicChips.map((chip) => (
+                                        <label key={chip.id} className="chip-toggle">
+                                          <input
+                                            type="checkbox"
+                                            checked={editingStudyCard.chipIds.includes(chip.id)}
+                                            onChange={() =>
+                                              setEditingStudyCard((prev) => ({
+                                                ...prev,
+                                                chipIds: prev.chipIds.includes(chip.id)
+                                                  ? prev.chipIds.filter((id) => id !== chip.id)
+                                                  : [...prev.chipIds, chip.id]
+                                              }))
+                                            }
+                                          />
+                                          {chip.label}
+                                        </label>
+                                      ))}
+                                    </div>
+                                    <div className="button-row">
+                                      <button
+                                        className="button primary"
+                                        type="button"
+                                        onClick={() => handleSaveStudyCard(card.id)}
+                                      >
+                                        Save
+                                      </button>
+                                      <button
+                                        className="button ghost"
+                                        type="button"
+                                        onClick={() => setEditingStudyCardId("")}
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
                                   </div>
-                                </>
-                              )}
-                            </article>
-                          ))
-                        )}
-                      </div>
-                    </section>
+                                ) : (
+                                  <>
+                                    <p>{card.content}</p>
+                                    <div className="chip-grid">
+                                      {(card.topic_chips || []).map((chip) => (
+                                        <span key={chip.id} className="pill">
+                                          {chip.label}
+                                        </span>
+                                      ))}
+                                    </div>
+                                    <div className="button-row">
+                                      <button
+                                        className="button ghost"
+                                        type="button"
+                                        onClick={() => handleEditStudyCard(card)}
+                                      >
+                                        Edit
+                                      </button>
+                                      <button
+                                        className="button ghost"
+                                        type="button"
+                                        onClick={() => handleDeleteStudyCard(card.id)}
+                                      >
+                                        Delete
+                                      </button>
+                                    </div>
+                                  </>
+                                )}
+                              </article>
+                            ))
+                          )}
+                        </div>
+                        </section>
+                      </>
+                    ) : null}
+
+                    {isQuestionPage ? (
+                      <>
+                        <section className="panel page-header">
+                          <button className="back-button" type="button" onClick={handleBackToOverview}>
+                            ← Back
+                          </button>
+                          <div>
+                            <h2>Question cards</h2>
+                            <p className="muted">Review, generate, and edit question cards.</p>
+                          </div>
+                        </section>
+                        <section className="panel" id="question-review">
+                          <h2>Review question cards</h2>
+                          <div className="results-meta">
+                            <div className="field inline">
+                              <label htmlFor="review-count">Count</label>
+                              <input
+                                id="review-count"
+                                type="number"
+                                min="1"
+                                max="200"
+                                value={reviewCount}
+                                onChange={(event) => setReviewCount(event.target.value)}
+                                disabled={isReviewing}
+                              />
+                            </div>
+                            <button
+                              className="button primary"
+                              type="button"
+                              onClick={() => startReview("due")}
+                              disabled={!selectedNoteGroupId || isReviewing}
+                            >
+                              Review due
+                            </button>
+                            <button
+                              className="button primary"
+                              type="button"
+                              onClick={() => startReview("queue")}
+                              disabled={!selectedNoteGroupId || isReviewing}
+                            >
+                              Review next
+                            </button>
+                            <button
+                              className="button ghost"
+                              type="button"
+                              onClick={() => startReview("all")}
+                              disabled={!selectedNoteGroupId || isReviewing}
+                            >
+                              Review all
+                            </button>
+                          </div>
+                          {reviewError ? <p className="error">{reviewError}</p> : null}
+                          <p className="muted">
+                            Review sessions open in a modal so you can stay focused.
+                          </p>
+                        </section>
+                        <section className="panel" id="question-timeline">
+                          <h2>Question timeline</h2>
+                          <div className="stats-grid">
+                            <div className="stat-card">
+                              <p className="label">Due</p>
+                              <p className="value">{questionTimeline.due}</p>
+                            </div>
+                            <div className="stat-card">
+                              <p className="label">&lt; 1 week</p>
+                              <p className="value">{questionTimeline.week}</p>
+                            </div>
+                            <div className="stat-card">
+                              <p className="label">&lt; 1 month</p>
+                              <p className="value">{questionTimeline.month}</p>
+                            </div>
+                            <div className="stat-card">
+                              <p className="label">&lt; 6 months</p>
+                              <p className="value">{questionTimeline.sixMonths}</p>
+                            </div>
+                            <div className="stat-card">
+                              <p className="label">&gt; 6 months</p>
+                              <p className="value">{questionTimeline.longTerm}</p>
+                            </div>
+                          </div>
+                          <p className="muted">
+                            Due includes anything scheduled within the next 24 hours.
+                          </p>
+                        </section>
+
+                        <section className="results" id="question-list">
+                          <div className="results-header">
+                            <h2>Question cards</h2>
+                            <div className="results-meta">
+                              <div className="field inline">
+                                <label htmlFor="mastery-filter">Mastery</label>
+                                <select
+                                  id="mastery-filter"
+                                  value={masteryFilter}
+                                  onChange={(event) => setMasteryFilter(event.target.value)}
+                                >
+                                  <option value="all">All</option>
+                                  <option value="low">Low mastery</option>
+                                  <option value="medium">Medium mastery</option>
+                                  <option value="high">High mastery</option>
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="cards">
+                            {questionCardsForDisplay.length === 0 ? (
+                              <p className="empty">
+                                {chipFilterIds.length || masteryFilter !== "all"
+                                  ? "No question cards match the filter."
+                                  : "No questions yet."}
+                              </p>
+                            ) : (
+                              questionCardsForDisplay.map((card, index) => {
+                                const masteryScore = getMasteryScore(card);
+                                const masteryTier = getMasteryTier(masteryScore);
+                                const displayType =
+                                  card.type === "mcq" &&
+                                  (card.correct_option_indices || []).length > 1
+                                    ? "multi"
+                                    : card.type;
+                                return (
+                                  <article
+                                    key={card.id}
+                                    className="card question-card"
+                                    onClick={() => {
+                                      if (editingQuestionCardId !== card.id) {
+                                        openQuestionFocus(card.id);
+                                      }
+                                    }}
+                                    onKeyDown={(event) => {
+                                      if (
+                                        (event.key === "Enter" || event.key === " ") &&
+                                        editingQuestionCardId !== card.id
+                                      ) {
+                                        event.preventDefault();
+                                        openQuestionFocus(card.id);
+                                      }
+                                    }}
+                                    role="button"
+                                    tabIndex={0}
+                                  >
+                                  <div className="card-header">
+                                    <h3>
+                                      Q{index + 1}. {displayType.toUpperCase()}
+                                    </h3>
+                                    <span className="mono">{card.id.slice(0, 8)}</span>
+                                  </div>
+                                  {editingQuestionCardId === card.id ? (
+                                    <div className="form-block">
+                                      <select
+                                        value={editingQuestionCard.type}
+                                        onChange={(event) =>
+                                          setEditingQuestionCard((prev) => ({
+                                            ...prev,
+                                            type: event.target.value
+                                          }))
+                                        }
+                                      >
+                                        <option value="mcq">MCQ</option>
+                                        <option value="multi">Multi-answer</option>
+                                      </select>
+                                      <textarea
+                                        value={editingQuestionCard.prompt}
+                                        onChange={(event) =>
+                                          setEditingQuestionCard((prev) => ({
+                                            ...prev,
+                                            prompt: event.target.value
+                                          }))
+                                        }
+                                        rows={3}
+                                      />
+                                      <textarea
+                                        value={editingQuestionCard.optionsText}
+                                        onChange={(event) =>
+                                          setEditingQuestionCard((prev) => ({
+                                            ...prev,
+                                            optionsText: event.target.value
+                                          }))
+                                        }
+                                        rows={4}
+                                      />
+                                      <input
+                                        type="text"
+                                        value={editingQuestionCard.correctIndicesText}
+                                        onChange={(event) =>
+                                          setEditingQuestionCard((prev) => ({
+                                            ...prev,
+                                            correctIndicesText: event.target.value
+                                          }))
+                                        }
+                                      />
+                                      <div className="chip-grid">
+                                        {studyCards.map((studyCard) => (
+                                          <label key={studyCard.id} className="chip-toggle">
+                                            <input
+                                              type="checkbox"
+                                              checked={editingQuestionCard.refs.includes(studyCard.id)}
+                                              onChange={() =>
+                                                setEditingQuestionCard((prev) => ({
+                                                  ...prev,
+                                                  refs: prev.refs.includes(studyCard.id)
+                                                    ? prev.refs.filter((id) => id !== studyCard.id)
+                                                    : [...prev.refs, studyCard.id]
+                                                }))
+                                              }
+                                            />
+                                            {studyCard.title || studyCard.id.slice(0, 6)}
+                                          </label>
+                                        ))}
+                                      </div>
+                                      <div className="button-row">
+                                        <button
+                                          className="button primary"
+                                          type="button"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            handleSaveQuestionCard(card.id);
+                                          }}
+                                        >
+                                          Save
+                                        </button>
+                                        <button
+                                          className="button ghost"
+                                          type="button"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            setEditingQuestionCardId("");
+                                          }}
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <p>{card.prompt}</p>
+                                      <div className="question-meta">
+                                        {card.stale ? (
+                                          <span className="pill stale">Stale</span>
+                                        ) : null}
+                                        {masteryScore !== null ? (
+                                          <span
+                                            className={`pill mastery ${masteryTier}`}
+                                          >
+                                            Mastery: {masteryScore.toFixed(1)}
+                                          </span>
+                                        ) : (
+                                          <span className="pill mastery unknown">Mastery: —</span>
+                                        )}
+                                      </div>
+                                      <ul className="options">
+                                        {card.options.map((option, optionIndex) => {
+                                          const isCorrect =
+                                            card.correct_option_indices.includes(optionIndex);
+                                          return (
+                                            <li
+                                              key={`${card.id}-${optionIndex}`}
+                                              className={isCorrect ? "correct" : ""}
+                                            >
+                                              {option}
+                                            </li>
+                                          );
+                                        })}
+                                      </ul>
+                                      <p className="refs">Refs: {card.study_card_refs.join(", ")}</p>
+                                      <div className="button-row">
+                                        <button
+                                          className="button ghost"
+                                          type="button"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            handleEditQuestionCard(card);
+                                          }}
+                                        >
+                                          Edit
+                                        </button>
+                                        <button
+                                          className="button ghost"
+                                          type="button"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            handleDeleteQuestionCard(card.id);
+                                          }}
+                                        >
+                                          Delete
+                                        </button>
+                                      </div>
+                                    </>
+                                  )}
+                                </article>
+                              );
+                              })
+                            )}
+                          </div>
+                          <div className="form-block" id="question-generate">
+                            <h3>Generate question cards</h3>
+                            <div className="results-meta">
+                              <div className="field inline">
+                                <label htmlFor="question-count">Count</label>
+                                <input
+                                  id="question-count"
+                                  type="number"
+                                  min="1"
+                                  max="20"
+                                  value={questionCount}
+                                  onChange={(event) => setQuestionCount(event.target.value)}
+                                />
+                              </div>
+                              <button
+                                className="button primary"
+                                type="button"
+                                onClick={handleGenerateQuestions}
+                                disabled={studyCards.length === 0 || isGeneratingQuestions}
+                              >
+                                {isGeneratingQuestions ? "Generating..." : "Generate questions"}
+                              </button>
+                              <button
+                                className="button ghost"
+                                type="button"
+                                onClick={openQuestionCreateModal}
+                                disabled={!selectedNoteGroupId}
+                              >
+                                Create question card
+                              </button>
+                              {questionJobStatus !== "idle" ? (
+                                <span className={`pill status-${questionJobStatus}`}>
+                                  {questionJobStatus}
+                                </span>
+                              ) : null}
+                            </div>
+                            {questionCardError ? (
+                              <p className="error">{questionCardError}</p>
+                            ) : null}
+                          </div>
+                        </section>
+                      </>
+                    ) : null}
                   </>
-                ) : null}
+                )}
               </>
             )}
-          </>
-        )}
+          </div>
+          {sectionNavItems.length ? (
+            <aside className="content-nav">
+              <div className="content-nav-inner">
+                <p className="label">On this page</p>
+                <nav className="content-nav-links">
+                  {sectionNavItems.map((item) => (
+                    <a key={item.id} href={`#${item.id}`} className="content-nav-link">
+                      {item.label}
+                    </a>
+                  ))}
+                </nav>
+              </div>
+            </aside>
+          ) : null}
+        </div>
       </main>
     </div>
   );

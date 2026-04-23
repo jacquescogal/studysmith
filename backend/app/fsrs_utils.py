@@ -25,20 +25,43 @@ def _coerce_state(value) -> State:
 
 
 def card_from_question(card: QuestionCard) -> Card:
-    return Card(
-        due=_normalize_datetime(card.due_at) or datetime.now(timezone.utc),
-        stability=card.stability or None,
-        difficulty=card.difficulty or None,
-        state=_coerce_state(card.state),
-        step=card.step if card.step is not None else 0,
-        last_review=_normalize_datetime(card.last_review_at),
-    )
+    base_kwargs = {
+        "due": _normalize_datetime(card.due_at) or datetime.now(timezone.utc),
+        "stability": card.stability or None,
+        "difficulty": card.difficulty or None,
+        "state": _coerce_state(card.state),
+        "step": card.step if card.step is not None else 0,
+        "last_review": _normalize_datetime(card.last_review_at),
+    }
+    extra_kwargs = {
+        "elapsed_days": card.elapsed_days or 0,
+        "scheduled_days": card.scheduled_days or 0,
+        "reps": card.reps or 0,
+        "lapses": card.lapses or 0,
+    }
+    try:
+        return Card(**base_kwargs, **extra_kwargs)
+    except TypeError:
+        # Older fsrs.Card signatures do not accept elapsed/scheduled/reps/lapses.
+        return Card(**base_kwargs)
 
 
 def apply_card_to_question(card: Card, question: QuestionCard) -> None:
     question.due_at = card.due
     question.stability = float(card.stability) if card.stability is not None else 0.0
     question.difficulty = float(card.difficulty) if card.difficulty is not None else 0.0
+    if hasattr(card, "elapsed_days"):
+        question.elapsed_days = (
+            int(card.elapsed_days) if card.elapsed_days is not None else 0
+        )
+    if hasattr(card, "scheduled_days"):
+        question.scheduled_days = (
+            int(card.scheduled_days) if card.scheduled_days is not None else 0
+        )
+    if hasattr(card, "reps"):
+        question.reps = int(card.reps) if card.reps is not None else 0
+    if hasattr(card, "lapses"):
+        question.lapses = int(card.lapses) if card.lapses is not None else 0
     question.state = int(card.state.value)
     question.step = card.step
     question.last_review_at = card.last_review

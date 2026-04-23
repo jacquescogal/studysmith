@@ -64,6 +64,58 @@ body {
   min-width: 0;
 }
 
+.content-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+}
+
+.content-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.content-nav {
+  width: 220px;
+  position: sticky;
+  top: 24px;
+  align-self: flex-start;
+}
+
+.content-nav-inner {
+  background: var(--card);
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  padding: 16px;
+}
+
+.content-nav .label {
+  margin: 0;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.content-nav-links {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.content-nav-link {
+  color: var(--muted);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.content-nav-link:hover {
+  color: var(--accent);
+}
+
 .hero {
   display: flex;
   gap: 24px;
@@ -307,6 +359,41 @@ textarea {
   display: inline-block;
 }
 
+.pill.mastery.low {
+  background: rgba(177, 46, 46, 0.12);
+  color: #b12e2e;
+}
+
+.pill.mastery.medium {
+  background: rgba(209, 135, 61, 0.18);
+  color: #b36b2e;
+}
+
+.pill.mastery.high {
+  background: rgba(46, 143, 86, 0.16);
+  color: #2e8f56;
+}
+
+.pill.mastery.unknown {
+  color: var(--muted);
+}
+
+.question-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+
+.question-card {
+  cursor: pointer;
+}
+
+.question-card:focus {
+  outline: 2px solid rgba(209, 96, 61, 0.35);
+  outline-offset: 2px;
+}
+
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -338,6 +425,50 @@ textarea {
   margin: 12px 0 0;
   color: var(--muted);
   line-height: 1.5;
+}
+
+.filter-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.filter-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.filter-controls .select {
+  margin-bottom: 0;
+  flex: 1;
+}
+
+.button.small {
+  padding: 8px 14px;
+  font-size: 0.85rem;
+}
+
+.filter-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.filter-badge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(31, 27, 22, 0.12);
+  color: var(--ink);
+  font-size: 0.75rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .select-option {
@@ -468,6 +599,45 @@ textarea {
   box-shadow: var(--shadow);
 }
 
+.focus-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(31, 27, 22, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 9997;
+  backdrop-filter: blur(4px);
+}
+
+.focus-modal {
+  width: min(760px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  background: #fffdf9;
+  border-radius: 24px;
+  padding: 24px;
+  border: 1px solid rgba(31, 27, 22, 0.08);
+  box-shadow: var(--shadow);
+}
+
+.mastery-value.low {
+  color: #b12e2e;
+}
+
+.mastery-value.medium {
+  color: #b36b2e;
+}
+
+.mastery-value.high {
+  color: #2e8f56;
+}
+
+.focus-question .refs {
+  margin-top: 12px;
+}
+
 .meta-modal-header {
   display: flex;
   justify-content: space-between;
@@ -589,6 +759,40 @@ textarea {
   display: grid;
   gap: 10px;
   margin: 12px 0 16px;
+}
+
+.review-option-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.review-explanation-bubble {
+  position: absolute;
+  left: 36px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: #fffdf9;
+  border: 1px solid rgba(31, 27, 22, 0.12);
+  border-radius: 12px;
+  padding: 10px 12px;
+  box-shadow: var(--shadow);
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.4;
+  width: min(260px, 70vw);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 2;
+}
+
+.review-option-item:hover .review-explanation-bubble,
+.review-option-item:focus-within .review-explanation-bubble {
+  opacity: 1;
+  transform: translateY(-50%);
+  pointer-events: auto;
 }
 
 .review-chat-panel {
@@ -1082,5 +1286,15 @@ textarea {
     transform: none;
     margin-top: 16px;
     width: 100%;
+  }
+}
+
+@media (max-width: 1024px) {
+  .content-layout {
+    flex-direction: column;
+  }
+
+  .content-nav {
+    display: none;
   }
 }
