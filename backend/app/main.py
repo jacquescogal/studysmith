@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from typing import Optional
 
@@ -7,18 +7,21 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fsrs import Rating
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import case, func, or_, text
 
 from app.db import Base, engine, get_db
 from sqlalchemy.exc import IntegrityError
 from app.chroma import get_collection
+from app.auto_queue import enqueue_auto_job, remove_auto_job, resume_auto_jobs, start_auto_worker
 from app.jobs import (
     JOB_TYPE_NOTE_GROUP_GENERATION,
     JOB_TYPE_NOTE_GROUP_QUESTION_GENERATION,
+    JOB_TYPE_NOTE_GROUP_AUTO_GENERATION,
     run_note_group_generation,
     run_question_card_generation,
 )
 from app.models import (
+    DEFAULT_MODULE_SETTINGS,
     Job,
     Module,
     NoteGroup,
@@ -27,6 +30,7 @@ from app.models import (
     Subject,
     TopicChip,
     note_group_topic_chips,
+    study_card_topic_chips,
 )
 from app.fsrs_utils import initialize_question_card, review_question_card
 from app.openai_client import (
@@ -49,17 +53,22 @@ from app.schemas import (
     NoteGroupOut,
     NoteGroupFinalizeRequest,
     NoteGroupFinalizeResponse,
+    NoteGroupAutoRequest,
+    NoteGroupSourceCheckRequest,
+    NoteGroupSourceCheckResponse,
     NoteGroupTitleSuggestionsRequest,
     NoteGroupTitleSuggestionsResponse,
     NoteGroupTitleUpdate,
     NoteGroupTopicChipSuggestRequest,
     NoteGroupTopicChipSuggestResponse,
+    NoteGroupOrderUpdate,
     QuestionCardCreate,
     QuestionCardGenerate,
     QuestionCardList,
     QuestionCardOut,
     QuestionCardReview,
     QuestionCardUpdate,
+    QuestionTimelineResponse,
     SubjectCreate,
     SubjectOut,
     StudyCardCreate,
@@ -73,7 +82,56 @@ from app.schemas import (
     TopicChipOut,
 )
 
+def _normalize_source_text(value: str) -> str:
+    return " ".join(value.split()).lower()
+
+
+def _ensure_note_group_source_columns() -> None:
+    if engine.url.get_backend_name() != "sqlite":
+        return
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(note_groups)"))
+        columns = {row[1] for row in result}
+        statements = []
+        if "source" not in columns:
+            statements.append("ALTER TABLE note_groups ADD COLUMN source TEXT")
+        if "source_normalized" not in columns:
+            statements.append("ALTER TABLE note_groups ADD COLUMN source_normalized TEXT")
+        if "additional_generation_instructions" not in columns:
+            statements.append(
+                "ALTER TABLE note_groups ADD COLUMN additional_generation_instructions TEXT"
+            )
+        for statement in statements:
+            conn.execute(text(statement))
+        if statements:
+            conn.commit()
+
+
+def _word_count(value: str) -> int:
+    return len([word for word in value.split() if word])
+
+
+def _validate_additional_instructions(value: str) -> None:
+    if _word_count(value) > 500:
+        raise HTTPException(
+            status_code=400,
+            detail="Additional generation instructions must be 500 words or fewer",
+        )
+
+
+def _ensure_module_settings_column() -> None:
+    if engine.url.get_backend_name() != "sqlite":
+        return
+    with engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(modules)"))
+        columns = {row[1] for row in result}
+        if "settings_json" not in columns:
+            conn.execute(text("ALTER TABLE modules ADD COLUMN settings_json TEXT"))
+            conn.commit()
+
 Base.metadata.create_all(bind=engine)
+_ensure_note_group_source_columns()
+_ensure_module_settings_column()
 
 app = FastAPI(title="Study System API")
 
@@ -86,7 +144,19 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+def _start_auto_worker() -> None:
+    start_auto_worker()
+    resume_auto_jobs()
+
+
 def _serialize_question_card(card: QuestionCard) -> dict:
+    try:
+        option_explanations = json.loads(card.option_explanations_json or "[]")
+        if not isinstance(option_explanations, list):
+            option_explanations = []
+    except json.JSONDecodeError:
+        option_explanations = []
     return {
         "id": card.id,
         "note_group_id": card.note_group_id,
@@ -94,11 +164,64 @@ def _serialize_question_card(card: QuestionCard) -> dict:
         "prompt": card.prompt,
         "options": json.loads(card.options_json),
         "correct_option_indices": json.loads(card.correct_option_indices_json),
+        "option_explanations": option_explanations,
         "study_card_refs": json.loads(card.study_card_refs_json),
         "stale": card.stale,
         "due_at": card.due_at,
         "last_review_at": card.last_review_at,
+        "stability": card.stability,
+        "difficulty": card.difficulty,
+        "elapsed_days": card.elapsed_days,
+        "scheduled_days": card.scheduled_days,
+        "reps": card.reps,
+        "lapses": card.lapses,
+        "state": card.state,
+        "step": card.step,
     }
+
+
+def _normalize_due_at(value: Optional[datetime]) -> Optional[datetime]:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _parse_chip_ids(value: Optional[str]) -> list[str]:
+    if not value:
+        return []
+    return [token.strip() for token in value.split(",") if token.strip()]
+
+
+def _question_card_refs(card: QuestionCard) -> list[str]:
+    try:
+        refs = json.loads(card.study_card_refs_json or "[]")
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(refs, list):
+        return []
+    return [ref for ref in refs if isinstance(ref, str)]
+
+
+def _build_question_timeline(cards: list[QuestionCard], now: datetime) -> dict:
+    due_cutoff = now + timedelta(hours=6)
+    timeline = {"due": 0, "week": 0, "month": 0, "six_months": 0, "long_term": 0}
+    for card in cards:
+        due_at = _normalize_due_at(card.due_at)
+        if due_at is None or due_at <= due_cutoff:
+            timeline["due"] += 1
+            continue
+        diff = due_at - now
+        if diff <= timedelta(days=7):
+            timeline["week"] += 1
+        elif diff <= timedelta(days=30):
+            timeline["month"] += 1
+        elif diff <= timedelta(days=182):
+            timeline["six_months"] += 1
+        else:
+            timeline["long_term"] += 1
+    return timeline
 
 
 def _mark_question_cards_stale(db: Session, note_group_id: str, study_card_id: str) -> None:
@@ -138,6 +261,97 @@ def _upsert_study_card_embedding(card: StudyCard, module_id: str) -> None:
     )
 
 
+def _next_note_group_sort_order(db: Session, module_id: str) -> Optional[int]:
+    max_order = (
+        db.query(func.max(NoteGroup.sort_order))
+        .filter(NoteGroup.module_id == module_id)
+        .scalar()
+    )
+    if max_order is None:
+        return None
+    return max_order + 1
+
+
+def _delete_note_groups(db: Session, note_group_ids: list[str]) -> list[str]:
+    if not note_group_ids:
+        return []
+
+    jobs = db.query(Job).filter(Job.note_group_id.in_(note_group_ids)).all()
+    for job in jobs:
+        if job.status in {"completed", "failed", "cancelled"}:
+            continue
+        if job.type == JOB_TYPE_NOTE_GROUP_AUTO_GENERATION:
+            remove_auto_job(job.id)
+        job.status = "cancelled"
+        job.error = "Note group deleted"
+
+    study_card_rows = (
+        db.query(StudyCard.id)
+        .filter(StudyCard.note_group_id.in_(note_group_ids))
+        .all()
+    )
+    study_card_ids = [row[0] for row in study_card_rows]
+
+    if study_card_ids:
+        db.execute(
+            study_card_topic_chips.delete().where(
+                study_card_topic_chips.c.study_card_id.in_(study_card_ids)
+            )
+        )
+
+    db.execute(
+        note_group_topic_chips.delete().where(
+            note_group_topic_chips.c.note_group_id.in_(note_group_ids)
+        )
+    )
+    db.query(QuestionCard).filter(
+        QuestionCard.note_group_id.in_(note_group_ids)
+    ).delete(synchronize_session=False)
+    db.query(StudyCard).filter(StudyCard.note_group_id.in_(note_group_ids)).delete(
+        synchronize_session=False
+    )
+    db.query(NoteGroup).filter(NoteGroup.id.in_(note_group_ids)).delete(
+        synchronize_session=False
+    )
+
+    return study_card_ids
+
+
+def _reset_note_group_for_retry(db: Session, note_group: NoteGroup) -> list[str]:
+    study_cards = (
+        db.query(StudyCard.id)
+        .filter(StudyCard.note_group_id == note_group.id)
+        .all()
+    )
+    study_card_ids = [row[0] for row in study_cards]
+
+    if study_card_ids:
+        db.execute(
+            study_card_topic_chips.delete().where(
+                study_card_topic_chips.c.study_card_id.in_(study_card_ids)
+            )
+        )
+    db.execute(
+        note_group_topic_chips.delete().where(
+            note_group_topic_chips.c.note_group_id == note_group.id
+        )
+    )
+    db.query(QuestionCard).filter(
+        QuestionCard.note_group_id == note_group.id
+    ).delete(synchronize_session=False)
+    db.query(StudyCard).filter(StudyCard.note_group_id == note_group.id).delete(
+        synchronize_session=False
+    )
+
+    note_group.title = None
+    note_group.formatted_text = None
+    note_group.formatted_sections_json = None
+    note_group.suggested_titles_json = None
+    note_group.generation_status = "queued"
+
+    return study_card_ids
+
+
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
@@ -172,6 +386,37 @@ def get_subject(subject_id: str, db: Session = Depends(get_db)):
     return subject
 
 
+@app.delete("/subjects/{subject_id}")
+def delete_subject(subject_id: str, db: Session = Depends(get_db)):
+    subject = db.get(Subject, subject_id)
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+
+    module_rows = db.query(Module.id).filter(Module.subject_id == subject_id).all()
+    module_ids = [row[0] for row in module_rows]
+    note_group_ids = []
+    if module_ids:
+        note_group_rows = (
+            db.query(NoteGroup.id).filter(NoteGroup.module_id.in_(module_ids)).all()
+        )
+        note_group_ids = [row[0] for row in note_group_rows]
+
+    study_card_ids = _delete_note_groups(db, note_group_ids)
+    if module_ids:
+        db.query(TopicChip).filter(TopicChip.module_id.in_(module_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(Module).filter(Module.id.in_(module_ids)).delete(synchronize_session=False)
+    db.delete(subject)
+    db.commit()
+
+    if study_card_ids:
+        collection = get_collection()
+        collection.delete(ids=study_card_ids)
+
+    return {"deleted": True}
+
+
 @app.get("/subjects/{subject_id}/modules", response_model=list[ModuleOut])
 def list_subject_modules(subject_id: str, db: Session = Depends(get_db)):
     subject = db.get(Subject, subject_id)
@@ -195,7 +440,12 @@ def create_subject_module(
     title = payload.title.strip()
     if not title:
         raise HTTPException(status_code=400, detail="Title cannot be empty")
-    module = Module(subject_id=subject_id, title=title, description=payload.description)
+    module = Module(
+        subject_id=subject_id,
+        title=title,
+        description=payload.description,
+        settings_json=json.dumps(DEFAULT_MODULE_SETTINGS),
+    )
     db.add(module)
     try:
         db.commit()
@@ -223,7 +473,7 @@ def update_module(module_id: str, payload: ModuleUpdate, db: Session = Depends(g
     module = db.get(Module, module_id)
     if not module:
         raise HTTPException(status_code=404, detail="Module not found")
-    if payload.title is None and payload.description is None:
+    if payload.title is None and payload.description is None and payload.settings is None:
         raise HTTPException(status_code=400, detail="Provide fields to update")
     if payload.title is not None:
         title = payload.title.strip()
@@ -233,6 +483,41 @@ def update_module(module_id: str, payload: ModuleUpdate, db: Session = Depends(g
     if payload.description is not None:
         description = payload.description.strip()
         module.description = description or None
+    if payload.settings is not None:
+        if not isinstance(payload.settings, dict):
+            raise HTTPException(status_code=400, detail="Settings must be an object")
+        next_settings = dict(module.settings)
+        for key, value in payload.settings.items():
+            if key == "auto_question_count":
+                try:
+                    count = int(value)
+                except (TypeError, ValueError):
+                    raise HTTPException(
+                        status_code=400, detail="Auto question count must be a number"
+                    )
+                if count < 1:
+                    raise HTTPException(
+                        status_code=400, detail="Auto question count must be at least 1"
+                    )
+                next_settings[key] = count
+            elif key == "additional_generation_instructions":
+                if value is None:
+                    next_settings[key] = ""
+                elif not isinstance(value, str):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Additional generation instructions must be text",
+                    )
+                else:
+                    trimmed = value.strip()
+                    _validate_additional_instructions(trimmed)
+                    next_settings[key] = trimmed
+            else:
+                next_settings[key] = value
+        try:
+            module.settings_json = json.dumps(next_settings)
+        except TypeError:
+            raise HTTPException(status_code=400, detail="Settings must be JSON-serializable")
     try:
         db.commit()
         db.refresh(module)
@@ -240,6 +525,29 @@ def update_module(module_id: str, payload: ModuleUpdate, db: Session = Depends(g
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="Module title must be unique")
+
+
+@app.delete("/modules/{module_id}")
+def delete_module(module_id: str, db: Session = Depends(get_db)):
+    module = db.get(Module, module_id)
+    if not module:
+        raise HTTPException(status_code=404, detail="Module not found")
+
+    note_group_rows = db.query(NoteGroup.id).filter(NoteGroup.module_id == module_id).all()
+    note_group_ids = [row[0] for row in note_group_rows]
+
+    study_card_ids = _delete_note_groups(db, note_group_ids)
+    db.query(TopicChip).filter(TopicChip.module_id == module_id).delete(
+        synchronize_session=False
+    )
+    db.delete(module)
+    db.commit()
+
+    if study_card_ids:
+        collection = get_collection()
+        collection.delete(ids=study_card_ids)
+
+    return {"deleted": True}
 
 
 @app.post("/modules/{module_id}/note-groups", response_model=NoteGroupOut)
@@ -269,7 +577,150 @@ def list_note_groups(
                 .distinct()
             )
 
-    return query.order_by(NoteGroup.created_at.desc()).all()
+    sort_nulls_last = case((NoteGroup.sort_order.is_(None), 1), else_=0)
+    return (
+        query.order_by(
+            sort_nulls_last,
+            NoteGroup.sort_order.asc(),
+            NoteGroup.created_at.asc(),
+        )
+        .all()
+    )
+
+
+@app.post("/note-groups/source-check", response_model=NoteGroupSourceCheckResponse)
+def check_note_group_source(
+    payload: NoteGroupSourceCheckRequest,
+    db: Session = Depends(get_db),
+):
+    normalized = _normalize_source_text(payload.source or "")
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Source cannot be empty")
+    matches = (
+        db.query(NoteGroup)
+        .filter(NoteGroup.source_normalized == normalized)
+        .order_by(NoteGroup.created_at.asc())
+        .all()
+    )
+    return {
+        "normalized": normalized,
+        "duplicates": [
+            {
+                "id": group.id,
+                "module_id": group.module_id,
+                "title": group.title,
+                "created_at": group.created_at,
+            }
+            for group in matches
+        ],
+    }
+
+
+@app.put("/modules/{module_id}/note-groups/order")
+def update_note_group_order(
+    module_id: str,
+    payload: NoteGroupOrderUpdate,
+    db: Session = Depends(get_db),
+):
+    module = db.get(Module, module_id)
+    if not module:
+        raise HTTPException(status_code=404, detail="Module not found")
+    note_group_ids = [value for value in payload.note_group_ids if value]
+    if not note_group_ids:
+        raise HTTPException(status_code=400, detail="Note group ids cannot be empty")
+
+    groups = (
+        db.query(NoteGroup)
+        .filter(NoteGroup.module_id == module_id, NoteGroup.id.in_(note_group_ids))
+        .all()
+    )
+    if len(groups) != len(set(note_group_ids)):
+        raise HTTPException(status_code=400, detail="Note group ids mismatch")
+
+    group_by_id = {group.id: group for group in groups}
+    for index, group_id in enumerate(note_group_ids):
+        group_by_id[group_id].sort_order = index
+    db.commit()
+    return {"updated": len(note_group_ids)}
+
+
+@app.post("/note-groups/auto", response_model=JobOut)
+def auto_create_note_group(
+    payload: NoteGroupAutoRequest,
+    db: Session = Depends(get_db),
+):
+    module = db.get(Module, payload.module_id)
+    if not module:
+        raise HTTPException(status_code=404, detail="Module not found")
+    raw_text = payload.raw_text.strip()
+    if not raw_text:
+        raise HTTPException(status_code=400, detail="Raw text cannot be empty")
+    source_raw = payload.source.strip()
+    source_normalized = _normalize_source_text(source_raw)
+    if not source_normalized:
+        raise HTTPException(status_code=400, detail="Source cannot be empty")
+
+    if payload.additional_generation_instructions is None:
+        additional_instructions = ""
+    else:
+        additional_instructions = payload.additional_generation_instructions
+    if additional_instructions is None:
+        additional_instructions = ""
+    if not isinstance(additional_instructions, str):
+        raise HTTPException(
+            status_code=400,
+            detail="Additional generation instructions must be text",
+        )
+    additional_instructions = additional_instructions.strip()
+    _validate_additional_instructions(additional_instructions)
+    default_question_count = module.settings.get("auto_question_count", 30)
+    if payload.question_count is None:
+        question_count = default_question_count
+    else:
+        try:
+            question_count = int(payload.question_count)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Question count must be a number")
+    if question_count < 1:
+        raise HTTPException(status_code=400, detail="Question count must be at least 1")
+
+    if payload.additional_generation_instructions is None:
+        additional_instructions = ""
+    else:
+        additional_instructions = payload.additional_generation_instructions
+    if additional_instructions is None:
+        additional_instructions = ""
+    if not isinstance(additional_instructions, str):
+        raise HTTPException(
+            status_code=400,
+            detail="Additional generation instructions must be text",
+        )
+    additional_instructions = additional_instructions.strip()
+    _validate_additional_instructions(additional_instructions)
+
+    note_group = NoteGroup(
+        module_id=payload.module_id,
+        source=source_raw,
+        source_normalized=source_normalized,
+        raw_text=raw_text,
+        additional_generation_instructions=additional_instructions,
+        generation_status="queued",
+        sort_order=_next_note_group_sort_order(db, payload.module_id),
+    )
+    db.add(note_group)
+    db.flush()
+    job = Job(
+        type=JOB_TYPE_NOTE_GROUP_AUTO_GENERATION,
+        note_group_id=note_group.id,
+        payload_json=json.dumps({"question_count": question_count}),
+    )
+    db.add(job)
+    note_group.title = job.id
+    db.commit()
+    db.refresh(job)
+
+    enqueue_auto_job(job.id)
+    return job
 
 
 @app.post(
@@ -337,6 +788,10 @@ def finalize_note_group(
         raise HTTPException(status_code=400, detail="Raw text cannot be empty")
     if not title:
         raise HTTPException(status_code=400, detail="Title cannot be empty")
+    source_raw = payload.source.strip()
+    source_normalized = _normalize_source_text(source_raw)
+    if not source_normalized:
+        raise HTTPException(status_code=400, detail="Source cannot be empty")
 
     existing_chip_ids = payload.existing_chip_ids or []
     new_chip_labels = payload.new_chip_labels or []
@@ -376,6 +831,7 @@ def finalize_note_group(
         note_group_title=title,
         raw_text=raw_text,
         chip_labels=chip_labels,
+        additional_instructions=additional_instructions,
     )
     if not study_card_payloads:
         raise HTTPException(status_code=422, detail="No study cards generated")
@@ -383,8 +839,12 @@ def finalize_note_group(
     note_group = NoteGroup(
         module_id=payload.module_id,
         title=title,
+        source=source_raw,
+        source_normalized=source_normalized,
         raw_text=raw_text,
+        additional_generation_instructions=additional_instructions,
         generation_status="complete",
+        sort_order=_next_note_group_sort_order(db, payload.module_id),
     )
     note_group.topic_chips = selected_chips
     db.add(note_group)
@@ -563,6 +1023,22 @@ def get_note_group(note_group_id: str, db: Session = Depends(get_db)):
     return note_group
 
 
+@app.delete("/note-groups/{note_group_id}")
+def delete_note_group(note_group_id: str, db: Session = Depends(get_db)):
+    note_group = db.get(NoteGroup, note_group_id)
+    if not note_group:
+        raise HTTPException(status_code=404, detail="Note group not found")
+
+    study_card_ids = _delete_note_groups(db, [note_group_id])
+    db.commit()
+
+    if study_card_ids:
+        collection = get_collection()
+        collection.delete(ids=study_card_ids)
+
+    return {"deleted": True}
+
+
 @app.post("/note-groups/{note_group_id}/generate", response_model=JobOut)
 def generate_note_group(
     note_group_id: str,
@@ -590,6 +1066,82 @@ def get_job(job_id: str, db: Session = Depends(get_db)):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
+
+
+@app.get("/jobs", response_model=list[JobOut])
+def list_jobs(
+    type: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    module_id: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    query = db.query(Job)
+    if module_id:
+        query = query.join(NoteGroup, Job.note_group_id == NoteGroup.id).filter(
+            NoteGroup.module_id == module_id
+        )
+    if type:
+        query = query.filter(Job.type == type)
+    if status:
+        statuses = [value.strip() for value in status.split(",") if value.strip()]
+        if statuses:
+            query = query.filter(Job.status.in_(statuses))
+    return query.order_by(Job.created_at.desc()).all()
+
+
+@app.post("/jobs/{job_id}/cancel", response_model=JobOut)
+def cancel_job(job_id: str, db: Session = Depends(get_db)):
+    job = db.get(Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.type != JOB_TYPE_NOTE_GROUP_AUTO_GENERATION:
+        raise HTTPException(status_code=400, detail="Only auto jobs can be cancelled")
+    if job.status in {"completed", "failed", "cancelled"}:
+        return job
+
+    if job.status == "queued":
+        remove_auto_job(job.id)
+    job.status = "cancelled"
+    if job.note_group_id:
+        note_group = db.get(NoteGroup, job.note_group_id)
+        if note_group:
+            note_group.generation_status = "cancelled"
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+@app.post("/jobs/{job_id}/retry", response_model=JobOut)
+def retry_job(job_id: str, db: Session = Depends(get_db)):
+    job = db.get(Job, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.type != JOB_TYPE_NOTE_GROUP_AUTO_GENERATION:
+        raise HTTPException(status_code=400, detail="Only auto jobs can be retried")
+    if job.status not in {"failed", "cancelled"}:
+        raise HTTPException(status_code=400, detail="Job is not retryable")
+    note_group = job.note_group
+    if not note_group:
+        raise HTTPException(status_code=404, detail="Note group not found")
+
+    study_card_ids = _reset_note_group_for_retry(db, note_group)
+    new_job = Job(
+        type=JOB_TYPE_NOTE_GROUP_AUTO_GENERATION,
+        note_group_id=note_group.id,
+        payload_json=job.payload_json,
+    )
+    db.add(new_job)
+    db.flush()
+    note_group.title = new_job.id
+    db.commit()
+    db.refresh(new_job)
+
+    if study_card_ids:
+        collection = get_collection()
+        collection.delete(ids=study_card_ids)
+
+    enqueue_auto_job(new_job.id)
+    return new_job
 
 
 @app.get("/note-groups/{note_group_id}/study-cards", response_model=StudyCardList)
@@ -777,6 +1329,57 @@ def list_question_cards(note_group_id: str, db: Session = Depends(get_db)):
     return {"question_cards": [_serialize_question_card(card) for card in cards]}
 
 
+@app.get(
+    "/note-groups/{note_group_id}/question-cards/timeline",
+    response_model=QuestionTimelineResponse,
+)
+def get_note_group_question_timeline(
+    note_group_id: str,
+    chip_ids: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    note_group = db.get(NoteGroup, note_group_id)
+    if not note_group:
+        raise HTTPException(status_code=404, detail="Note group not found")
+    now = datetime.now(timezone.utc)
+    chip_id_list = _parse_chip_ids(chip_ids)
+    allowed_study_ids: Optional[set[str]] = None
+    if chip_id_list:
+        study_card_rows = (
+            db.query(StudyCard.id)
+            .join(
+                study_card_topic_chips,
+                StudyCard.id == study_card_topic_chips.c.study_card_id,
+            )
+            .filter(
+                StudyCard.note_group_id == note_group_id,
+                study_card_topic_chips.c.chip_id.in_(chip_id_list),
+            )
+            .distinct()
+            .all()
+        )
+        allowed_study_ids = {row[0] for row in study_card_rows}
+    cards = (
+        db.query(QuestionCard)
+        .filter(QuestionCard.note_group_id == note_group_id)
+        .order_by(QuestionCard.due_at.asc())
+        .all()
+    )
+    if allowed_study_ids is not None:
+        cards = [
+            card
+            for card in cards
+            if any(ref in allowed_study_ids for ref in _question_card_refs(card))
+        ]
+    timeline = _build_question_timeline(cards, now)
+    stale_count = sum(1 for card in cards if card.stale)
+    return {
+        "timeline": timeline,
+        "question_count": len(cards),
+        "stale_count": stale_count,
+    }
+
+
 @app.get("/note-groups/{note_group_id}/question-cards/review", response_model=QuestionCardList)
 def list_review_question_cards(
     note_group_id: str,
@@ -788,9 +1391,10 @@ def list_review_question_cards(
     if not note_group:
         raise HTTPException(status_code=404, detail="Note group not found")
     now = datetime.now(timezone.utc)
+    due_cutoff = now + timedelta(hours=6)
     query = db.query(QuestionCard).filter(QuestionCard.note_group_id == note_group_id)
     if mode == "due":
-        query = query.filter(or_(QuestionCard.due_at <= now, QuestionCard.due_at.is_(None)))
+        query = query.filter(or_(QuestionCard.due_at <= due_cutoff, QuestionCard.due_at.is_(None)))
     elif mode == "queue":
         pass
     elif mode == "all":
@@ -805,6 +1409,59 @@ def list_review_question_cards(
     return {"question_cards": [_serialize_question_card(card) for card in cards]}
 
 
+@app.get(
+    "/modules/{module_id}/question-cards/timeline",
+    response_model=QuestionTimelineResponse,
+)
+def get_module_question_timeline(
+    module_id: str,
+    chip_ids: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    module = db.get(Module, module_id)
+    if not module:
+        raise HTTPException(status_code=404, detail="Module not found")
+    now = datetime.now(timezone.utc)
+    chip_id_list = _parse_chip_ids(chip_ids)
+    allowed_study_ids: Optional[set[str]] = None
+    if chip_id_list:
+        study_card_rows = (
+            db.query(StudyCard.id)
+            .join(NoteGroup, StudyCard.note_group_id == NoteGroup.id)
+            .join(
+                study_card_topic_chips,
+                StudyCard.id == study_card_topic_chips.c.study_card_id,
+            )
+            .filter(
+                NoteGroup.module_id == module_id,
+                study_card_topic_chips.c.chip_id.in_(chip_id_list),
+            )
+            .distinct()
+            .all()
+        )
+        allowed_study_ids = {row[0] for row in study_card_rows}
+    cards = (
+        db.query(QuestionCard)
+        .join(NoteGroup, QuestionCard.note_group_id == NoteGroup.id)
+        .filter(NoteGroup.module_id == module_id)
+        .order_by(QuestionCard.due_at.asc())
+        .all()
+    )
+    if allowed_study_ids is not None:
+        cards = [
+            card
+            for card in cards
+            if any(ref in allowed_study_ids for ref in _question_card_refs(card))
+        ]
+    timeline = _build_question_timeline(cards, now)
+    stale_count = sum(1 for card in cards if card.stale)
+    return {
+        "timeline": timeline,
+        "question_count": len(cards),
+        "stale_count": stale_count,
+    }
+
+
 @app.get("/modules/{module_id}/question-cards/review", response_model=QuestionCardList)
 def list_module_review_question_cards(
     module_id: str,
@@ -816,13 +1473,14 @@ def list_module_review_question_cards(
     if not module:
         raise HTTPException(status_code=404, detail="Module not found")
     now = datetime.now(timezone.utc)
+    due_cutoff = now + timedelta(hours=6)
     query = (
         db.query(QuestionCard)
         .join(NoteGroup, QuestionCard.note_group_id == NoteGroup.id)
         .filter(NoteGroup.module_id == module_id)
     )
     if mode == "due":
-        query = query.filter(or_(QuestionCard.due_at <= now, QuestionCard.due_at.is_(None)))
+        query = query.filter(or_(QuestionCard.due_at <= due_cutoff, QuestionCard.due_at.is_(None)))
     elif mode == "queue":
         pass
     elif mode == "all":
@@ -856,6 +1514,17 @@ def create_question_card(
         raise HTTPException(status_code=400, detail="Provide study card references")
     if any(index >= len(payload.options) or index < 0 for index in payload.correct_option_indices):
         raise HTTPException(status_code=400, detail="Correct indices out of range")
+    if payload.type == "mcq" and len(payload.correct_option_indices) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail="MCQ questions must have exactly one correct option",
+        )
+    if payload.option_explanations is not None:
+        if len(payload.option_explanations) != len(payload.options):
+            raise HTTPException(
+                status_code=400,
+                detail="Option explanations must match options length",
+            )
 
     card = QuestionCard(
         note_group_id=note_group_id,
@@ -863,6 +1532,7 @@ def create_question_card(
         prompt=payload.prompt,
         options_json=json.dumps(payload.options),
         correct_option_indices_json=json.dumps(payload.correct_option_indices),
+        option_explanations_json=json.dumps(payload.option_explanations or []),
         study_card_refs_json=json.dumps(payload.study_card_refs),
         stale=False,
     )
@@ -885,7 +1555,7 @@ def review_question(
     if payload.response_time_ms < 0:
         raise HTTPException(status_code=400, detail="Response time must be non-negative")
     if payload.correct:
-        rating = Rating.Easy if payload.response_time_ms <= 10000 else Rating.Good
+        rating = Rating.Easy if payload.response_time_ms <= 30000 else Rating.Good
     else:
         rating = Rating.Again
     now = datetime.now(timezone.utc)
@@ -914,6 +1584,7 @@ def update_question_card(
         if len(payload.options) < 2:
             raise HTTPException(status_code=400, detail="Provide at least two options")
         card.options_json = json.dumps(payload.options)
+    option_len = None
     if payload.correct_option_indices is not None:
         if payload.options is not None:
             option_len = len(payload.options)
@@ -921,6 +1592,12 @@ def update_question_card(
             option_len = len(json.loads(card.options_json))
         if any(index >= option_len or index < 0 for index in payload.correct_option_indices):
             raise HTTPException(status_code=400, detail="Correct indices out of range")
+        next_type = payload.type or card.type
+        if next_type == "mcq" and len(payload.correct_option_indices) > 1:
+            raise HTTPException(
+                status_code=400,
+                detail="MCQ questions must have exactly one correct option",
+            )
         card.correct_option_indices_json = json.dumps(payload.correct_option_indices)
     elif payload.options is not None:
         existing_indices = json.loads(card.correct_option_indices_json)
@@ -929,6 +1606,18 @@ def update_question_card(
                 status_code=400,
                 detail="Correct indices out of range for updated options",
             )
+        option_len = len(payload.options)
+    if payload.option_explanations is not None:
+        if option_len is None:
+            option_len = len(json.loads(card.options_json))
+        if len(payload.option_explanations) != option_len:
+            raise HTTPException(
+                status_code=400,
+                detail="Option explanations must match options length",
+            )
+        card.option_explanations_json = json.dumps(payload.option_explanations)
+    elif payload.options is not None:
+        card.option_explanations_json = json.dumps([])
     if payload.study_card_refs is not None:
         if not payload.study_card_refs:
             raise HTTPException(status_code=400, detail="Provide study card references")

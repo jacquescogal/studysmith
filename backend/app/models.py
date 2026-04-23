@@ -17,6 +17,11 @@ from sqlalchemy.orm import relationship
 
 from app.db import Base
 
+DEFAULT_MODULE_SETTINGS = {
+    "auto_question_count": 30,
+    "additional_generation_instructions": "",
+}
+
 
 def _uuid() -> str:
     return str(uuid.uuid4())
@@ -56,12 +61,25 @@ class Module(Base):
     subject_id = Column(String, ForeignKey("subjects.id"), nullable=False)
     title = Column(String, nullable=False, unique=True)
     description = Column(Text)
+    settings_json = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     subject = relationship("Subject", back_populates="modules")
     note_groups = relationship("NoteGroup", back_populates="module")
     topic_chips = relationship("TopicChip", back_populates="module")
+
+    @property
+    def settings(self) -> dict:
+        if not self.settings_json:
+            return dict(DEFAULT_MODULE_SETTINGS)
+        try:
+            data = json.loads(self.settings_json)
+        except json.JSONDecodeError:
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        return {**DEFAULT_MODULE_SETTINGS, **data}
 
 
 class NoteGroup(Base):
@@ -70,11 +88,15 @@ class NoteGroup(Base):
     id = Column(String, primary_key=True, default=_uuid)
     module_id = Column(String, ForeignKey("modules.id"), nullable=False)
     title = Column(String)
+    source = Column(Text)
+    source_normalized = Column(String, index=True)
     raw_text = Column(Text, nullable=False)
+    additional_generation_instructions = Column(Text)
     formatted_text = Column(Text)
     formatted_sections_json = Column(Text)
     generation_status = Column(String, default="created")
     suggested_titles_json = Column(Text)
+    sort_order = Column(Integer)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -136,6 +158,7 @@ class QuestionCard(Base):
     prompt = Column(Text, nullable=False)
     options_json = Column(Text, nullable=False)
     correct_option_indices_json = Column(Text, nullable=False)
+    option_explanations_json = Column(Text)
     study_card_refs_json = Column(Text, nullable=False)
     stale = Column(Boolean, default=False)
     due_at = Column(DateTime, default=datetime.utcnow)
@@ -183,6 +206,7 @@ class Job(Base):
     type = Column(String, nullable=False)
     status = Column(String, default="queued")
     note_group_id = Column(String, ForeignKey("note_groups.id"))
+    payload_json = Column(Text)
     error = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
