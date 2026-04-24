@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: run run-backend run-frontend stop status open
+.PHONY: run run-backend run-frontend build run-prod stop status open
 
 run:
 	@echo "Starting backend (http://localhost:8000) and frontend (http://localhost:5173)."
@@ -9,6 +9,15 @@ run:
 	( cd backend && if [ -f .venv/bin/activate ]; then . .venv/bin/activate; fi && uvicorn app.main:app --reload --port 8000 ) & \
 	( cd frontend && npm run dev ) & \
 	wait
+
+build:
+	@echo "Building frontend..."
+	@cd frontend && npm run build
+	@echo "Done. Run 'make run-prod' to serve."
+
+run-prod:
+	@echo "Starting production server at http://localhost:8000"
+	@cd backend && if [ -f .venv/bin/activate ]; then . .venv/bin/activate; fi && uvicorn app.main:app --port 8000
 
 run-backend:
 	@cd backend && if [ -f .venv/bin/activate ]; then . .venv/bin/activate; fi && uvicorn app.main:app --reload --port 8000
