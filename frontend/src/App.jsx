@@ -272,8 +272,6 @@ export default function App() {
 
   const [modules, setModules] = useState([]);
   const [selectedModuleId, setSelectedModuleId] = useState("");
-  const [newModuleTitle, setNewModuleTitle] = useState("");
-  const [newModuleDescription, setNewModuleDescription] = useState("");
   const [isModuleMetadataOpen, setIsModuleMetadataOpen] = useState(false);
   const [isModuleWizardOpen, setIsModuleWizardOpen] = useState(false);
   const [moduleWizardMessages, setModuleWizardMessages] = useState([]);
@@ -450,6 +448,7 @@ export default function App() {
   const readingContentRef = useRef(null);
   const chatListRef = useRef(null);
   const reviewChatListRef = useRef(null);
+  const wizardChatRef = useRef(null);
   const selectedModuleIdRef = useRef(selectedModuleId);
   const activeAutoJobsRef = useRef(new Set());
   const location = useLocation();
@@ -1167,6 +1166,12 @@ export default function App() {
   }, [reviewChatMessages, reviewChatView]);
 
   useEffect(() => {
+    if (wizardChatRef.current) {
+      wizardChatRef.current.scrollTop = wizardChatRef.current.scrollHeight;
+    }
+  }, [moduleWizardMessages]);
+
+  useEffect(() => {
     selectedModuleIdRef.current = selectedModuleId;
   }, [selectedModuleId]);
 
@@ -1508,32 +1513,6 @@ export default function App() {
     }
   };
 
-  const handleCreateModule = async () => {
-    if (!selectedSubjectId || !newModuleTitle.trim()) {
-      return;
-    }
-    setSidebarError("");
-    try {
-      const module = await createModule(selectedSubjectId, {
-        title: newModuleTitle.trim(),
-        description: newModuleDescription.trim() || null
-      });
-      setModules((prev) => [module, ...prev]);
-      setSelectedModuleId(module.id);
-      setSelectedNoteGroupId("");
-      setNoteGroupMode("overview");
-      setReviewSummary(null);
-      setIsChatOpen(false);
-      setIsMetadataOpen(false);
-      setIsModuleMetadataOpen(false);
-      navigate("/");
-      setNewModuleTitle("");
-      setNewModuleDescription("");
-    } catch (error) {
-      setSidebarError(error.message || "Failed to create module");
-    }
-  };
-
   const handleOpenModuleWizard = () => {
     setModuleWizardMessages([]);
     setModuleWizardInput("");
@@ -1541,6 +1520,8 @@ export default function App() {
     setModuleWizardGoal("");
     setModuleWizardScope("");
     setModuleWizardError("");
+    setModuleWizardLoading(false);
+    setModuleWizardCreating(false);
     setIsModuleWizardOpen(true);
   };
 
@@ -1597,6 +1578,13 @@ export default function App() {
       setModules((prev) => [created, ...prev]);
       setSelectedModuleId(created.id);
       setIsModuleWizardOpen(false);
+      setSelectedNoteGroupId("");
+      setNoteGroupMode("overview");
+      setReviewSummary(null);
+      setIsChatOpen(false);
+      setIsMetadataOpen(false);
+      setIsModuleMetadataOpen(false);
+      navigate("/");
     } catch (error) {
       setModuleWizardError(error.message || "Failed to create module");
     } finally {
@@ -3684,7 +3672,7 @@ export default function App() {
             </div>
             <div className="intent-wizard-body">
               <div className="intent-wizard-chat">
-                <div className="chat">
+                <div className="chat" ref={wizardChatRef}>
                   {moduleWizardMessages.length === 0 ? (
                     <p className="muted small">
                       Tell me what you want to learn and why. I&apos;ll fill in the fields on the right.
