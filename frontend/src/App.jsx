@@ -286,6 +286,8 @@ export default function App() {
   const [moduleDescriptionDraft, setModuleDescriptionDraft] = useState("");
   const [moduleAutoQuestionDefaultDraft, setModuleAutoQuestionDefaultDraft] = useState("30");
   const [moduleAdditionalInstructionsDraft, setModuleAdditionalInstructionsDraft] = useState("");
+  const [moduleGoalDraft, setModuleGoalDraft] = useState("");
+  const [moduleScopeDraft, setModuleScopeDraft] = useState("");
   const [moduleMetadataSaving, setModuleMetadataSaving] = useState(false);
   const [moduleMetadataError, setModuleMetadataError] = useState("");
   const [moduleDueCounts, setModuleDueCounts] = useState({});
@@ -2121,6 +2123,8 @@ export default function App() {
     setModuleAdditionalInstructionsDraft(
       getModuleAdditionalInstructions(selectedModule)
     );
+    setModuleGoalDraft(selectedModule?.goal || "");
+    setModuleScopeDraft(selectedModule?.scope || "");
     setModuleMetadataError("");
     setIsModuleMetadataOpen(true);
   };
@@ -2150,6 +2154,8 @@ export default function App() {
       const updated = await updateModule(selectedModuleId, {
         title: trimmedTitle,
         description: moduleDescriptionDraft.trim() || null,
+        goal: moduleGoalDraft.trim() || null,
+        scope: moduleScopeDraft.trim() || null,
         settings: {
           auto_question_count: parsedDefaultCount,
           additional_generation_instructions: moduleAdditionalInstructionsDraft.trim()
@@ -3818,6 +3824,26 @@ export default function App() {
               <p className="muted">
                 Word count: {countWords(moduleAdditionalInstructionsDraft)}/500
               </p>
+            </div>
+            <div className="field">
+              <label htmlFor="module-goal">Learning goal</label>
+              <textarea
+                id="module-goal"
+                value={moduleGoalDraft}
+                onChange={(event) => setModuleGoalDraft(event.target.value)}
+                placeholder="What does success look like for this module?"
+                rows={3}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="module-scope">Scope</label>
+              <textarea
+                id="module-scope"
+                value={moduleScopeDraft}
+                onChange={(event) => setModuleScopeDraft(event.target.value)}
+                placeholder="Topics and boundaries of study"
+                rows={3}
+              />
             </div>
             <div className="button-row">
               <button
