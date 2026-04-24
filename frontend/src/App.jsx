@@ -338,6 +338,7 @@ export default function App() {
   const [noteGroupChipIds, setNoteGroupChipIds] = useState([]);
   const [wizardChipLabel, setWizardChipLabel] = useState("");
   const [moduleChipLabel, setModuleChipLabel] = useState("");
+  const [moduleChipDescription, setModuleChipDescription] = useState("");
 
   const [rawTextDraft, setRawTextDraft] = useState("");
   const [additionalInstructionsDraft, setAdditionalInstructionsDraft] = useState("");
@@ -640,7 +641,11 @@ export default function App() {
   }, [noteGroupMode, selectedModuleId, selectedNoteGroupId, isStudyPage, isQuestionPage]);
 
   const chipOptions = useMemo(
-    () => topicChips.map((chip) => ({ value: chip.id, label: chip.label })),
+    () => topicChips.map((chip) => ({
+      value: chip.id,
+      label: chip.label,
+      description: chip.description || "",
+    })),
     [topicChips]
   );
   const chipFilterValue = useMemo(
@@ -1939,8 +1944,22 @@ export default function App() {
   };
 
   const handleCreateModuleChip = async () => {
-    await handleCreateChip(moduleChipLabel);
+    const trimmed = moduleChipLabel.trim();
+    if (!selectedModuleId || !trimmed) {
+      return;
+    }
+    setFinalizeError("");
+    try {
+      const chip = await createTopicChip(selectedModuleId, {
+        label: trimmed,
+        description: moduleChipDescription.trim() || null,
+      });
+      setTopicChips((prev) => [...prev, chip]);
+    } catch (error) {
+      setSidebarError(error.message || "Failed to create topic chip");
+    }
     setModuleChipLabel("");
+    setModuleChipDescription("");
   };
 
   const handleChipFilterSelect = (options) => {
@@ -3552,6 +3571,14 @@ export default function App() {
                   maxMenuHeight={200}
                   menuPortalTarget={document.body}
                   styles={selectStyles}
+                  formatOptionLabel={(opt) => (
+                    <div style={{ display: "flex", flexDirection: "column" }}>
+                      <span>{opt.label}</span>
+                      {opt.description ? (
+                        <span style={{ fontSize: "0.75em", color: "#888" }}>{opt.description}</span>
+                      ) : null}
+                    </div>
+                  )}
                 />
               ) : null}
               <div className="button-row">
@@ -3910,6 +3937,14 @@ export default function App() {
                 maxMenuHeight={220}
                 menuPortalTarget={document.body}
                 styles={selectStyles}
+                formatOptionLabel={(opt) => (
+                  <div style={{ display: "flex", flexDirection: "column" }}>
+                    <span>{opt.label}</span>
+                    {opt.description ? (
+                      <span style={{ fontSize: "0.75em", color: "#888" }}>{opt.description}</span>
+                    ) : null}
+                  </div>
+                )}
               />
             )}
             <div className="form-inline">
@@ -3918,6 +3953,13 @@ export default function App() {
                 value={moduleChipLabel}
                 onChange={(event) => setModuleChipLabel(event.target.value)}
                 placeholder="New topic chip"
+                disabled={!selectedModuleId}
+              />
+              <input
+                type="text"
+                value={moduleChipDescription}
+                onChange={(event) => setModuleChipDescription(event.target.value)}
+                placeholder="Chip description (optional)"
                 disabled={!selectedModuleId}
               />
               <button
@@ -4554,6 +4596,14 @@ export default function App() {
                               maxMenuHeight={220}
                               menuPortalTarget={document.body}
                               styles={selectStyles}
+                              formatOptionLabel={(opt) => (
+                                <div style={{ display: "flex", flexDirection: "column" }}>
+                                  <span>{opt.label}</span>
+                                  {opt.description ? (
+                                    <span style={{ fontSize: "0.75em", color: "#888" }}>{opt.description}</span>
+                                  ) : null}
+                                </div>
+                              )}
                             />
                             <button
                               className="button ghost small"
@@ -4886,6 +4936,14 @@ export default function App() {
                               maxMenuHeight={220}
                               menuPortalTarget={document.body}
                               styles={selectStyles}
+                              formatOptionLabel={(opt) => (
+                                <div style={{ display: "flex", flexDirection: "column" }}>
+                                  <span>{opt.label}</span>
+                                  {opt.description ? (
+                                    <span style={{ fontSize: "0.75em", color: "#888" }}>{opt.description}</span>
+                                  ) : null}
+                                </div>
+                              )}
                             />
                             <button
                               className="button ghost small"
