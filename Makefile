@@ -6,7 +6,7 @@ run:
 	@echo "Starting backend (http://localhost:8000) and frontend (http://localhost:5173)."
 	@echo "Press Ctrl+C to stop both."
 	@set -euo pipefail; \
-	( cd backend && if [ -f .venv/bin/activate ]; then . .venv/bin/activate; fi && uvicorn app.main:app --reload --port 8000 ) & \
+	( cd backend && if [ -f .venv/bin/activate ]; then . .venv/bin/activate; fi && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 ) & \
 	( cd frontend && npm run dev ) & \
 	wait
 
@@ -17,10 +17,10 @@ build:
 
 run-prod:
 	@echo "Starting production server at http://localhost:8000"
-	@cd backend && if [ -f .venv/bin/activate ]; then . .venv/bin/activate; fi && uvicorn app.main:app --port 8000
+	@cd backend && if [ -f .venv/bin/activate ]; then . .venv/bin/activate; fi && uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 run-backend:
-	@cd backend && if [ -f .venv/bin/activate ]; then . .venv/bin/activate; fi && uvicorn app.main:app --reload --port 8000
+	@cd backend && if [ -f .venv/bin/activate ]; then . .venv/bin/activate; fi && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 run-frontend:
 	@cd frontend && npm run dev
