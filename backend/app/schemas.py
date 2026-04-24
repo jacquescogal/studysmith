@@ -7,15 +7,26 @@ from pydantic import BaseModel, Field
 class SubjectCreate(BaseModel):
     title: str
     description: Optional[str] = None
+    goal: Optional[str] = None
+    scope: Optional[str] = None
+
+
+class SubjectUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    goal: Optional[str] = None
+    scope: Optional[str] = None
 
 
 class SubjectOut(BaseModel):
     id: str
     title: str
     description: Optional[str] = None
+    goal: Optional[str] = None
+    scope: Optional[str] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class ModuleCreate(BaseModel):
@@ -180,6 +191,17 @@ class IntentChatMessage(BaseModel):
 class IntentChatRequest(BaseModel):
     message: str
     history: Optional[List[IntentChatMessage]] = None
+    current_title: Optional[str] = None
+    current_goal: Optional[str] = None
+    current_scope: Optional[str] = None
+    subject_title: Optional[str] = None
+    subject_goal: Optional[str] = None
+    subject_scope: Optional[str] = None
+
+
+class SubjectIntentChatPayload(BaseModel):
+    message: str
+    history: list = []
     current_title: Optional[str] = None
     current_goal: Optional[str] = None
     current_scope: Optional[str] = None
