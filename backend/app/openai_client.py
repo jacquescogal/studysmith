@@ -384,12 +384,25 @@ def generate_formatted_sections(raw_text: str, study_cards: List[dict]) -> List[
     return sections
 
 
+def generate_subject_intent_response(
+    message: str,
+    history: Optional[List[dict]] = None,
+    current_title: Optional[str] = None,
+    current_goal: Optional[str] = None,
+    current_scope: Optional[str] = None,
+) -> dict:
+    return {"reply": "Not yet implemented", "title": current_title, "goal": current_goal, "scope": current_scope}
+
+
 def generate_module_intent_response(
     message: str,
     history: Optional[List[dict]] = None,
     current_title: Optional[str] = None,
     current_goal: Optional[str] = None,
     current_scope: Optional[str] = None,
+    subject_title: Optional[str] = None,
+    subject_goal: Optional[str] = None,
+    subject_scope: Optional[str] = None,
 ) -> dict:
     client_instance = _require_client()
     current_state = (

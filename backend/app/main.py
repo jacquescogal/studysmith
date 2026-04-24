@@ -43,6 +43,7 @@ from app.openai_client import (
     generate_module_intent_response,
     generate_note_group_title_suggestions,
     generate_study_cards_with_context,
+    generate_subject_intent_response,
     suggest_topic_chips,
 )
 from app.text_formatter import build_formatted_sections, sections_to_markdown
@@ -76,7 +77,9 @@ from app.schemas import (
     QuestionCardUpdate,
     QuestionTimelineResponse,
     SubjectCreate,
+    SubjectIntentChatPayload,
     SubjectOut,
+    SubjectUpdate,
     StudyCardCreate,
     StudyCardOut,
     StudyCardList,
@@ -177,11 +180,25 @@ def _ensure_topic_chip_description_column() -> None:
             conn.execute(text("ALTER TABLE topic_chips ADD COLUMN description TEXT"))
             conn.commit()
 
+
+def _ensure_subject_intent_columns() -> None:
+    if engine.url.get_backend_name() != "sqlite":
+        return
+    with engine.connect() as conn:
+        cols = {r[1] for r in conn.execute(text("PRAGMA table_info(subjects)"))}
+        if "goal" not in cols:
+            conn.execute(text("ALTER TABLE subjects ADD COLUMN goal TEXT"))
+        if "scope" not in cols:
+            conn.execute(text("ALTER TABLE subjects ADD COLUMN scope TEXT"))
+        conn.commit()
+
+
 Base.metadata.create_all(bind=engine)
 _ensure_note_group_source_columns()
 _ensure_module_settings_column()
 _ensure_module_intent_columns()
 _ensure_topic_chip_description_column()
+_ensure_subject_intent_columns()
 
 app = FastAPI(title="Study System API")
 
@@ -415,6 +432,9 @@ def module_intent_chat(payload: IntentChatRequest):
         current_title=payload.current_title,
         current_goal=payload.current_goal,
         current_scope=payload.current_scope,
+        subject_title=payload.subject_title,
+        subject_goal=payload.subject_goal,
+        subject_scope=payload.subject_scope,
     )
     return {
         "assistant_message": result.get("assistant_message", ""),
@@ -434,7 +454,12 @@ def create_subject(payload: SubjectCreate, db: Session = Depends(get_db)):
     title = payload.title.strip()
     if not title:
         raise HTTPException(status_code=400, detail="Title cannot be empty")
-    subject = Subject(title=title, description=payload.description)
+    subject = Subject(
+        title=title,
+        description=payload.description,
+        goal=payload.goal.strip() if payload.goal else None,
+        scope=payload.scope.strip() if payload.scope else None,
+    )
     db.add(subject)
     try:
         db.commit()
@@ -451,6 +476,56 @@ def get_subject(subject_id: str, db: Session = Depends(get_db)):
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
     return subject
+
+
+@app.put("/subjects/{subject_id}", response_model=SubjectOut)
+def update_subject(subject_id: str, payload: SubjectUpdate, db: Session = Depends(get_db)):
+    subject = db.get(Subject, subject_id)
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    if (
+        payload.title is None
+        and payload.description is None
+        and payload.goal is None
+        and payload.scope is None
+    ):
+        raise HTTPException(status_code=400, detail="Provide fields to update")
+    if payload.title is not None:
+        title = payload.title.strip()
+        if not title:
+            raise HTTPException(status_code=400, detail="Title cannot be empty")
+        subject.title = title
+    if payload.description is not None:
+        description = payload.description.strip()
+        subject.description = description or None
+    if payload.goal is not None:
+        subject.goal = payload.goal.strip() or None
+    if payload.scope is not None:
+        subject.scope = payload.scope.strip() or None
+    try:
+        db.commit()
+        db.refresh(subject)
+        return subject
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Subject title must be unique")
+
+
+@app.post("/subjects/intent-chat", response_model=IntentChatResponse)
+def subject_intent_chat(payload: SubjectIntentChatPayload):
+    result = generate_subject_intent_response(
+        payload.message,
+        payload.history,
+        payload.current_title,
+        payload.current_goal,
+        payload.current_scope,
+    )
+    return {
+        "assistant_message": result.get("assistant_message", ""),
+        "title": result.get("title"),
+        "goal": result.get("goal"),
+        "scope": result.get("scope"),
+    }
 
 
 @app.delete("/subjects/{subject_id}")

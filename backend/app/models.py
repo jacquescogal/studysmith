@@ -48,6 +48,8 @@ class Subject(Base):
     id = Column(String, primary_key=True, default=_uuid)
     title = Column(String, nullable=False, unique=True)
     description = Column(Text)
+    goal = Column(Text, nullable=True)
+    scope = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
