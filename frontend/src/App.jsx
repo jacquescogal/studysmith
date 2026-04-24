@@ -39,6 +39,7 @@ import {
   retryAutoJob,
   reviewQuestionCard,
   sendChat,
+  sendModuleIntentChat,
   updateNoteGroupOrder,
   suggestTopicChips,
   updateNoteGroupTitle,
@@ -274,6 +275,15 @@ export default function App() {
   const [newModuleTitle, setNewModuleTitle] = useState("");
   const [newModuleDescription, setNewModuleDescription] = useState("");
   const [isModuleMetadataOpen, setIsModuleMetadataOpen] = useState(false);
+  const [isModuleWizardOpen, setIsModuleWizardOpen] = useState(false);
+  const [moduleWizardMessages, setModuleWizardMessages] = useState([]);
+  const [moduleWizardInput, setModuleWizardInput] = useState("");
+  const [moduleWizardLoading, setModuleWizardLoading] = useState(false);
+  const [moduleWizardTitle, setModuleWizardTitle] = useState("");
+  const [moduleWizardGoal, setModuleWizardGoal] = useState("");
+  const [moduleWizardScope, setModuleWizardScope] = useState("");
+  const [moduleWizardError, setModuleWizardError] = useState("");
+  const [moduleWizardCreating, setModuleWizardCreating] = useState(false);
   const [moduleTitleDraft, setModuleTitleDraft] = useState("");
   const [moduleDescriptionDraft, setModuleDescriptionDraft] = useState("");
   const [moduleAutoQuestionDefaultDraft, setModuleAutoQuestionDefaultDraft] = useState("30");
@@ -1521,6 +1531,76 @@ export default function App() {
       setNewModuleDescription("");
     } catch (error) {
       setSidebarError(error.message || "Failed to create module");
+    }
+  };
+
+  const handleOpenModuleWizard = () => {
+    setModuleWizardMessages([]);
+    setModuleWizardInput("");
+    setModuleWizardTitle("");
+    setModuleWizardGoal("");
+    setModuleWizardScope("");
+    setModuleWizardError("");
+    setIsModuleWizardOpen(true);
+  };
+
+  const handleModuleWizardSend = async () => {
+    const message = moduleWizardInput.trim();
+    if (!message || moduleWizardLoading) {
+      return;
+    }
+    const userMsg = { role: "user", content: message };
+    setModuleWizardMessages((prev) => [...prev, userMsg]);
+    setModuleWizardInput("");
+    setModuleWizardLoading(true);
+    setModuleWizardError("");
+    try {
+      const result = await sendModuleIntentChat({
+        message,
+        history: moduleWizardMessages.slice(-10),
+        current_title: moduleWizardTitle || null,
+        current_goal: moduleWizardGoal || null,
+        current_scope: moduleWizardScope || null,
+      });
+      setModuleWizardMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: result.assistant_message },
+      ]);
+      if (result.title) {
+        setModuleWizardTitle(result.title);
+      }
+      if (result.goal) {
+        setModuleWizardGoal(result.goal);
+      }
+      if (result.scope) {
+        setModuleWizardScope(result.scope);
+      }
+    } catch (error) {
+      setModuleWizardError(error.message || "Failed to get response");
+    } finally {
+      setModuleWizardLoading(false);
+    }
+  };
+
+  const handleCreateModuleFromWizard = async () => {
+    if (!selectedSubjectId || !moduleWizardTitle.trim() || moduleWizardCreating) {
+      return;
+    }
+    setModuleWizardCreating(true);
+    setModuleWizardError("");
+    try {
+      const created = await createModule(selectedSubjectId, {
+        title: moduleWizardTitle.trim(),
+        goal: moduleWizardGoal.trim() || null,
+        scope: moduleWizardScope.trim() || null,
+      });
+      setModules((prev) => [created, ...prev]);
+      setSelectedModuleId(created.id);
+      setIsModuleWizardOpen(false);
+    } catch (error) {
+      setModuleWizardError(error.message || "Failed to create module");
+    } finally {
+      setModuleWizardCreating(false);
     }
   };
 
@@ -3584,6 +3664,112 @@ export default function App() {
           </div>
         </div>
       ) : null}
+      {isModuleWizardOpen ? (
+        <div className="meta-overlay">
+          <div className="intent-wizard">
+            <div className="intent-wizard-header">
+              <div>
+                <h2>Create module</h2>
+                <p className="muted">
+                  Describe what you want to study — the AI will suggest a title, goal, and scope.
+                </p>
+              </div>
+              <button
+                className="button ghost"
+                type="button"
+                onClick={() => setIsModuleWizardOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="intent-wizard-body">
+              <div className="intent-wizard-chat">
+                <div className="chat">
+                  {moduleWizardMessages.length === 0 ? (
+                    <p className="muted small">
+                      Tell me what you want to learn and why. I&apos;ll fill in the fields on the right.
+                    </p>
+                  ) : (
+                    moduleWizardMessages.map((msg, idx) => (
+                      <div key={idx} className={`chat-bubble ${msg.role}`}>
+                        <p>{msg.content}</p>
+                      </div>
+                    ))
+                  )}
+                  {moduleWizardLoading ? (
+                    <div className="chat-bubble assistant">
+                      <p>Thinking...</p>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="chat-input">
+                  <textarea
+                    value={moduleWizardInput}
+                    onChange={(e) => setModuleWizardInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        handleModuleWizardSend();
+                      }
+                    }}
+                    placeholder="Describe your learning intent..."
+                    rows={2}
+                    disabled={moduleWizardLoading}
+                  />
+                  <button
+                    className="button primary"
+                    type="button"
+                    onClick={handleModuleWizardSend}
+                    disabled={moduleWizardLoading || !moduleWizardInput.trim()}
+                  >
+                    Send
+                  </button>
+                </div>
+              </div>
+              <div className="intent-wizard-fields">
+                <div className="field">
+                  <label>Title</label>
+                  <input
+                    type="text"
+                    value={moduleWizardTitle}
+                    onChange={(e) => setModuleWizardTitle(e.target.value)}
+                    placeholder="Module title"
+                  />
+                </div>
+                <div className="field">
+                  <label>Goal</label>
+                  <textarea
+                    value={moduleWizardGoal}
+                    onChange={(e) => setModuleWizardGoal(e.target.value)}
+                    placeholder="What does success look like?"
+                    rows={3}
+                  />
+                </div>
+                <div className="field">
+                  <label>Scope</label>
+                  <textarea
+                    value={moduleWizardScope}
+                    onChange={(e) => setModuleWizardScope(e.target.value)}
+                    placeholder="Topics and boundaries of study"
+                    rows={3}
+                  />
+                </div>
+                {moduleWizardError ? (
+                  <p className="error">{moduleWizardError}</p>
+                ) : null}
+                <button
+                  className="button primary"
+                  type="button"
+                  onClick={handleCreateModuleFromWizard}
+                  disabled={!moduleWizardTitle.trim() || moduleWizardCreating || !selectedSubjectId}
+                >
+                  {moduleWizardCreating ? "Creating..." : "Create module"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {isModuleMetadataOpen ? (
         <div className="meta-overlay">
           <div className="meta-modal">
@@ -3998,25 +4184,13 @@ export default function App() {
                 </div>
                 <div className="module-create">
                   <div className="form-block">
-                    <input
-                      type="text"
-                      value={newModuleTitle}
-                      onChange={(event) => setNewModuleTitle(event.target.value)}
-                      placeholder="New module title"
-                    />
-                    <input
-                      type="text"
-                      value={newModuleDescription}
-                      onChange={(event) => setNewModuleDescription(event.target.value)}
-                      placeholder="Optional description"
-                    />
                     <button
                       className="button ghost"
                       type="button"
-                      onClick={handleCreateModule}
-                      disabled={!newModuleTitle.trim()}
+                      onClick={handleOpenModuleWizard}
+                      disabled={!selectedSubjectId}
                     >
-                      Add module
+                      Create new module
                     </button>
                   </div>
                 </div>
