@@ -67,16 +67,21 @@ Subject
 
 ### Requirements
 - Python 3.10+
-- Node.js 18+
+- Node.js 18+ (build only — not needed at runtime after building)
 - An OpenAI API key
 
-### Backend
+### Install dependencies
 
 ```bash
+# Backend
 cd backend
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+cd ..
+
+# Frontend
+cd frontend && npm install && cd ..
 ```
 
 Create `backend/.env`:
@@ -85,23 +90,20 @@ Create `backend/.env`:
 OPENAI_API_KEY=sk-...
 ```
 
-Start the API:
+### Run (production — one process)
 
 ```bash
-uvicorn app.main:app --reload --port 8000
+make build      # build the frontend once (or after frontend changes)
+make run-prod   # open http://localhost:8000
 ```
 
-### Frontend
+### Run (development — hot reload)
 
 ```bash
-cd frontend
-npm install
-npm run dev
+make run        # backend on :8000, frontend dev server on :5173
 ```
 
-Open [http://localhost:5173](http://localhost:5173).
-
-> The frontend talks to `http://localhost:8000` by default. Override with `VITE_API_BASE_URL` in a `frontend/.env` file if needed.
+Open [http://localhost:5173](http://localhost:5173) in dev mode.
 
 ### Schema changes
 
@@ -112,7 +114,7 @@ If you have a database from an older version and see errors, delete `backend/stu
 ## Roadmap
 
 - [ ] **Model-agnostic provider** — abstract the AI client so any OpenAI-compatible endpoint (Anthropic, Gemini, Ollama, etc.) can be configured via env vars without code changes
-- [ ] **Single executable** — bundle backend and frontend into one runnable binary so setup is just "provide key, double-click, open browser"
+- [x] **Single executable** — `make build` then `make run-prod` serves both frontend and API from one uvicorn process on port 8000
 - [x] Module-level review page with cross-note-group scheduling
 - [x] Due-count badge per note group in the sidebar
 - [x] Dropdown search for topic chip selection (replaces toggle list for large chip pools)

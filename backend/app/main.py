@@ -1,10 +1,13 @@
 import json
+import os
 from datetime import datetime, timezone, timedelta
 
 from typing import Optional
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from fsrs import Rating
 from sqlalchemy.orm import Session
 from sqlalchemy import case, func, or_, text
@@ -1801,3 +1804,22 @@ def chat(payload: ChatRequest, db: Session = Depends(get_db)):
         used_refs = []
     used_refs = [ref for ref in used_refs if ref in filtered_ids]
     return {"answer": response.get("answer", ""), "study_card_refs": used_refs}
+
+
+_DIST_DIR = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist")
+)
+
+if os.path.isdir(_DIST_DIR):
+    app.mount(
+        "/assets",
+        StaticFiles(directory=os.path.join(_DIST_DIR, "assets")),
+        name="assets",
+    )
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def spa_fallback(full_path: str):
+        candidate = os.path.join(_DIST_DIR, full_path)
+        if full_path and os.path.isfile(candidate):
+            return FileResponse(candidate)
+        return FileResponse(os.path.join(_DIST_DIR, "index.html"))
