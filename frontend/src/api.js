@@ -318,3 +318,10 @@ export function sendChat(payload) {
     body: JSON.stringify(payload)
   });
 }
+
+export function sendModuleIntentChat(payload) {
+  return request("/modules/intent-chat", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
