@@ -836,7 +836,7 @@ def note_group_topic_chip_suggestions(
         .all()
     )
     module_chip_pool = [{"chipId": chip.id, "label": chip.label} for chip in chips]
-    suggestion = suggest_topic_chips(module_chip_pool, payload.raw_text)
+    suggestion = suggest_topic_chips(module_chip_pool, payload.raw_text, module_goal=module.goal, module_scope=module.scope)
     attach_ids = [
         chip_id
         for chip_id in suggestion.get("attach_chip_ids", [])
@@ -908,6 +908,8 @@ def finalize_note_group(
         raw_text=raw_text,
         chip_labels=chip_labels,
         additional_instructions=additional_instructions,
+        module_goal=module.goal,
+        module_scope=module.scope,
     )
     if not study_card_payloads:
         raise HTTPException(status_code=422, detail="No study cards generated")
