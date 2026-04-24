@@ -907,7 +907,7 @@ def finalize_note_group(
         note_group_title=title,
         raw_text=raw_text,
         chip_labels=chip_labels,
-        additional_instructions=additional_instructions,
+        additional_instructions=payload.additional_generation_instructions,
         module_goal=module.goal,
         module_scope=module.scope,
     )
