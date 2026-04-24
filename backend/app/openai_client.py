@@ -9,7 +9,7 @@ from app.config import settings
 SYSTEM_PROMPT = (
     "Convert raw study text into atomic study cards for effective learning and retrieval. "
     "Do not invent facts. Split by concept; each card must be coherent alone. "
-    "Ensure collective coverage of key information."
+    "Focus on content relevant to the module's learning goal and scope when provided."
 )
 
 STUDY_CARD_CONTEXT_PROMPT = (
@@ -214,7 +214,7 @@ def generate_question_cards(
     if module_goal or module_scope:
         intent_block = (
             f"Module learning goal: {module_goal or 'not specified'}\n"
-            f"Module scope: {module_scope or 'not specified'}\n\n"
+            f"Module scope: {module_scope or 'not specified'}\n"
         )
     instruction_block = ""
     if additional_instructions:
