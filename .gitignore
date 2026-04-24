@@ -16,3 +16,6 @@ frontend/dist/
 
 # OS
 .DS_Store
+
+# Tooling
+docs/superpowers/
