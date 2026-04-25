@@ -1203,7 +1203,7 @@ textarea {
 
 .reading-link-row:hover,
 .reading-link-row.hovered {
-  background: rgba(31, 27, 22, 0.12);
+  background: rgba(47, 158, 102, 0.16);
 }
 
 .reading-link-row.pinned {
@@ -1222,7 +1222,6 @@ textarea {
   color: var(--ink);
 }
 
-.reading-pin,
 .reading-toggle-mode {
   flex-shrink: 0;
   border: none;
@@ -1237,18 +1236,10 @@ textarea {
   justify-content: center;
 }
 
-.reading-link-row:hover .reading-pin,
-.reading-link-row:focus-within .reading-pin,
-.reading-link-row.pinned .reading-pin,
 .reading-link-row:hover .reading-toggle-mode,
 .reading-link-row:focus-within .reading-toggle-mode,
 .reading-link-row.pinned .reading-toggle-mode {
   opacity: 1;
-}
-
-.reading-link-row.pinned .reading-pin {
-  background: rgba(47, 105, 170, 0.28);
-  color: #24558d;
 }
 
 .reading-content {
@@ -1258,13 +1249,14 @@ textarea {
 }
 
 .reading-section {
+  position: relative;
   padding: 16px 18px;
   border-radius: 18px;
   border: 1px solid rgba(31, 27, 22, 0.08);
   box-shadow: 0 10px 24px rgba(31, 27, 22, 0.08);
   margin-bottom: 16px;
   background: #fffdf9;
-  border-left: 4px solid var(--accent);
+  border-left: 4px solid rgba(31, 27, 22, 0.15);
 }
 
 .reading-section.hovered {
@@ -1283,6 +1275,33 @@ textarea {
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 10px;
+}
+
+.reading-section-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.reading-section-toggle {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(31, 27, 22, 0.08);
+  color: var(--muted);
+  cursor: pointer;
+  padding: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.reading-section-toggle:hover {
+  background: rgba(31, 27, 22, 0.14);
+  color: var(--ink);
 }
 
 .reading-section-body p {
@@ -1326,6 +1345,21 @@ textarea {
 
 .clean-line-break {
   height: 10px;
+}
+
+.clean-source.has-pin p,
+.clean-source.has-pin h2,
+.clean-source.has-pin h3,
+.clean-source.has-pin .clean-bullet {
+  opacity: 0.2;
+  transition: opacity 0.15s;
+}
+
+.clean-source.has-pin p:has(.source-highlight.pinned),
+.clean-source.has-pin h2:has(.source-highlight.pinned),
+.clean-source.has-pin h3:has(.source-highlight.pinned),
+.clean-source.has-pin .clean-bullet:has(.source-highlight.pinned) {
+  opacity: 1;
 }
 
 .source-highlight {

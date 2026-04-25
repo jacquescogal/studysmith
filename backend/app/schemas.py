@@ -155,7 +155,6 @@ class QuestionCardList(BaseModel):
 
 
 class QuestionCardGenerate(BaseModel):
-    count: Optional[int] = 6
     difficulty: Optional[str] = "mixed"
 
 
@@ -349,7 +348,6 @@ class NoteGroupAutoRequest(BaseModel):
     module_id: str
     raw_text: str
     source: str
-    question_count: Optional[int] = None
     additional_generation_instructions: Optional[str] = None
 
 

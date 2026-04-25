@@ -870,17 +870,6 @@ def auto_create_note_group(
         )
     additional_instructions = additional_instructions.strip()
     _validate_additional_instructions(additional_instructions)
-    default_question_count = module.settings.get("auto_question_count", 30)
-    if payload.question_count is None:
-        question_count = default_question_count
-    else:
-        try:
-            question_count = int(payload.question_count)
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="Question count must be a number")
-    if question_count < 1:
-        raise HTTPException(status_code=400, detail="Question count must be at least 1")
-
     if payload.additional_generation_instructions is None:
         additional_instructions = ""
     else:
@@ -909,7 +898,7 @@ def auto_create_note_group(
     job = Job(
         type=JOB_TYPE_NOTE_GROUP_AUTO_GENERATION,
         note_group_id=note_group.id,
-        payload_json=json.dumps({"question_count": question_count}),
+        payload_json=None,
     )
     db.add(job)
     note_group.title = job.id
