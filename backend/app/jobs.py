@@ -254,6 +254,9 @@ def run_note_group_generation(job_id: str) -> None:
             additional_instructions=additional_instructions,
             module_goal=module.goal,
             module_scope=module.scope,
+            subject_title=module.subject.title,
+            subject_goal=module.subject.goal,
+            subject_scope=module.subject.scope,
         )
         if not study_card_payloads:
             raise ValueError("No study cards generated")
@@ -366,6 +369,9 @@ def run_question_card_generation(job_id: str, count: int, difficulty: str) -> No
             additional_instructions=note_group.additional_generation_instructions,
             module_goal=module.goal,
             module_scope=module.scope,
+            subject_title=module.subject.title,
+            subject_goal=module.subject.goal,
+            subject_scope=module.subject.scope,
         )
         if not question_payloads:
             job.status = "completed"
@@ -474,7 +480,7 @@ def run_auto_note_group_generation(job_id: str, question_count: int) -> None:
         new_chips: list[str] = []
         try:
             module_chip_pool = [{"chipId": chip.id, "label": chip.label} for chip in chips_in_module]
-            suggestion = suggest_topic_chips(module_chip_pool, raw_text, module_goal=module.goal, module_scope=module.scope)
+            suggestion = suggest_topic_chips(module_chip_pool, raw_text, module_goal=module.goal, module_scope=module.scope, subject_title=module.subject.title, subject_goal=module.subject.goal, subject_scope=module.subject.scope)
             attach_ids = [
                 chip_id
                 for chip_id in suggestion.get("attach_chip_ids", [])
@@ -524,6 +530,9 @@ def run_auto_note_group_generation(job_id: str, question_count: int) -> None:
             additional_instructions=additional_instructions,
             module_goal=module.goal,
             module_scope=module.scope,
+            subject_title=module.subject.title,
+            subject_goal=module.subject.goal,
+            subject_scope=module.subject.scope,
         )
         _raise_if_cancelled(db, job)
         if not study_card_payloads:
@@ -611,6 +620,9 @@ def run_auto_note_group_generation(job_id: str, question_count: int) -> None:
             additional_instructions=additional_instructions,
             module_goal=module.goal,
             module_scope=module.scope,
+            subject_title=module.subject.title,
+            subject_goal=module.subject.goal,
+            subject_scope=module.subject.scope,
         )
         created = 0
         if question_payloads:
