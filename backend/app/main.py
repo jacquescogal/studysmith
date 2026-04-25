@@ -30,6 +30,7 @@ from app.models import (
     NoteGroup,
     QuestionCard,
     StudyCard,
+    StudyCardSourceRange,
     Subject,
     TopicChip,
     note_group_topic_chips,
@@ -39,6 +40,7 @@ from app.fsrs_utils import initialize_question_card, review_question_card
 from app.openai_client import (
     embed_texts,
     generate_chat_response,
+    generate_cleaned_text_markdown,
     generate_formatted_sections,
     generate_module_intent_response,
     generate_note_group_title_suggestions,
@@ -46,6 +48,7 @@ from app.openai_client import (
     generate_subject_intent_response,
     suggest_topic_chips,
 )
+from app.source_ranges import find_evidence_ranges
 from app.text_formatter import build_formatted_sections, sections_to_markdown
 from app.schemas import (
     ChatRequest,
@@ -110,6 +113,8 @@ def _ensure_note_group_source_columns() -> None:
             statements.append(
                 "ALTER TABLE note_groups ADD COLUMN additional_generation_instructions TEXT"
             )
+        if "cleaned_text_markdown" not in columns:
+            statements.append("ALTER TABLE note_groups ADD COLUMN cleaned_text_markdown TEXT")
         for statement in statements:
             conn.execute(text(statement))
         if statements:
@@ -332,6 +337,32 @@ def _upsert_study_card_embedding(card: StudyCard, module_id: str) -> None:
     )
 
 
+def _store_study_card_source_ranges(
+    db: Session,
+    study_card: StudyCard,
+    cleaned_text_markdown: Optional[str],
+    evidence_snippets,
+) -> None:
+    if not cleaned_text_markdown:
+        return
+    if not isinstance(evidence_snippets, list):
+        return
+    db.query(StudyCardSourceRange).filter(
+        StudyCardSourceRange.study_card_id == study_card.id
+    ).delete(synchronize_session=False)
+    for start_index, end_index in find_evidence_ranges(
+        cleaned_text_markdown, evidence_snippets
+    ):
+        db.add(
+            StudyCardSourceRange(
+                note_group_id=study_card.note_group_id,
+                study_card_id=study_card.id,
+                start_index=start_index,
+                end_index=end_index,
+            )
+        )
+
+
 def _next_note_group_sort_order(db: Session, module_id: str) -> Optional[int]:
     max_order = (
         db.query(func.max(NoteGroup.sort_order))
@@ -364,6 +395,9 @@ def _delete_note_groups(db: Session, note_group_ids: list[str]) -> list[str]:
     study_card_ids = [row[0] for row in study_card_rows]
 
     if study_card_ids:
+        db.query(StudyCardSourceRange).filter(
+            StudyCardSourceRange.study_card_id.in_(study_card_ids)
+        ).delete(synchronize_session=False)
         db.execute(
             study_card_topic_chips.delete().where(
                 study_card_topic_chips.c.study_card_id.in_(study_card_ids)
@@ -397,6 +431,9 @@ def _reset_note_group_for_retry(db: Session, note_group: NoteGroup) -> list[str]
     study_card_ids = [row[0] for row in study_cards]
 
     if study_card_ids:
+        db.query(StudyCardSourceRange).filter(
+            StudyCardSourceRange.study_card_id.in_(study_card_ids)
+        ).delete(synchronize_session=False)
         db.execute(
             study_card_topic_chips.delete().where(
                 study_card_topic_chips.c.study_card_id.in_(study_card_ids)
@@ -417,6 +454,7 @@ def _reset_note_group_for_retry(db: Session, note_group: NoteGroup) -> list[str]
     note_group.title = None
     note_group.formatted_text = None
     note_group.formatted_sections_json = None
+    note_group.cleaned_text_markdown = None
     note_group.suggested_titles_json = None
     note_group.generation_status = "queued"
 
@@ -961,6 +999,14 @@ def finalize_note_group(
     source_normalized = _normalize_source_text(source_raw)
     if not source_normalized:
         raise HTTPException(status_code=400, detail="Source cannot be empty")
+    additional_instructions = payload.additional_generation_instructions or ""
+    if not isinstance(additional_instructions, str):
+        raise HTTPException(
+            status_code=400,
+            detail="Additional generation instructions must be text",
+        )
+    additional_instructions = additional_instructions.strip()
+    _validate_additional_instructions(additional_instructions)
 
     existing_chip_ids = payload.existing_chip_ids or []
     new_chip_labels = payload.new_chip_labels or []
@@ -994,13 +1040,14 @@ def finalize_note_group(
             selected_chips.append(chip)
 
     chip_labels = [chip.label for chip in selected_chips]
+    cleaned_text_markdown = generate_cleaned_text_markdown(raw_text)
     study_card_payloads = generate_study_cards_with_context(
         module_title=module.title,
         module_description=module.description,
         note_group_title=title,
-        raw_text=raw_text,
+        raw_text=cleaned_text_markdown,
         chip_labels=chip_labels,
-        additional_instructions=payload.additional_generation_instructions,
+        additional_instructions=additional_instructions,
         module_goal=module.goal,
         module_scope=module.scope,
         subject_title=subject.title,
@@ -1016,6 +1063,7 @@ def finalize_note_group(
         source=source_raw,
         source_normalized=source_normalized,
         raw_text=raw_text,
+        cleaned_text_markdown=cleaned_text_markdown,
         additional_generation_instructions=additional_instructions,
         generation_status="complete",
         sort_order=_next_note_group_sort_order(db, payload.module_id),
@@ -1030,6 +1078,7 @@ def finalize_note_group(
 
     try:
         db.flush()
+        card_payload_pairs = []
         for payload_card in study_card_payloads:
             content = (payload_card.get("content") or "").strip()
             if not content:
@@ -1050,11 +1099,19 @@ def finalize_note_group(
                         card.topic_chips.append(chip)
             db.add(card)
             study_cards.append(card)
+            card_payload_pairs.append((card, payload_card))
 
         if not study_cards:
             raise HTTPException(status_code=422, detail="Generated study cards were empty")
 
         db.flush()
+        for card, payload_card in card_payload_pairs:
+            _store_study_card_source_ranges(
+                db,
+                card,
+                cleaned_text_markdown,
+                payload_card.get("evidence_snippets"),
+            )
         study_card_context = [
             {"id": card.id, "title": card.title, "content": card.content}
             for card in study_cards
