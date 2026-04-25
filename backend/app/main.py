@@ -919,7 +919,16 @@ def note_group_topic_chip_suggestions(
         .all()
     )
     module_chip_pool = [{"chipId": chip.id, "label": chip.label} for chip in chips]
-    suggestion = suggest_topic_chips(module_chip_pool, payload.raw_text, module_goal=module.goal, module_scope=module.scope, subject_title=module.subject.title, subject_goal=module.subject.goal, subject_scope=module.subject.scope)
+    subject = module.subject
+    suggestion = suggest_topic_chips(
+        module_chip_pool,
+        payload.raw_text,
+        module_goal=module.goal,
+        module_scope=module.scope,
+        subject_title=subject.title,
+        subject_goal=subject.goal,
+        subject_scope=subject.scope,
+    )
     attach_ids = [
         chip_id
         for chip_id in suggestion.get("attach_chip_ids", [])
@@ -941,6 +950,7 @@ def finalize_note_group(
     module = db.get(Module, payload.module_id)
     if not module:
         raise HTTPException(status_code=404, detail="Module not found")
+    subject = module.subject
     raw_text = payload.raw_text.strip()
     title = payload.title.strip()
     if not raw_text:
@@ -993,9 +1003,9 @@ def finalize_note_group(
         additional_instructions=payload.additional_generation_instructions,
         module_goal=module.goal,
         module_scope=module.scope,
-        subject_title=module.subject.title,
-        subject_goal=module.subject.goal,
-        subject_scope=module.subject.scope,
+        subject_title=subject.title,
+        subject_goal=subject.goal,
+        subject_scope=subject.scope,
     )
     if not study_card_payloads:
         raise HTTPException(status_code=422, detail="No study cards generated")
