@@ -81,6 +81,12 @@ FORMATTED_TEXT_SYSTEM_PROMPT = (
     "Return JSON only."
 )
 
+CLEANED_TEXT_SYSTEM_PROMPT = (
+    "Format raw study text into clean markdown. Fix spacing, headings, bullets, and line breaks only. "
+    "Preserve all source content and meaning. Do not summarize, omit, add, or scope-filter content. "
+    "Return JSON only with key cleaned_text_markdown."
+)
+
 
 client = OpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
 
@@ -99,6 +105,54 @@ def _parse_json(text: str) -> dict:
         if not match:
             raise
         return json.loads(match.group(0))
+
+
+def _responses_json(
+    model: str,
+    reasoning_effort: str,
+    system_prompt: str,
+    user_prompt: str,
+    history: Optional[List[dict]] = None,
+) -> dict:
+    client_instance = _require_client()
+    input_messages: List[dict] = [{"role": "system", "content": system_prompt}]
+    if history:
+        for item in history:
+            role = item.get("role")
+            content = item.get("content")
+            if role in {"user", "assistant"} and content and content.strip():
+                input_messages.append({"role": role, "content": content.strip()})
+    input_messages.append({"role": "user", "content": user_prompt})
+    response = client_instance.responses.create(
+        model=model,
+        input=input_messages,
+        reasoning={"effort": reasoning_effort},
+        text={"format": {"type": "json_object"}},
+    )
+    return _parse_json(response.output_text)
+
+
+def _strong_json(system_prompt: str, user_prompt: str) -> dict:
+    return _responses_json(
+        settings.openai_strong_model,
+        "medium",
+        system_prompt,
+        user_prompt,
+    )
+
+
+def _weak_json(
+    system_prompt: str,
+    user_prompt: str,
+    history: Optional[List[dict]] = None,
+) -> dict:
+    return _responses_json(
+        settings.openai_weak_model,
+        "low",
+        system_prompt,
+        user_prompt,
+        history=history,
+    )
 
 
 def _build_intent_block(
@@ -136,7 +190,6 @@ def generate_study_cards(
     subject_goal: Optional[str] = None,
     subject_scope: Optional[str] = None,
 ) -> List[dict]:
-    client_instance = _require_client()
     intent_block = _build_intent_block(subject_title, subject_goal, subject_scope, module_goal, module_scope)
     module_context = f"Module context: {module_title}"
     if module_description:
@@ -154,17 +207,7 @@ def generate_study_cards(
         "Output: list of Study Cards with { title?, content, key_terms? } in JSON."
     )
 
-    response = client_instance.chat.completions.create(
-        model=settings.openai_generation_model,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.2,
-        response_format={"type": "json_object"},
-    )
-
-    payload = _parse_json(response.choices[0].message.content)
+    payload = _strong_json(SYSTEM_PROMPT, user_prompt)
     study_cards = payload.get("study_cards", [])
     if not isinstance(study_cards, list):
         raise ValueError("OpenAI response did not include study_cards list")
@@ -184,7 +227,6 @@ def generate_study_cards_with_context(
     subject_goal: Optional[str] = None,
     subject_scope: Optional[str] = None,
 ) -> List[dict]:
-    client_instance = _require_client()
     intent_block = _build_intent_block(subject_title, subject_goal, subject_scope, module_goal, module_scope)
     module_context = f"Module context: {module_title}"
     if module_description:
@@ -200,26 +242,25 @@ def generate_study_cards_with_context(
         f"Note group title: {note_group_title}\n"
         f"Topic chips: {chip_labels}\n"
         f"{instruction_block}"
-        f"Raw text: {raw_text}\n"
+        f"Cleaned markdown source text: {raw_text}\n"
         "Output JSON as { \"study_cards\": [ { \"title\": \"...\", \"content\": \"...\", "
-        "\"topic_chips\": [\"...\"] } ] }."
+        "\"topic_chips\": [\"...\"], \"evidence_snippets\": [\"...\"] } ] }.\n"
+        "Each evidence_snippets value must be an exact copied substring from the cleaned markdown source text."
     )
 
-    response = client_instance.chat.completions.create(
-        model=settings.openai_generation_model,
-        messages=[
-            {"role": "system", "content": STUDY_CARD_CONTEXT_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.2,
-        response_format={"type": "json_object"},
-    )
-
-    payload = _parse_json(response.choices[0].message.content)
+    payload = _strong_json(STUDY_CARD_CONTEXT_PROMPT, user_prompt)
     study_cards = payload.get("study_cards", [])
     if not isinstance(study_cards, list):
         raise ValueError("OpenAI response did not include study_cards list")
     return study_cards
+
+
+def generate_cleaned_text_markdown(raw_text: str) -> str:
+    payload = _strong_json(CLEANED_TEXT_SYSTEM_PROMPT, f"Raw text:\n{raw_text}")
+    cleaned = payload.get("cleaned_text_markdown") or payload.get("cleaned_text") or ""
+    if not isinstance(cleaned, str) or not cleaned.strip():
+        raise ValueError("OpenAI response did not include cleaned_text_markdown")
+    return cleaned.strip()
 
 
 def embed_texts(texts: List[str]) -> List[List[float]]:
@@ -243,7 +284,6 @@ def generate_question_cards(
     subject_goal: Optional[str] = None,
     subject_scope: Optional[str] = None,
 ) -> List[dict]:
-    client_instance = _require_client()
     intent_block = _build_intent_block(subject_title, subject_goal, subject_scope, module_goal, module_scope)
     instruction_block = ""
     if additional_instructions:
@@ -270,17 +310,7 @@ def generate_question_cards(
         "Output JSON as { \"question_cards\": [ ... ] }."
     )
 
-    response = client_instance.chat.completions.create(
-        model=settings.openai_generation_model,
-        messages=[
-            {"role": "system", "content": QUESTION_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.2,
-        response_format={"type": "json_object"},
-    )
-
-    payload = _parse_json(response.choices[0].message.content)
+    payload = _strong_json(QUESTION_SYSTEM_PROMPT, user_prompt)
     question_cards = payload.get("question_cards", [])
     if not isinstance(question_cards, list):
         raise ValueError("OpenAI response did not include question_cards list")
@@ -293,7 +323,6 @@ def generate_chat_response(
     history: Optional[List[dict]] = None,
     ref_ids: Optional[List[str]] = None,
 ) -> dict:
-    client_instance = _require_client()
     context = "\n\n".join(context_blocks)
     id_list = ", ".join(ref_ids or [])
     user_prompt = (
@@ -303,17 +332,7 @@ def generate_chat_response(
         f"{context}\n\n"
         "Return JSON as { \"answer\": \"...\", \"used_ref_ids\": [\"...\"] }."
     )
-    messages = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
-    if history:
-        messages.extend(history)
-    messages.append({"role": "user", "content": user_prompt})
-    response = client_instance.chat.completions.create(
-        model=settings.openai_chat_model,
-        messages=messages,
-        temperature=0.2,
-        response_format={"type": "json_object"},
-    )
-    payload = _parse_json(response.choices[0].message.content)
+    payload = _weak_json(CHAT_SYSTEM_PROMPT, user_prompt, history=history)
     answer = payload.get("answer", "").strip()
     used_refs = payload.get("used_ref_ids", [])
     if not isinstance(used_refs, list):
@@ -322,22 +341,12 @@ def generate_chat_response(
 
 
 def generate_note_group_title_suggestions(module_title: str, raw_text: str) -> List[str]:
-    client_instance = _require_client()
     user_prompt = (
         f"Module: {module_title}\n"
         f"Raw text: {raw_text}\n"
         "Return exactly three title suggestions. Output JSON as { \"titles\": [\"...\", \"...\", \"...\"] }."
     )
-    response = client_instance.chat.completions.create(
-        model=settings.openai_generation_model,
-        messages=[
-            {"role": "system", "content": TITLE_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.2,
-        response_format={"type": "json_object"},
-    )
-    payload = _parse_json(response.choices[0].message.content)
+    payload = _weak_json(TITLE_SYSTEM_PROMPT, user_prompt)
     titles = payload.get("titles")
     if not isinstance(titles, list):
         raise ValueError("OpenAI response did not include titles")
@@ -356,7 +365,6 @@ def suggest_topic_chips(
     subject_goal: Optional[str] = None,
     subject_scope: Optional[str] = None,
 ) -> dict:
-    client_instance = _require_client()
     intent_block = _build_intent_block(subject_title, subject_goal, subject_scope, module_goal, module_scope)
     user_prompt = (
         f"{intent_block}"
@@ -364,16 +372,7 @@ def suggest_topic_chips(
         f"Content: {content}\n"
         "Output JSON as { \"attach_chip_ids\": [\"...\"], \"new_chips\": [\"...\"] }."
     )
-    response = client_instance.chat.completions.create(
-        model=settings.openai_generation_model,
-        messages=[
-            {"role": "system", "content": TOPIC_CHIP_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.2,
-        response_format={"type": "json_object"},
-    )
-    payload = _parse_json(response.choices[0].message.content)
+    payload = _weak_json(TOPIC_CHIP_SYSTEM_PROMPT, user_prompt)
     attach_chip_ids = payload.get("attach_chip_ids", [])
     new_chips = payload.get("new_chips", [])
     if not isinstance(attach_chip_ids, list):
@@ -384,7 +383,6 @@ def suggest_topic_chips(
 
 
 def generate_formatted_sections(raw_text: str, study_cards: List[dict]) -> List[dict]:
-    client_instance = _require_client()
     user_prompt = (
         "Raw text:\n"
         f"{raw_text}\n\n"
@@ -394,17 +392,7 @@ def generate_formatted_sections(raw_text: str, study_cards: List[dict]) -> List[
         "\"content\": \"...\" } ] }."
     )
 
-    response = client_instance.chat.completions.create(
-        model=settings.openai_generation_model,
-        messages=[
-            {"role": "system", "content": FORMATTED_TEXT_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.2,
-        response_format={"type": "json_object"},
-    )
-
-    payload = _parse_json(response.choices[0].message.content)
+    payload = _weak_json(FORMATTED_TEXT_SYSTEM_PROMPT, user_prompt)
     sections = payload.get("sections", [])
     if not isinstance(sections, list):
         raise ValueError("OpenAI response did not include sections list")
@@ -418,28 +406,17 @@ def generate_subject_intent_response(
     current_goal: Optional[str] = None,
     current_scope: Optional[str] = None,
 ) -> dict:
-    client_instance = _require_client()
     current_state = (
         f"Current fields — title: {current_title or 'none'}, "
         f"goal: {current_goal or 'none'}, "
         f"scope: {current_scope or 'none'}"
     )
     user_content = f"{current_state}\n\nUser message: {message}"
-    messages: List[dict] = [{"role": "system", "content": SUBJECT_INTENT_SYSTEM_PROMPT}]
-    if history:
-        for item in history[-10:]:
-            role = item.get("role")
-            content = item.get("content")
-            if role in {"user", "assistant"} and content and content.strip():
-                messages.append({"role": role, "content": content})
-    messages.append({"role": "user", "content": user_content})
-    response = client_instance.chat.completions.create(
-        model=settings.openai_chat_model,
-        messages=messages,
-        response_format={"type": "json_object"},
-        temperature=0.4,
+    payload = _weak_json(
+        SUBJECT_INTENT_SYSTEM_PROMPT,
+        user_content,
+        history=(history or [])[-10:],
     )
-    payload = _parse_json(response.choices[0].message.content)
     return {
         "assistant_message": payload.get("reply", ""),
         "title": payload.get("title", current_title),
@@ -458,7 +435,6 @@ def generate_module_intent_response(
     subject_goal: Optional[str] = None,
     subject_scope: Optional[str] = None,
 ) -> dict:
-    client_instance = _require_client()
     subject_block = ""
     if subject_title or subject_goal or subject_scope:
         parts = ["Context about the parent subject:"]
@@ -475,21 +451,11 @@ def generate_module_intent_response(
         f"scope: {current_scope or 'none'}"
     )
     user_content = f"{subject_block}{current_state}\n\nUser message: {message}"
-    messages: List[dict] = [{"role": "system", "content": MODULE_INTENT_SYSTEM_PROMPT}]
-    if history:
-        for item in history[-10:]:
-            role = item.get("role")
-            content = item.get("content")
-            if role in {"user", "assistant"} and content and content.strip():
-                messages.append({"role": role, "content": content})
-    messages.append({"role": "user", "content": user_content})
-    response = client_instance.chat.completions.create(
-        model=settings.openai_chat_model,
-        messages=messages,
-        response_format={"type": "json_object"},
-        temperature=0.4,
+    payload = _weak_json(
+        MODULE_INTENT_SYSTEM_PROMPT,
+        user_content,
+        history=(history or [])[-10:],
     )
-    payload = _parse_json(response.choices[0].message.content)
     return {
         "assistant_message": payload.get("assistant_message", ""),
         "title": payload.get("title") or current_title,

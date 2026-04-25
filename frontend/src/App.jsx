@@ -227,6 +227,86 @@ const renderMarkdownBlocks = (content) => {
   return elements;
 };
 
+const getOverlappingHighlights = (start, end, highlights) =>
+  highlights.filter((highlight) => start < highlight.end_index && end > highlight.start_index);
+
+const renderHighlightedText = (text, baseIndex, highlights) => {
+  if (!text) {
+    return null;
+  }
+  const boundaries = new Set([0, text.length]);
+  highlights.forEach((highlight) => {
+    const start = Math.max(0, highlight.start_index - baseIndex);
+    const end = Math.min(text.length, highlight.end_index - baseIndex);
+    if (start < end) {
+      boundaries.add(start);
+      boundaries.add(end);
+    }
+  });
+  const sorted = [...boundaries].sort((a, b) => a - b);
+  return sorted.slice(0, -1).map((start, index) => {
+    const end = sorted[index + 1];
+    const segment = text.slice(start, end);
+    const overlapping = getOverlappingHighlights(baseIndex + start, baseIndex + end, highlights);
+    const pinned = overlapping.find((highlight) => highlight.kind === "pinned");
+    const hovered = overlapping.find((highlight) => highlight.kind === "hovered");
+    const active = pinned || hovered;
+    if (!active) {
+      return segment;
+    }
+    return (
+      <mark
+        key={`highlight-${baseIndex}-${start}-${end}`}
+        className={`source-highlight ${active.kind}`}
+        data-clean-card-id={active.study_card_id}
+      >
+        {segment}
+      </mark>
+    );
+  });
+};
+
+const renderCleanedMarkdown = (content, highlights) => {
+  if (!content) {
+    return null;
+  }
+  const lines = content.split("\n");
+  let offset = 0;
+  return lines.map((line, index) => {
+    const lineStart = offset;
+    offset += line.length + 1;
+    if (!line.trim()) {
+      return <div key={`clean-line-${index}`} className="clean-line-break" />;
+    }
+    const headingMatch = line.match(/^(#{1,3})\s+(.*)$/);
+    if (headingMatch) {
+      const markerLength = headingMatch[1].length + 1;
+      const text = headingMatch[2];
+      const Tag = headingMatch[1].length === 1 ? "h2" : "h3";
+      return (
+        <Tag key={`clean-line-${index}`}>
+          {renderHighlightedText(text, lineStart + markerLength, highlights)}
+        </Tag>
+      );
+    }
+    if (line.trimStart().startsWith("- ")) {
+      const leading = line.length - line.trimStart().length;
+      const textStart = lineStart + leading + 2;
+      const text = line.trimStart().slice(2);
+      return (
+        <p key={`clean-line-${index}`} className="clean-bullet">
+          {renderHighlightedText(text, textStart, highlights)}
+        </p>
+      );
+    }
+    return (
+      <p key={`clean-line-${index}`}>
+        {renderHighlightedText(line, lineStart, highlights)}
+      </p>
+    );
+  });
+};
+
 const formatAnswerLabels = (card, indices) => {
   if (!card || !Array.isArray(indices) || indices.length === 0) {
     return "No answer";
@@ -337,6 +417,10 @@ export default function App() {
   const [noteGroupSearch, setNoteGroupSearch] = useState("");
   const [noteGroupMode, setNoteGroupMode] = useState("overview");
   const [formattedSections, setFormattedSections] = useState([]);
+  const [cleanedTextMarkdown, setCleanedTextMarkdown] = useState("");
+  const [readingMode, setReadingMode] = useState("study");
+  const [readingHoverCardId, setReadingHoverCardId] = useState("");
+  const [readingPinnedCardId, setReadingPinnedCardId] = useState("");
   const [questionTimeline, setQuestionTimeline] = useState({
     due: 0,
     week: 0,
@@ -714,6 +798,65 @@ export default function App() {
     });
     return map;
   }, [studyCards]);
+  const fallbackCleanText = useMemo(() => {
+    let text = "";
+    const rangesByCardId = new Map();
+    studyCards.forEach((card, index) => {
+      const title = card.title || `Study card ${index + 1}`;
+      const block = `## ${title}\n\n${card.content || ""}`.trim();
+      if (text) {
+        text += "\n\n";
+      }
+      const startIndex = text.length;
+      text += block;
+      rangesByCardId.set(card.id, [{ start_index: startIndex, end_index: text.length }]);
+    });
+    return { text, rangesByCardId };
+  }, [studyCards]);
+  const effectiveCleanedText = cleanedTextMarkdown || fallbackCleanText.text;
+  const studyNoteSections = useMemo(() => {
+    if (formattedSections.length) {
+      return formattedSections;
+    }
+    return studyCards.map((card, index) => ({
+      study_card_id: card.id,
+      title: card.title || `Study card ${index + 1}`,
+      content: card.content || "",
+      anchor: `study-card-${card.id}`,
+    }));
+  }, [formattedSections, studyCards]);
+  const sourceRangesByCardId = useMemo(() => {
+    if (!cleanedTextMarkdown) {
+      return fallbackCleanText.rangesByCardId;
+    }
+    const map = new Map();
+    studyCards.forEach((card) => {
+      map.set(card.id, Array.isArray(card.source_ranges) ? card.source_ranges : []);
+    });
+    return map;
+  }, [cleanedTextMarkdown, fallbackCleanText, studyCards]);
+  const readingHighlights = useMemo(() => {
+    const highlights = [];
+    const addRanges = (studyCardId, kind) => {
+      if (!studyCardId) {
+        return;
+      }
+      const ranges = sourceRangesByCardId.get(studyCardId) || [];
+      ranges.forEach((range) => {
+        if (
+          Number.isInteger(range.start_index) &&
+          Number.isInteger(range.end_index) &&
+          range.end_index > range.start_index
+        ) {
+          highlights.push({ ...range, study_card_id: studyCardId, kind });
+        }
+      });
+    };
+    addRanges(readingHoverCardId, "hovered");
+    addRanges(readingPinnedCardId, "pinned");
+    return highlights;
+  }, [readingHoverCardId, readingPinnedCardId, sourceRangesByCardId]);
+  const readingAvailable = studyNoteSections.length > 0 || Boolean(effectiveCleanedText);
   const resolveNoteGroupLabel = (noteGroupId) => {
     if (!noteGroupId) {
       return "";
@@ -1046,6 +1189,7 @@ export default function App() {
       setNoteGroupChipIds([]);
       setMetadataTitleDraft("");
       setFormattedSections([]);
+      setCleanedTextMarkdown("");
       return;
     }
     setStudyCardError("");
@@ -1056,6 +1200,7 @@ export default function App() {
         setNoteGroupChipIds((data.topic_chips || []).map((chip) => chip.id));
         setMetadataTitleDraft(data.title || "");
         setFormattedSections(data.formatted_sections || []);
+        setCleanedTextMarkdown(data.cleaned_text_markdown || "");
         if (data.module_id && data.module_id !== selectedModuleId) {
           setSelectedModuleId(data.module_id);
         }
@@ -1068,6 +1213,14 @@ export default function App() {
       .then((data) => setQuestionCards(data.question_cards || []))
       .catch((error) => setQuestionCardError(error.message));
   }, [selectedNoteGroupId]);
+
+  useEffect(() => {
+    if (!isReadingOpen) {
+      setReadingHoverCardId("");
+      setReadingPinnedCardId("");
+      setReadingMode("study");
+    }
+  }, [isReadingOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1799,6 +1952,59 @@ export default function App() {
     }
   };
 
+  const handleJumpToStudyCard = (studyCardId) => {
+    const container = readingContentRef.current;
+    if (!container || !studyCardId) {
+      return;
+    }
+    const target = container.querySelector(`#reading-study-${studyCardId}`);
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
+  const handleJumpToCleanSource = (studyCardId) => {
+    const container = readingContentRef.current;
+    if (!container || !studyCardId) {
+      return;
+    }
+    const target = container.querySelector(`[data-clean-card-id="${studyCardId}"]`);
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  };
+
+  const handleReadingModeChange = (nextMode) => {
+    setReadingMode(nextMode);
+    const targetCardId = readingPinnedCardId || readingHoverCardId;
+    if (!targetCardId) {
+      return;
+    }
+    window.setTimeout(() => {
+      if (nextMode === "clean") {
+        handleJumpToCleanSource(targetCardId);
+      } else {
+        handleJumpToStudyCard(targetCardId);
+      }
+    }, 0);
+  };
+
+  const handleReadingTitleClick = (studyCardId) => {
+    setReadingHoverCardId(studyCardId);
+    if (readingMode === "study") {
+      setReadingMode("clean");
+      window.setTimeout(() => handleJumpToCleanSource(studyCardId), 0);
+    } else {
+      setReadingMode("study");
+      window.setTimeout(() => handleJumpToStudyCard(studyCardId), 0);
+    }
+  };
+
+  const handleReadingPin = (event, studyCardId) => {
+    event.stopPropagation();
+    setReadingPinnedCardId((current) => (current === studyCardId ? "" : studyCardId));
+  };
+
   const handleSelectNoteGroup = (option) => {
     const nextId = option ? option.value : "";
     if (nextId && nextId === selectedNoteGroupId) {
@@ -1984,6 +2190,7 @@ export default function App() {
       setSelectedNoteGroupId(createdNoteGroup.id);
       setNoteGroupChipIds((createdNoteGroup.topic_chips || []).map((chip) => chip.id));
       setFormattedSections(createdNoteGroup.formatted_sections || []);
+      setCleanedTextMarkdown(createdNoteGroup.cleaned_text_markdown || "");
       setStudyCards(response.study_cards || []);
       const groups = await listNoteGroups(selectedModuleId);
       setNoteGroups(normalizeNoteGroups(groups));
@@ -3549,9 +3756,26 @@ export default function App() {
           <div className="reading-modal">
             <div className="reading-header">
               <div>
-                <h2>Formatted notes</h2>
-                <p className="muted">Read-only source text mapped to your study cards.</p>
+                <h2>Clean study text</h2>
+                <p className="muted">Switch between study notes and their cleaned source text.</p>
               </div>
+              <div className="reading-actions">
+                <div className="segmented-control" role="group" aria-label="Reading mode">
+                  <button
+                    type="button"
+                    className={readingMode === "study" ? "active" : ""}
+                    onClick={() => handleReadingModeChange("study")}
+                  >
+                    Study notes
+                  </button>
+                  <button
+                    type="button"
+                    className={readingMode === "clean" ? "active" : ""}
+                    onClick={() => handleReadingModeChange("clean")}
+                  >
+                    Clean text
+                  </button>
+                </div>
               <button
                 className="button ghost"
                 type="button"
@@ -3559,47 +3783,79 @@ export default function App() {
               >
                 Close
               </button>
+              </div>
             </div>
-            {formattedSections.length === 0 ? (
+            {!readingAvailable ? (
               <p className="muted">No formatted text available for this note group yet.</p>
             ) : (
               <div className="reading-body">
                 <aside className="reading-nav">
-                  <p className="label">Sections</p>
-                  {formattedSections.map((section, index) => {
-                    const anchor = getSectionAnchor(section, index);
+                  <p className="label">Study cards</p>
+                  {studyCards.map((card, index) => {
+                    const isHovered = readingHoverCardId === card.id;
+                    const isPinned = readingPinnedCardId === card.id;
                     return (
-                      <button
-                        key={`nav-${anchor}`}
-                        className="reading-link"
-                        type="button"
-                        onClick={() => handleJumpToSection(anchor)}
+                      <div
+                        key={`nav-${card.id}`}
+                        className={`reading-link-row ${isHovered ? "hovered" : ""} ${
+                          isPinned ? "pinned" : ""
+                        }`}
+                        onMouseEnter={() => setReadingHoverCardId(card.id)}
+                        onMouseLeave={() => setReadingHoverCardId("")}
                       >
-                        {section.title || `Section ${index + 1}`}
-                      </button>
+                        <button
+                          className="reading-link"
+                          type="button"
+                          onClick={() => handleReadingTitleClick(card.id)}
+                        >
+                          {card.title || `Study card ${index + 1}`}
+                        </button>
+                        <button
+                          className="reading-pin"
+                          type="button"
+                          aria-label={isPinned ? "Unpin study card" : "Pin study card"}
+                          onClick={(event) => handleReadingPin(event, card.id)}
+                        >
+                          {isPinned ? "Pinned" : "Pin"}
+                        </button>
+                      </div>
                     );
                   })}
                 </aside>
                 <div className="reading-content" ref={readingContentRef}>
-                  {formattedSections.map((section, index) => {
-                    const anchor = getSectionAnchor(section, index);
-                    const cardTitle = studyCardTitleById.get(section.study_card_id);
-                    return (
-                      <section key={anchor} id={anchor} className="reading-section">
-                        <div className="reading-section-header">
-                          <h3>{section.title || `Section ${index + 1}`}</h3>
-                          <span className="pill">
-                            Study card:{" "}
-                            {cardTitle ||
-                              (section.study_card_id ? section.study_card_id.slice(0, 8) : "—")}
-                          </span>
-                        </div>
-                        <div className="reading-section-body">
-                          {renderMarkdownBlocks(section.content)}
-                        </div>
-                      </section>
-                    );
-                  })}
+                  {readingMode === "clean" ? (
+                    <div className="clean-source">
+                      {renderCleanedMarkdown(effectiveCleanedText, readingHighlights)}
+                    </div>
+                  ) : (
+                    studyNoteSections.map((section, index) => {
+                      const anchor = getSectionAnchor(section, index);
+                      const cardTitle = studyCardTitleById.get(section.study_card_id);
+                      const isHovered = readingHoverCardId === section.study_card_id;
+                      const isPinned = readingPinnedCardId === section.study_card_id;
+                      return (
+                        <section
+                          key={anchor}
+                          id={`reading-study-${section.study_card_id}`}
+                          className={`reading-section ${isHovered ? "hovered" : ""} ${
+                            isPinned ? "pinned" : ""
+                          }`}
+                        >
+                          <div className="reading-section-header">
+                            <h3>{section.title || `Section ${index + 1}`}</h3>
+                            <span className="pill">
+                              Study card:{" "}
+                              {cardTitle ||
+                                (section.study_card_id ? section.study_card_id.slice(0, 8) : "—")}
+                            </span>
+                          </div>
+                          <div className="reading-section-body">
+                            {renderMarkdownBlocks(section.content)}
+                          </div>
+                        </section>
+                      );
+                    })
+                  )}
                 </div>
               </div>
             )}
@@ -5303,7 +5559,7 @@ export default function App() {
                             className="button ghost"
                             type="button"
                             onClick={() => setIsReadingOpen(true)}
-                            disabled={!formattedSections.length}
+                            disabled={!readingAvailable}
                           >
                             Read clean text
                           </button>

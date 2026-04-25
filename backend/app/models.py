@@ -96,6 +96,7 @@ class NoteGroup(Base):
     source_normalized = Column(String, index=True)
     raw_text = Column(Text, nullable=False)
     additional_generation_instructions = Column(Text)
+    cleaned_text_markdown = Column(Text)
     formatted_text = Column(Text)
     formatted_sections_json = Column(Text)
     generation_status = Column(String, default="created")
@@ -146,11 +147,31 @@ class StudyCard(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     note_group = relationship("NoteGroup", back_populates="study_cards")
+    source_ranges = relationship(
+        "StudyCardSourceRange",
+        back_populates="study_card",
+        cascade="all, delete-orphan",
+        order_by="StudyCardSourceRange.start_index",
+    )
     topic_chips = relationship(
         "TopicChip",
         secondary=study_card_topic_chips,
         back_populates="study_cards",
     )
+
+
+class StudyCardSourceRange(Base):
+    __tablename__ = "study_card_source_ranges"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    note_group_id = Column(String, ForeignKey("note_groups.id"), nullable=False)
+    study_card_id = Column(String, ForeignKey("study_cards.id"), nullable=False)
+    start_index = Column(Integer, nullable=False)
+    end_index = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    study_card = relationship("StudyCard", back_populates="source_ranges")
+    note_group = relationship("NoteGroup")
 
 
 class QuestionCard(Base):

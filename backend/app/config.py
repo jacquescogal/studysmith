@@ -22,8 +22,8 @@ def _resolve_path(path_value: str) -> str:
 
 class Settings:
     openai_api_key = _get_env("OPENAI_API_KEY", "")
-    openai_chat_model = _get_env("OPENAI_CHAT_MODEL", _get_env("OPENAI_MODEL", "gpt-4.1-mini"))
-    openai_generation_model = _get_env("OPENAI_GENERATION_MODEL", _get_env("OPENAI_MODEL", "gpt-4.1"))
+    openai_weak_model = _get_env("OPENAI_WEAK_MODEL", "gpt-5.4-mini")
+    openai_strong_model = _get_env("OPENAI_STRONG_MODEL", "gpt-5.4")
     openai_embedding_model = _get_env("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
     database_url = _get_env("DATABASE_URL", "sqlite:///./study.db")
     chroma_path = _resolve_path(_get_env("CHROMA_PATH", "./chroma"))

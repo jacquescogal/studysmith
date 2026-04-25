@@ -12,12 +12,14 @@ from app.models import (
     NoteGroup,
     QuestionCard,
     StudyCard,
+    StudyCardSourceRange,
     TopicChip,
     note_group_topic_chips,
     study_card_topic_chips,
 )
 from app.openai_client import (
     embed_texts,
+    generate_cleaned_text_markdown,
     generate_formatted_sections,
     generate_note_group_title_suggestions,
     generate_question_cards,
@@ -25,6 +27,7 @@ from app.openai_client import (
     generate_study_cards_with_context,
     suggest_topic_chips,
 )
+from app.source_ranges import find_evidence_ranges
 from app.text_formatter import build_formatted_sections, sections_to_markdown
 
 
@@ -35,6 +38,30 @@ JOB_TYPE_NOTE_GROUP_AUTO_GENERATION = "NOTE_GROUP_AUTO_GENERATION"
 
 class AutoJobCancelled(Exception):
     pass
+
+
+def _store_study_card_source_ranges(
+    db: Session,
+    study_card: StudyCard,
+    cleaned_text_markdown: Optional[str],
+    evidence_snippets,
+) -> None:
+    if not cleaned_text_markdown or not isinstance(evidence_snippets, list):
+        return
+    db.query(StudyCardSourceRange).filter(
+        StudyCardSourceRange.study_card_id == study_card.id
+    ).delete(synchronize_session=False)
+    for start_index, end_index in find_evidence_ranges(
+        cleaned_text_markdown, evidence_snippets
+    ):
+        db.add(
+            StudyCardSourceRange(
+                note_group_id=study_card.note_group_id,
+                study_card_id=study_card.id,
+                start_index=start_index,
+                end_index=end_index,
+            )
+        )
 
 
 def _raise_if_cancelled(db: Session, job: Job) -> None:
@@ -52,6 +79,9 @@ def _cleanup_note_group(db: Session, note_group: NoteGroup) -> list[str]:
     study_card_ids = [row[0] for row in study_card_rows]
 
     if study_card_ids:
+        db.query(StudyCardSourceRange).filter(
+            StudyCardSourceRange.study_card_id.in_(study_card_ids)
+        ).delete(synchronize_session=False)
         db.execute(
             study_card_topic_chips.delete().where(
                 study_card_topic_chips.c.study_card_id.in_(study_card_ids)
@@ -70,6 +100,7 @@ def _cleanup_note_group(db: Session, note_group: NoteGroup) -> list[str]:
     )
     note_group.formatted_text = None
     note_group.formatted_sections_json = None
+    note_group.cleaned_text_markdown = None
     note_group.suggested_titles_json = None
     note_group.generation_status = "cancelled"
     return study_card_ids
@@ -84,6 +115,9 @@ def _cleanup_note_group_by_id(db: Session, note_group_id: str) -> list[str]:
     study_card_ids = [row[0] for row in study_card_rows]
 
     if study_card_ids:
+        db.query(StudyCardSourceRange).filter(
+            StudyCardSourceRange.study_card_id.in_(study_card_ids)
+        ).delete(synchronize_session=False)
         db.execute(
             study_card_topic_chips.delete().where(
                 study_card_topic_chips.c.study_card_id.in_(study_card_ids)
@@ -248,10 +282,14 @@ def run_note_group_generation(job_id: str) -> None:
                 ]
             note_group.suggested_titles_json = json.dumps(suggestions[:3])
             db.commit()
-        study_card_payloads = generate_study_cards(
+        cleaned_text_markdown = generate_cleaned_text_markdown(note_group.raw_text)
+        note_group.cleaned_text_markdown = cleaned_text_markdown
+        study_card_payloads = generate_study_cards_with_context(
             module_title=module.title,
             module_description=module.description,
-            raw_text=note_group.raw_text,
+            note_group_title=note_group.title or "",
+            raw_text=cleaned_text_markdown,
+            chip_labels=[],
             additional_instructions=additional_instructions,
             module_goal=module.goal,
             module_scope=module.scope,
@@ -263,6 +301,7 @@ def run_note_group_generation(job_id: str) -> None:
             raise ValueError("No study cards generated")
 
         study_cards: list[StudyCard] = []
+        card_payload_pairs = []
         for payload in study_card_payloads:
             content = (payload.get("content") or "").strip()
             if not content:
@@ -275,6 +314,15 @@ def run_note_group_generation(job_id: str) -> None:
             )
             db.add(study_card)
             study_cards.append(study_card)
+            card_payload_pairs.append((study_card, payload))
+        db.flush()
+        for card, payload in card_payload_pairs:
+            _store_study_card_source_ranges(
+                db,
+                card,
+                cleaned_text_markdown,
+                payload.get("evidence_snippets"),
+            )
         db.commit()
 
         if not study_cards:
@@ -530,13 +578,18 @@ def run_auto_note_group_generation(job_id: str, question_count: int) -> None:
         db.commit()
         _raise_if_cancelled(db, job)
 
+        cleaned_text_markdown = generate_cleaned_text_markdown(raw_text)
+        note_group.cleaned_text_markdown = cleaned_text_markdown
+        db.commit()
+        _raise_if_cancelled(db, job)
+
         chip_labels = [chip.label for chip in selected_chips]
         _raise_if_cancelled(db, job)
         study_card_payloads = generate_study_cards_with_context(
             module_title=module.title,
             module_description=module.description,
             note_group_title=note_group.title or "",
-            raw_text=raw_text,
+            raw_text=cleaned_text_markdown,
             chip_labels=chip_labels,
             additional_instructions=additional_instructions,
             module_goal=module.goal,
@@ -550,6 +603,7 @@ def run_auto_note_group_generation(job_id: str, question_count: int) -> None:
             raise ValueError("No study cards generated")
 
         study_cards: list[StudyCard] = []
+        card_payload_pairs = []
         chip_label_map = {chip.label.strip().lower(): chip for chip in selected_chips}
         for payload in study_card_payloads:
             content = (payload.get("content") or "").strip()
@@ -571,11 +625,19 @@ def run_auto_note_group_generation(job_id: str, question_count: int) -> None:
                         card.topic_chips.append(chip)
             db.add(card)
             study_cards.append(card)
+            card_payload_pairs.append((card, payload))
 
         if not study_cards:
             raise ValueError("Generated study cards were empty")
 
         db.flush()
+        for card, payload in card_payload_pairs:
+            _store_study_card_source_ranges(
+                db,
+                card,
+                cleaned_text_markdown,
+                payload.get("evidence_snippets"),
+            )
         study_card_context = [
             {"id": card.id, "title": card.title, "content": card.content}
             for card in study_cards

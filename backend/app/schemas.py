@@ -76,6 +76,7 @@ class NoteGroupOut(BaseModel):
     source: Optional[str] = None
     additional_generation_instructions: Optional[str] = None
     raw_text: str
+    cleaned_text_markdown: Optional[str] = None
     formatted_text: Optional[str] = None
     formatted_sections: List["NoteGroupSectionOut"] = []
     generation_status: str
@@ -88,12 +89,21 @@ class NoteGroupOut(BaseModel):
         from_attributes = True
 
 
+class StudyCardSourceRangeOut(BaseModel):
+    start_index: int
+    end_index: int
+
+    class Config:
+        from_attributes = True
+
+
 class StudyCardOut(BaseModel):
     id: str
     note_group_id: str
     title: Optional[str] = None
     content: str
     topic_chips: List["TopicChipOut"] = []
+    source_ranges: List["StudyCardSourceRangeOut"] = []
 
     class Config:
         from_attributes = True
@@ -216,6 +226,7 @@ class IntentChatResponse(BaseModel):
 
 NoteGroupOut.update_forward_refs()
 StudyCardOut.update_forward_refs()
+StudyCardSourceRangeOut.update_forward_refs()
 ChatRequest.update_forward_refs()
 
 
