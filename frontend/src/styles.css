@@ -5,6 +5,7 @@
   --ink: #1f1b16;
   --muted: #5b534b;
   --card: #fffaf3;
+  --surface: #fffdf9;
   --accent: #d1603d;
   --accent-dark: #a3452a;
   --accent-alt: #2f7c4a;
@@ -1817,6 +1818,7 @@ textarea {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
   width: 900px;
   max-width: 95vw;
+  height: 600px;
   max-height: 90vh;
   display: flex;
   flex-direction: column;
