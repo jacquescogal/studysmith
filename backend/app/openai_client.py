@@ -101,6 +101,30 @@ def _parse_json(text: str) -> dict:
         return json.loads(match.group(0))
 
 
+def _build_intent_block(
+    subject_title: Optional[str],
+    subject_goal: Optional[str],
+    subject_scope: Optional[str],
+    module_goal: Optional[str],
+    module_scope: Optional[str],
+) -> str:
+    if not (subject_goal or subject_scope or module_goal or module_scope):
+        return ""
+    parts = []
+    if subject_title:
+        parts.append(f"Subject: {subject_title}")
+    if subject_goal:
+        parts.append(f"Subject goal: {subject_goal}")
+    if subject_scope:
+        parts.append(f"Subject scope: {subject_scope}")
+    if module_goal or module_scope:
+        parts.append(f"Module goal: {module_goal or 'not specified'}")
+        parts.append(
+            f"Module scope: {module_scope or 'not restricted (knowledge may span modules)'}"
+        )
+    return "\n".join(parts) + "\n"
+
+
 def generate_study_cards(
     module_title: str,
     module_description: Optional[str],
@@ -113,22 +137,7 @@ def generate_study_cards(
     subject_scope: Optional[str] = None,
 ) -> List[dict]:
     client_instance = _require_client()
-    intent_block = ""
-    if subject_goal or subject_scope or module_goal or module_scope:
-        parts = []
-        if subject_title:
-            parts.append(f"Subject: {subject_title}")
-        if subject_goal:
-            parts.append(f"Subject goal: {subject_goal}")
-        if subject_scope:
-            parts.append(f"Subject scope: {subject_scope}")
-        if module_goal:
-            parts.append(f"Module goal: {module_goal}")
-        if module_scope:
-            parts.append(f"Module scope: {module_scope}")
-        else:
-            parts.append("Module scope: not restricted (knowledge may span modules)")
-        intent_block = "\n".join(parts) + "\n"
+    intent_block = _build_intent_block(subject_title, subject_goal, subject_scope, module_goal, module_scope)
     module_context = f"Module context: {module_title}"
     if module_description:
         module_context += f" ({module_description})"
@@ -176,22 +185,7 @@ def generate_study_cards_with_context(
     subject_scope: Optional[str] = None,
 ) -> List[dict]:
     client_instance = _require_client()
-    intent_block = ""
-    if subject_goal or subject_scope or module_goal or module_scope:
-        parts = []
-        if subject_title:
-            parts.append(f"Subject: {subject_title}")
-        if subject_goal:
-            parts.append(f"Subject goal: {subject_goal}")
-        if subject_scope:
-            parts.append(f"Subject scope: {subject_scope}")
-        if module_goal:
-            parts.append(f"Module goal: {module_goal}")
-        if module_scope:
-            parts.append(f"Module scope: {module_scope}")
-        else:
-            parts.append("Module scope: not restricted (knowledge may span modules)")
-        intent_block = "\n".join(parts) + "\n"
+    intent_block = _build_intent_block(subject_title, subject_goal, subject_scope, module_goal, module_scope)
     module_context = f"Module context: {module_title}"
     if module_description:
         module_context += f" ({module_description})"
@@ -250,22 +244,7 @@ def generate_question_cards(
     subject_scope: Optional[str] = None,
 ) -> List[dict]:
     client_instance = _require_client()
-    intent_block = ""
-    if subject_goal or subject_scope or module_goal or module_scope:
-        parts = []
-        if subject_title:
-            parts.append(f"Subject: {subject_title}")
-        if subject_goal:
-            parts.append(f"Subject goal: {subject_goal}")
-        if subject_scope:
-            parts.append(f"Subject scope: {subject_scope}")
-        if module_goal:
-            parts.append(f"Module goal: {module_goal}")
-        if module_scope:
-            parts.append(f"Module scope: {module_scope}")
-        else:
-            parts.append("Module scope: not restricted (knowledge may span modules)")
-        intent_block = "\n".join(parts) + "\n"
+    intent_block = _build_intent_block(subject_title, subject_goal, subject_scope, module_goal, module_scope)
     instruction_block = ""
     if additional_instructions:
         instruction_block = (
@@ -378,22 +357,7 @@ def suggest_topic_chips(
     subject_scope: Optional[str] = None,
 ) -> dict:
     client_instance = _require_client()
-    intent_block = ""
-    if subject_goal or subject_scope or module_goal or module_scope:
-        parts = []
-        if subject_title:
-            parts.append(f"Subject: {subject_title}")
-        if subject_goal:
-            parts.append(f"Subject goal: {subject_goal}")
-        if subject_scope:
-            parts.append(f"Subject scope: {subject_scope}")
-        if module_goal:
-            parts.append(f"Module goal: {module_goal}")
-        if module_scope:
-            parts.append(f"Module scope: {module_scope}")
-        else:
-            parts.append("Module scope: not restricted (knowledge may span modules)")
-        intent_block = "\n".join(parts) + "\n"
+    intent_block = _build_intent_block(subject_title, subject_goal, subject_scope, module_goal, module_scope)
     user_prompt = (
         f"{intent_block}"
         f"Module chip pool: {module_chip_pool}\n"
@@ -525,4 +489,10 @@ def generate_module_intent_response(
         response_format={"type": "json_object"},
         temperature=0.4,
     )
-    return _parse_json(response.choices[0].message.content)
+    payload = _parse_json(response.choices[0].message.content)
+    return {
+        "assistant_message": payload.get("assistant_message", ""),
+        "title": payload.get("title") or current_title,
+        "goal": payload.get("goal") or current_goal,
+        "scope": payload.get("scope") or current_scope,
+    }
