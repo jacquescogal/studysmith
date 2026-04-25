@@ -1194,54 +1194,60 @@ textarea {
 }
 
 .reading-link-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 6px;
+  display: flex;
   align-items: center;
   border-radius: 12px;
+  background: rgba(31, 27, 22, 0.06);
+  padding-right: 4px;
+}
+
+.reading-link-row:hover,
+.reading-link-row.hovered {
+  background: rgba(31, 27, 22, 0.12);
+}
+
+.reading-link-row.pinned {
+  background: rgba(47, 105, 170, 0.16);
 }
 
 .reading-link {
+  flex: 1;
+  min-width: 0;
   border: none;
-  background: rgba(31, 27, 22, 0.06);
+  background: none;
   padding: 8px 10px;
-  border-radius: 12px;
   text-align: left;
   cursor: pointer;
   font-weight: 600;
   color: var(--ink);
-  min-width: 0;
 }
 
-.reading-link:hover,
-.reading-link-row.hovered .reading-link {
-  background: rgba(31, 27, 22, 0.12);
-}
-
-.reading-link-row.pinned .reading-link {
-  background: rgba(47, 105, 170, 0.16);
-}
-
-.reading-pin {
+.reading-pin,
+.reading-toggle-mode {
+  flex-shrink: 0;
   border: none;
-  border-radius: 8px;
+  border-radius: 6px;
   background: rgba(31, 27, 22, 0.08);
   color: var(--muted);
   cursor: pointer;
-  font-size: 0.78rem;
-  font-weight: 700;
   opacity: 0;
-  padding: 6px 8px;
+  padding: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .reading-link-row:hover .reading-pin,
 .reading-link-row:focus-within .reading-pin,
-.reading-link-row.pinned .reading-pin {
+.reading-link-row.pinned .reading-pin,
+.reading-link-row:hover .reading-toggle-mode,
+.reading-link-row:focus-within .reading-toggle-mode,
+.reading-link-row.pinned .reading-toggle-mode {
   opacity: 1;
 }
 
 .reading-link-row.pinned .reading-pin {
-  background: rgba(47, 105, 170, 0.18);
+  background: rgba(47, 105, 170, 0.28);
   color: #24558d;
 }
 
