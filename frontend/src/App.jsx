@@ -40,12 +40,14 @@ import {
   reviewQuestionCard,
   sendChat,
   sendModuleIntentChat,
+  sendSubjectIntentChat,
   updateNoteGroupOrder,
   suggestTopicChips,
   updateNoteGroupTitle,
   updateQuestionCard,
   updateStudyCard,
-  updateModule
+  updateModule,
+  updateSubject
 } from "./api";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -269,6 +271,22 @@ export default function App() {
   const [selectedSubjectId, setSelectedSubjectId] = useState("");
   const [newSubjectTitle, setNewSubjectTitle] = useState("");
   const [newSubjectDescription, setNewSubjectDescription] = useState("");
+  const [isSubjectWizardOpen, setIsSubjectWizardOpen] = useState(false);
+  const [subjectWizardMessages, setSubjectWizardMessages] = useState([]);
+  const [subjectWizardInput, setSubjectWizardInput] = useState("");
+  const [subjectWizardLoading, setSubjectWizardLoading] = useState(false);
+  const [subjectWizardTitle, setSubjectWizardTitle] = useState("");
+  const [subjectWizardGoal, setSubjectWizardGoal] = useState("");
+  const [subjectWizardScope, setSubjectWizardScope] = useState("");
+  const [subjectWizardError, setSubjectWizardError] = useState("");
+  const [subjectWizardCreating, setSubjectWizardCreating] = useState(false);
+  const [isSubjectMetadataOpen, setIsSubjectMetadataOpen] = useState(false);
+  const [editingSubjectId, setEditingSubjectId] = useState(null);
+  const [subjectTitleDraft, setSubjectTitleDraft] = useState("");
+  const [subjectGoalDraft, setSubjectGoalDraft] = useState("");
+  const [subjectScopeDraft, setSubjectScopeDraft] = useState("");
+  const [subjectMetadataSaving, setSubjectMetadataSaving] = useState(false);
+  const [subjectMetadataError, setSubjectMetadataError] = useState("");
 
   const [modules, setModules] = useState([]);
   const [selectedModuleId, setSelectedModuleId] = useState("");
@@ -1484,6 +1502,124 @@ export default function App() {
       setNewSubjectDescription("");
     } catch (error) {
       setSidebarError(error.message || "Failed to create subject");
+    }
+  };
+
+  const handleOpenSubjectWizard = () => {
+    setSubjectWizardMessages([]);
+    setSubjectWizardInput("");
+    setSubjectWizardTitle("");
+    setSubjectWizardGoal("");
+    setSubjectWizardScope("");
+    setSubjectWizardError("");
+    setSubjectWizardLoading(false);
+    setSubjectWizardCreating(false);
+    setIsSubjectWizardOpen(true);
+  };
+
+  const handleSubjectWizardSend = async () => {
+    const message = subjectWizardInput.trim();
+    if (!message || subjectWizardLoading) {
+      return;
+    }
+    const userMsg = { role: "user", content: message };
+    setSubjectWizardMessages((prev) => [...prev, userMsg]);
+    setSubjectWizardInput("");
+    setSubjectWizardLoading(true);
+    setSubjectWizardError("");
+    try {
+      const result = await sendSubjectIntentChat({
+        message,
+        history: subjectWizardMessages.slice(-10),
+        current_title: subjectWizardTitle || null,
+        current_goal: subjectWizardGoal || null,
+        current_scope: subjectWizardScope || null,
+      });
+      setSubjectWizardMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: result.assistant_message },
+      ]);
+      if (result.title) {
+        setSubjectWizardTitle(result.title);
+      }
+      if (result.goal) {
+        setSubjectWizardGoal(result.goal);
+      }
+      if (result.scope) {
+        setSubjectWizardScope(result.scope);
+      }
+    } catch (error) {
+      setSubjectWizardError(error.message || "Failed to get response");
+    } finally {
+      setSubjectWizardLoading(false);
+    }
+  };
+
+  const handleCreateSubjectFromWizard = async () => {
+    if (!subjectWizardTitle.trim() || subjectWizardCreating) {
+      return;
+    }
+    setSubjectWizardCreating(true);
+    setSubjectWizardError("");
+    try {
+      const created = await createSubject({
+        title: subjectWizardTitle.trim(),
+        goal: subjectWizardGoal.trim() || null,
+        scope: subjectWizardScope.trim() || null,
+      });
+      setSubjects((prev) => [created, ...prev]);
+      setSelectedSubjectId(created.id);
+      setSelectedModuleId("");
+      setSelectedNoteGroupId("");
+      setNoteGroupMode("overview");
+      setReviewSummary(null);
+      setIsChatOpen(false);
+      setIsMetadataOpen(false);
+      setIsModuleMetadataOpen(false);
+      setIsSubjectWizardOpen(false);
+      navigate("/");
+    } catch (error) {
+      setSubjectWizardError(error.message || "Failed to create subject");
+    } finally {
+      setSubjectWizardCreating(false);
+    }
+  };
+
+  const openSubjectMetadataModal = (subject) => {
+    if (!subject) {
+      return;
+    }
+    setEditingSubjectId(subject.id);
+    setSubjectTitleDraft(subject.title || "");
+    setSubjectGoalDraft(subject.goal || "");
+    setSubjectScopeDraft(subject.scope || "");
+    setSubjectMetadataError("");
+    setIsSubjectMetadataOpen(true);
+  };
+
+  const handleSaveSubjectMetadata = async (subjectId) => {
+    if (!subjectId) {
+      return;
+    }
+    const trimmedTitle = subjectTitleDraft.trim();
+    if (!trimmedTitle) {
+      setSubjectMetadataError("Title cannot be empty.");
+      return;
+    }
+    setSubjectMetadataSaving(true);
+    setSubjectMetadataError("");
+    try {
+      const updated = await updateSubject(subjectId, {
+        title: trimmedTitle,
+        goal: subjectGoalDraft.trim() || null,
+        scope: subjectScopeDraft.trim() || null,
+      });
+      setSubjects((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+      setIsSubjectMetadataOpen(false);
+    } catch (error) {
+      setSubjectMetadataError(error.message || "Failed to save subject settings");
+    } finally {
+      setSubjectMetadataSaving(false);
     }
   };
 
@@ -3685,6 +3821,112 @@ export default function App() {
           </div>
         </div>
       ) : null}
+      {isSubjectWizardOpen ? (
+        <div className="meta-overlay">
+          <div className="intent-wizard">
+            <div className="intent-wizard-header">
+              <div>
+                <h2>Create subject</h2>
+                <p className="muted">
+                  Describe what you want to study — the AI will suggest a title, goal, and scope.
+                </p>
+              </div>
+              <button
+                className="button ghost"
+                type="button"
+                onClick={() => setIsSubjectWizardOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="intent-wizard-body">
+              <div className="intent-wizard-chat">
+                <div className="chat">
+                  {subjectWizardMessages.length === 0 ? (
+                    <p className="muted small">
+                      Tell me what subject you want to study and why. I&apos;ll fill in the fields on the right.
+                    </p>
+                  ) : (
+                    subjectWizardMessages.map((msg, idx) => (
+                      <div key={idx} className={`chat-bubble ${msg.role}`}>
+                        <p>{msg.content}</p>
+                      </div>
+                    ))
+                  )}
+                  {subjectWizardLoading ? (
+                    <div className="chat-bubble assistant">
+                      <p>Thinking...</p>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="chat-input">
+                  <textarea
+                    value={subjectWizardInput}
+                    onChange={(e) => setSubjectWizardInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSubjectWizardSend();
+                      }
+                    }}
+                    placeholder="Describe your learning intent..."
+                    rows={2}
+                    disabled={subjectWizardLoading}
+                  />
+                  <button
+                    className="button primary"
+                    type="button"
+                    onClick={handleSubjectWizardSend}
+                    disabled={subjectWizardLoading || !subjectWizardInput.trim()}
+                  >
+                    Send
+                  </button>
+                </div>
+              </div>
+              <div className="intent-wizard-fields">
+                <div className="field">
+                  <label>Title</label>
+                  <input
+                    type="text"
+                    value={subjectWizardTitle}
+                    onChange={(e) => setSubjectWizardTitle(e.target.value)}
+                    placeholder="Subject title"
+                  />
+                </div>
+                <div className="field">
+                  <label>Goal</label>
+                  <textarea
+                    value={subjectWizardGoal}
+                    onChange={(e) => setSubjectWizardGoal(e.target.value)}
+                    placeholder="What does success look like?"
+                    rows={3}
+                  />
+                </div>
+                <div className="field">
+                  <label>Scope</label>
+                  <textarea
+                    value={subjectWizardScope}
+                    onChange={(e) => setSubjectWizardScope(e.target.value)}
+                    placeholder="Topics and boundaries of study"
+                    rows={3}
+                  />
+                </div>
+                {subjectWizardError ? (
+                  <p className="error">{subjectWizardError}</p>
+                ) : null}
+                <button
+                  className="button primary"
+                  type="button"
+                  onClick={handleCreateSubjectFromWizard}
+                  disabled={!subjectWizardTitle.trim() || subjectWizardCreating}
+                >
+                  {subjectWizardCreating ? "Creating..." : "Create subject"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {isModuleWizardOpen ? (
         <div className="meta-overlay">
           <div className="intent-wizard">
@@ -3788,6 +4030,66 @@ export default function App() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      ) : null}
+      {isSubjectMetadataOpen ? (
+        <div className="meta-overlay">
+          <div className="meta-modal">
+            <div className="meta-modal-header">
+              <div>
+                <h2>Subject settings</h2>
+                <p className="muted">Manage subject details.</p>
+              </div>
+              <button
+                className="button ghost"
+                type="button"
+                onClick={() => setIsSubjectMetadataOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="field">
+              <label htmlFor="subject-title">Subject title</label>
+              <input
+                id="subject-title"
+                type="text"
+                value={subjectTitleDraft}
+                onChange={(event) => setSubjectTitleDraft(event.target.value)}
+                placeholder="Enter a subject title"
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="subject-goal">Learning goal</label>
+              <textarea
+                id="subject-goal"
+                value={subjectGoalDraft}
+                onChange={(event) => setSubjectGoalDraft(event.target.value)}
+                placeholder="What does success look like for this subject?"
+                rows={3}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="subject-scope">Scope</label>
+              <textarea
+                id="subject-scope"
+                value={subjectScopeDraft}
+                onChange={(event) => setSubjectScopeDraft(event.target.value)}
+                placeholder="Topics and boundaries of study"
+                rows={3}
+              />
+            </div>
+            <div className="button-row">
+              <button
+                className="button primary"
+                type="button"
+                onClick={() => handleSaveSubjectMetadata(editingSubjectId)}
+                disabled={subjectMetadataSaving || !subjectTitleDraft.trim()}
+              >
+                {subjectMetadataSaving ? "Saving..." : "Save settings"}
+              </button>
+            </div>
+            {subjectMetadataError ? <p className="error">{subjectMetadataError}</p> : null}
           </div>
         </div>
       ) : null}
@@ -4151,25 +4453,12 @@ export default function App() {
                 </div>
                 <div className="subject-create">
                   <div className="form-block">
-                    <input
-                      type="text"
-                      value={newSubjectTitle}
-                      onChange={(event) => setNewSubjectTitle(event.target.value)}
-                      placeholder="New subject title"
-                    />
-                    <input
-                      type="text"
-                      value={newSubjectDescription}
-                      onChange={(event) => setNewSubjectDescription(event.target.value)}
-                      placeholder="Optional description"
-                    />
                     <button
                       className="button ghost"
                       type="button"
-                      onClick={handleCreateSubject}
-                      disabled={!newSubjectTitle.trim()}
+                      onClick={handleOpenSubjectWizard}
                     >
-                      Add subject
+                      Create new subject
                     </button>
                   </div>
                 </div>
@@ -4183,9 +4472,9 @@ export default function App() {
                       <article key={subject.id} className="subject-card">
                         <div>
                           <h3>{subject.title}</h3>
-                          <p className="muted">
-                            {subject.description || "No description yet."}
-                          </p>
+                          {subject.goal ? (
+                            <p className="muted">{subject.goal}</p>
+                          ) : null}
                         </div>
                         <div className="button-row">
                           <button
@@ -4199,6 +4488,13 @@ export default function App() {
                             }
                           >
                             Open subject
+                          </button>
+                          <button
+                            className="button ghost"
+                            type="button"
+                            onClick={() => openSubjectMetadataModal(subject)}
+                          >
+                            Edit
                           </button>
                           <button
                             className="button ghost danger"
