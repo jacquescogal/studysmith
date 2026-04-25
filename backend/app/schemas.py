@@ -54,7 +54,7 @@ class ModuleOut(BaseModel):
     settings: dict = Field(default_factory=dict)
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class NoteGroupCreate(BaseModel):
@@ -85,7 +85,7 @@ class NoteGroupOut(BaseModel):
     suggested_titles: List[str] = []
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class StudyCardOut(BaseModel):
@@ -96,7 +96,7 @@ class StudyCardOut(BaseModel):
     topic_chips: List["TopicChipOut"] = []
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class TopicChipCreate(BaseModel):
@@ -111,7 +111,7 @@ class TopicChipOut(BaseModel):
     description: Optional[str] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class TopicChipAttach(BaseModel):
@@ -201,7 +201,7 @@ class IntentChatRequest(BaseModel):
 
 class SubjectIntentChatPayload(BaseModel):
     message: str
-    history: list = []
+    history: Optional[List[IntentChatMessage]] = None
     current_title: Optional[str] = None
     current_goal: Optional[str] = None
     current_scope: Optional[str] = None
@@ -227,7 +227,7 @@ class JobOut(BaseModel):
     error: Optional[str] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class StudyCardCreate(BaseModel):
@@ -311,7 +311,7 @@ class NoteGroupSourceMatch(BaseModel):
     created_at: datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class NoteGroupSourceCheckResponse(BaseModel):

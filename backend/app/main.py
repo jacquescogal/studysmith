@@ -186,11 +186,15 @@ def _ensure_subject_intent_columns() -> None:
         return
     with engine.connect() as conn:
         cols = {r[1] for r in conn.execute(text("PRAGMA table_info(subjects)"))}
+        statements = []
         if "goal" not in cols:
-            conn.execute(text("ALTER TABLE subjects ADD COLUMN goal TEXT"))
+            statements.append("ALTER TABLE subjects ADD COLUMN goal TEXT")
         if "scope" not in cols:
-            conn.execute(text("ALTER TABLE subjects ADD COLUMN scope TEXT"))
-        conn.commit()
+            statements.append("ALTER TABLE subjects ADD COLUMN scope TEXT")
+        for statement in statements:
+            conn.execute(text(statement))
+        if statements:
+            conn.commit()
 
 
 Base.metadata.create_all(bind=engine)
@@ -470,6 +474,24 @@ def create_subject(payload: SubjectCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail="Subject title must be unique")
 
 
+@app.post("/subjects/intent-chat", response_model=IntentChatResponse)
+def subject_intent_chat(payload: SubjectIntentChatPayload):
+    history = [item.model_dump() for item in (payload.history or [])]
+    result = generate_subject_intent_response(
+        payload.message,
+        history,
+        payload.current_title,
+        payload.current_goal,
+        payload.current_scope,
+    )
+    return {
+        "assistant_message": result.get("assistant_message", ""),
+        "title": result.get("title"),
+        "goal": result.get("goal"),
+        "scope": result.get("scope"),
+    }
+
+
 @app.get("/subjects/{subject_id}", response_model=SubjectOut)
 def get_subject(subject_id: str, db: Session = Depends(get_db)):
     subject = db.get(Subject, subject_id)
@@ -509,23 +531,6 @@ def update_subject(subject_id: str, payload: SubjectUpdate, db: Session = Depend
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="Subject title must be unique")
-
-
-@app.post("/subjects/intent-chat", response_model=IntentChatResponse)
-def subject_intent_chat(payload: SubjectIntentChatPayload):
-    result = generate_subject_intent_response(
-        payload.message,
-        payload.history,
-        payload.current_title,
-        payload.current_goal,
-        payload.current_scope,
-    )
-    return {
-        "assistant_message": result.get("assistant_message", ""),
-        "title": result.get("title"),
-        "goal": result.get("goal"),
-        "scope": result.get("scope"),
-    }
 
 
 @app.delete("/subjects/{subject_id}")
