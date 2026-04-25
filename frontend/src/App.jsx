@@ -1991,13 +1991,25 @@ export default function App() {
 
   const handleReadingTitleClick = (studyCardId) => {
     setReadingHoverCardId(studyCardId);
-    if (readingMode === "study") {
-      setReadingMode("clean");
-      window.setTimeout(() => handleJumpToCleanSource(studyCardId), 0);
+    if (readingMode === "clean") {
+      handleJumpToCleanSource(studyCardId);
     } else {
-      setReadingMode("study");
-      window.setTimeout(() => handleJumpToStudyCard(studyCardId), 0);
+      handleJumpToStudyCard(studyCardId);
     }
+  };
+
+  const handleReadingToggleMode = (event, studyCardId) => {
+    event.stopPropagation();
+    const nextMode = readingMode === "study" ? "clean" : "study";
+    setReadingMode(nextMode);
+    setReadingHoverCardId(studyCardId);
+    window.setTimeout(() => {
+      if (nextMode === "clean") {
+        handleJumpToCleanSource(studyCardId);
+      } else {
+        handleJumpToStudyCard(studyCardId);
+      }
+    }, 0);
   };
 
   const handleReadingPin = (event, studyCardId) => {
@@ -3811,12 +3823,24 @@ export default function App() {
                           {card.title || `Study card ${index + 1}`}
                         </button>
                         <button
+                          className="reading-toggle-mode"
+                          type="button"
+                          aria-label={readingMode === "study" ? "Switch to clean text" : "Switch to study notes"}
+                          onClick={(event) => handleReadingToggleMode(event, card.id)}
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M4 9h16M4 9l4-4M4 9l4 4M20 15H4M20 15l-4-4M20 15l-4 4"/>
+                          </svg>
+                        </button>
+                        <button
                           className="reading-pin"
                           type="button"
                           aria-label={isPinned ? "Unpin study card" : "Pin study card"}
                           onClick={(event) => handleReadingPin(event, card.id)}
                         >
-                          {isPinned ? "Pinned" : "Pin"}
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                            <path d="M15 3H9l1 7-4.5 3h5.5v8h2v-8h5.5L14 10l1-7z"/>
+                          </svg>
                         </button>
                       </div>
                     );
