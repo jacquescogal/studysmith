@@ -1685,6 +1685,9 @@ export default function App() {
         current_title: moduleWizardTitle || null,
         current_goal: moduleWizardGoal || null,
         current_scope: moduleWizardScope || null,
+        subject_title: selectedSubject?.title || null,
+        subject_goal: selectedSubject?.goal || null,
+        subject_scope: selectedSubject?.scope || null,
       });
       setModuleWizardMessages((prev) => [
         ...prev,
@@ -3945,6 +3948,14 @@ export default function App() {
                 Close
               </button>
             </div>
+            {selectedSubject ? (
+              <div className="wizard-context-banner">
+                <span className="muted small">
+                  Subject: <strong>{selectedSubject.title}</strong>
+                  {selectedSubject.goal ? ` — ${selectedSubject.goal}` : ""}
+                </span>
+              </div>
+            ) : null}
             <div className="intent-wizard-body">
               <div className="intent-wizard-chat">
                 <div className="chat" ref={wizardChatRef}>
