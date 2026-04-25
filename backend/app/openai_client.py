@@ -50,6 +50,17 @@ TOPIC_CHIP_SYSTEM_PROMPT = (
     "Do not create chips for content outside the module scope."
 )
 
+SUBJECT_INTENT_SYSTEM_PROMPT = (
+    "You are helping a student define a study subject. "
+    "Through friendly conversation, extract: "
+    "- title: a concise name for the subject area (e.g. 'AZ-305 Solutions Architect', 'Organic Chemistry') "
+    "- goal: what the student wants to achieve (e.g. 'Pass the AZ-305 certification exam', 'Understand reaction mechanisms for finals') "
+    "- scope: the boundaries of what this subject covers (e.g. 'All AZ-305 exam topic areas', 'Chapters 1-8 of the course textbook') "
+    "Keep responses brief and conversational. "
+    "Always respond in JSON with keys: reply (string), title (string or null), goal (string or null), scope (string or null). "
+    "Only set title/goal/scope when you have enough information — do not guess."
+)
+
 MODULE_INTENT_SYSTEM_PROMPT = (
     "You are a learning design assistant helping a user define the intent of a study module. "
     "Extract three structured fields from the conversation: "
@@ -97,14 +108,27 @@ def generate_study_cards(
     additional_instructions: Optional[str] = None,
     module_goal: Optional[str] = None,
     module_scope: Optional[str] = None,
+    subject_title: Optional[str] = None,
+    subject_goal: Optional[str] = None,
+    subject_scope: Optional[str] = None,
 ) -> List[dict]:
     client_instance = _require_client()
     intent_block = ""
-    if module_goal or module_scope:
-        intent_block = (
-            f"Module learning goal: {module_goal or 'not specified'}\n"
-            f"Module scope: {module_scope or 'not specified'}\n"
-        )
+    if subject_goal or subject_scope or module_goal or module_scope:
+        parts = []
+        if subject_title:
+            parts.append(f"Subject: {subject_title}")
+        if subject_goal:
+            parts.append(f"Subject goal: {subject_goal}")
+        if subject_scope:
+            parts.append(f"Subject scope: {subject_scope}")
+        if module_goal:
+            parts.append(f"Module goal: {module_goal}")
+        if module_scope:
+            parts.append(f"Module scope: {module_scope}")
+        else:
+            parts.append("Module scope: not restricted (knowledge may span modules)")
+        intent_block = "\n".join(parts) + "\n"
     module_context = f"Module context: {module_title}"
     if module_description:
         module_context += f" ({module_description})"
@@ -147,14 +171,27 @@ def generate_study_cards_with_context(
     additional_instructions: Optional[str] = None,
     module_goal: Optional[str] = None,
     module_scope: Optional[str] = None,
+    subject_title: Optional[str] = None,
+    subject_goal: Optional[str] = None,
+    subject_scope: Optional[str] = None,
 ) -> List[dict]:
     client_instance = _require_client()
     intent_block = ""
-    if module_goal or module_scope:
-        intent_block = (
-            f"Module learning goal: {module_goal or 'not specified'}\n"
-            f"Module scope: {module_scope or 'not specified'}\n"
-        )
+    if subject_goal or subject_scope or module_goal or module_scope:
+        parts = []
+        if subject_title:
+            parts.append(f"Subject: {subject_title}")
+        if subject_goal:
+            parts.append(f"Subject goal: {subject_goal}")
+        if subject_scope:
+            parts.append(f"Subject scope: {subject_scope}")
+        if module_goal:
+            parts.append(f"Module goal: {module_goal}")
+        if module_scope:
+            parts.append(f"Module scope: {module_scope}")
+        else:
+            parts.append("Module scope: not restricted (knowledge may span modules)")
+        intent_block = "\n".join(parts) + "\n"
     module_context = f"Module context: {module_title}"
     if module_description:
         module_context += f" ({module_description})"
@@ -208,14 +245,27 @@ def generate_question_cards(
     additional_instructions: Optional[str] = None,
     module_goal: Optional[str] = None,
     module_scope: Optional[str] = None,
+    subject_title: Optional[str] = None,
+    subject_goal: Optional[str] = None,
+    subject_scope: Optional[str] = None,
 ) -> List[dict]:
     client_instance = _require_client()
     intent_block = ""
-    if module_goal or module_scope:
-        intent_block = (
-            f"Module learning goal: {module_goal or 'not specified'}\n"
-            f"Module scope: {module_scope or 'not specified'}\n"
-        )
+    if subject_goal or subject_scope or module_goal or module_scope:
+        parts = []
+        if subject_title:
+            parts.append(f"Subject: {subject_title}")
+        if subject_goal:
+            parts.append(f"Subject goal: {subject_goal}")
+        if subject_scope:
+            parts.append(f"Subject scope: {subject_scope}")
+        if module_goal:
+            parts.append(f"Module goal: {module_goal}")
+        if module_scope:
+            parts.append(f"Module scope: {module_scope}")
+        else:
+            parts.append("Module scope: not restricted (knowledge may span modules)")
+        intent_block = "\n".join(parts) + "\n"
     instruction_block = ""
     if additional_instructions:
         instruction_block = (
@@ -323,14 +373,27 @@ def suggest_topic_chips(
     content: str,
     module_goal: Optional[str] = None,
     module_scope: Optional[str] = None,
+    subject_title: Optional[str] = None,
+    subject_goal: Optional[str] = None,
+    subject_scope: Optional[str] = None,
 ) -> dict:
     client_instance = _require_client()
     intent_block = ""
-    if module_goal or module_scope:
-        intent_block = (
-            f"Module learning goal: {module_goal or 'not specified'}\n"
-            f"Module scope: {module_scope or 'not specified'}\n"
-        )
+    if subject_goal or subject_scope or module_goal or module_scope:
+        parts = []
+        if subject_title:
+            parts.append(f"Subject: {subject_title}")
+        if subject_goal:
+            parts.append(f"Subject goal: {subject_goal}")
+        if subject_scope:
+            parts.append(f"Subject scope: {subject_scope}")
+        if module_goal:
+            parts.append(f"Module goal: {module_goal}")
+        if module_scope:
+            parts.append(f"Module scope: {module_scope}")
+        else:
+            parts.append("Module scope: not restricted (knowledge may span modules)")
+        intent_block = "\n".join(parts) + "\n"
     user_prompt = (
         f"{intent_block}"
         f"Module chip pool: {module_chip_pool}\n"
@@ -391,7 +454,34 @@ def generate_subject_intent_response(
     current_goal: Optional[str] = None,
     current_scope: Optional[str] = None,
 ) -> dict:
-    return {"assistant_message": "Not yet implemented", "title": current_title, "goal": current_goal, "scope": current_scope}
+    client_instance = _require_client()
+    current_state = (
+        f"Current fields — title: {current_title or 'none'}, "
+        f"goal: {current_goal or 'none'}, "
+        f"scope: {current_scope or 'none'}"
+    )
+    user_content = f"{current_state}\n\nUser message: {message}"
+    messages: List[dict] = [{"role": "system", "content": SUBJECT_INTENT_SYSTEM_PROMPT}]
+    if history:
+        for item in history[-10:]:
+            role = item.get("role")
+            content = item.get("content")
+            if role in {"user", "assistant"} and content and content.strip():
+                messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": user_content})
+    response = client_instance.chat.completions.create(
+        model=settings.openai_chat_model,
+        messages=messages,
+        response_format={"type": "json_object"},
+        temperature=0.4,
+    )
+    payload = _parse_json(response.choices[0].message.content)
+    return {
+        "assistant_message": payload.get("reply", ""),
+        "title": payload.get("title", current_title),
+        "goal": payload.get("goal", current_goal),
+        "scope": payload.get("scope", current_scope),
+    }
 
 
 def generate_module_intent_response(
@@ -405,12 +495,22 @@ def generate_module_intent_response(
     subject_scope: Optional[str] = None,
 ) -> dict:
     client_instance = _require_client()
+    subject_block = ""
+    if subject_title or subject_goal or subject_scope:
+        parts = ["Context about the parent subject:"]
+        if subject_title:
+            parts.append(f"Subject: {subject_title}")
+        if subject_goal:
+            parts.append(f"Subject goal: {subject_goal}")
+        if subject_scope:
+            parts.append(f"Subject scope: {subject_scope}")
+        subject_block = "\n".join(parts) + "\n\n"
     current_state = (
         f"Current fields — title: {current_title or 'none'}, "
         f"goal: {current_goal or 'none'}, "
         f"scope: {current_scope or 'none'}"
     )
-    user_content = f"{current_state}\n\nUser message: {message}"
+    user_content = f"{subject_block}{current_state}\n\nUser message: {message}"
     messages: List[dict] = [{"role": "system", "content": MODULE_INTENT_SYSTEM_PROMPT}]
     if history:
         for item in history[-10:]:
