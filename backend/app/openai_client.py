@@ -391,7 +391,7 @@ def generate_subject_intent_response(
     current_goal: Optional[str] = None,
     current_scope: Optional[str] = None,
 ) -> dict:
-    return {"reply": "Not yet implemented", "title": current_title, "goal": current_goal, "scope": current_scope}
+    return {"assistant_message": "Not yet implemented", "title": current_title, "goal": current_goal, "scope": current_scope}
 
 
 def generate_module_intent_response(
