@@ -414,7 +414,6 @@ def run_question_card_generation(job_id: str, count: int, difficulty: str) -> No
         question_payloads = generate_question_cards(
             study_cards=study_card_payloads,
             existing_questions=existing_prompts,
-            count=count,
             difficulty=difficulty,
             additional_instructions=note_group.additional_generation_instructions,
             module_goal=module.goal,
@@ -423,6 +422,7 @@ def run_question_card_generation(job_id: str, count: int, difficulty: str) -> No
             subject_goal=subject.goal,
             subject_scope=subject.scope,
         )
+        question_payloads = question_payloads[:100]
         if not question_payloads:
             job.status = "completed"
             db.commit()
@@ -464,7 +464,7 @@ def run_question_card_generation(job_id: str, count: int, difficulty: str) -> No
         db.close()
 
 
-def run_auto_note_group_generation(job_id: str, question_count: int) -> None:
+def run_auto_note_group_generation(job_id: str) -> None:
     db: Session = SessionLocal()
     note_group: Optional[NoteGroup] = None
     job: Optional[Job] = None
@@ -688,7 +688,6 @@ def run_auto_note_group_generation(job_id: str, question_count: int) -> None:
                 for card in study_card_context
             ],
             existing_questions=[],
-            count=question_count,
             difficulty="mixed",
             additional_instructions=additional_instructions,
             module_goal=module.goal,
@@ -697,11 +696,10 @@ def run_auto_note_group_generation(job_id: str, question_count: int) -> None:
             subject_goal=subject.goal,
             subject_scope=subject.scope,
         )
+        question_payloads = question_payloads[:100]
         created = 0
         if question_payloads:
             for payload in question_payloads:
-                if created >= question_count:
-                    break
                 normalized = _normalize_question_payload(payload)
                 if not normalized:
                     continue

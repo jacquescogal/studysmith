@@ -100,14 +100,6 @@ const normalizeNoteGroups = (groups) => {
   });
 };
 
-const getModuleAutoQuestionDefault = (module) => {
-  const rawValue = module?.settings?.auto_question_count;
-  const parsed = Number.parseInt(rawValue, 10);
-  if (Number.isInteger(parsed) && parsed > 0) {
-    return parsed;
-  }
-  return 30;
-};
 
 const getModuleAdditionalInstructions = (module) => {
   const value = module?.settings?.additional_generation_instructions;
@@ -230,6 +222,20 @@ const renderMarkdownBlocks = (content) => {
 const getOverlappingHighlights = (start, end, highlights) =>
   highlights.filter((highlight) => start < highlight.end_index && end > highlight.start_index);
 
+const renderInlineMarkdown = (text, keyPrefix) => {
+  const parts = text.split(/(\*\*[^*\n]+\*\*|\*[^*\n]+\*)/g);
+  if (parts.length === 1) return text;
+  return parts.map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={`${keyPrefix}-b${i}`}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("*") && part.endsWith("*")) {
+      return <em key={`${keyPrefix}-e${i}`}>{part.slice(1, -1)}</em>;
+    }
+    return part;
+  });
+};
+
 const renderHighlightedText = (text, baseIndex, highlights) => {
   if (!text) {
     return null;
@@ -252,7 +258,7 @@ const renderHighlightedText = (text, baseIndex, highlights) => {
     const hovered = overlapping.find((highlight) => highlight.kind === "hovered");
     const active = pinned || hovered;
     if (!active) {
-      return segment;
+      return renderInlineMarkdown(segment, `seg-${baseIndex}-${start}`);
     }
     return (
       <mark
@@ -260,7 +266,7 @@ const renderHighlightedText = (text, baseIndex, highlights) => {
         className={`source-highlight ${active.kind}`}
         data-clean-card-id={active.study_card_id}
       >
-        {segment}
+        {renderInlineMarkdown(segment, `mark-${baseIndex}-${start}`)}
       </mark>
     );
   });
@@ -382,7 +388,6 @@ export default function App() {
   const [moduleWizardCreating, setModuleWizardCreating] = useState(false);
   const [moduleTitleDraft, setModuleTitleDraft] = useState("");
   const [moduleDescriptionDraft, setModuleDescriptionDraft] = useState("");
-  const [moduleAutoQuestionDefaultDraft, setModuleAutoQuestionDefaultDraft] = useState("30");
   const [moduleAdditionalInstructionsDraft, setModuleAdditionalInstructionsDraft] = useState("");
   const [moduleGoalDraft, setModuleGoalDraft] = useState("");
   const [moduleScopeDraft, setModuleScopeDraft] = useState("");
@@ -446,7 +451,6 @@ export default function App() {
   const [additionalInstructionsDraft, setAdditionalInstructionsDraft] = useState("");
   const [autoRawText, setAutoRawText] = useState("");
   const [autoAdditionalInstructions, setAutoAdditionalInstructions] = useState("");
-  const [autoQuestionCount, setAutoQuestionCount] = useState("30");
   const [titleSuggestions, setTitleSuggestions] = useState([]);
   const [selectedTitleSuggestion, setSelectedTitleSuggestion] = useState("");
   const [customTitle, setCustomTitle] = useState("");
@@ -489,7 +493,6 @@ export default function App() {
   const [questionCards, setQuestionCards] = useState([]);
   const [questionCardError, setQuestionCardError] = useState("");
   const [questionJobStatus, setQuestionJobStatus] = useState("idle");
-  const [questionCount, setQuestionCount] = useState(6);
   const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
   const [isQuestionCreateOpen, setIsQuestionCreateOpen] = useState(false);
   const [masteryFilter, setMasteryFilter] = useState("all");
@@ -1498,7 +1501,6 @@ export default function App() {
     setChipError("");
     setAutoCreateError("");
     setSidebarError("");
-    setAutoQuestionCount(String(getModuleAutoQuestionDefault(selectedModule)));
     setAdditionalInstructionsDraft(getModuleAdditionalInstructions(selectedModule));
     setAutoAdditionalInstructions(getModuleAdditionalInstructions(selectedModule));
   }, [selectedModuleId]);
@@ -1991,11 +1993,14 @@ export default function App() {
 
   const handleReadingTitleClick = (studyCardId) => {
     setReadingHoverCardId(studyCardId);
-    if (readingMode === "clean") {
-      handleJumpToCleanSource(studyCardId);
-    } else {
-      handleJumpToStudyCard(studyCardId);
-    }
+    setReadingPinnedCardId((current) => (current === studyCardId ? "" : studyCardId));
+    window.setTimeout(() => {
+      if (readingMode === "clean") {
+        handleJumpToCleanSource(studyCardId);
+      } else {
+        handleJumpToStudyCard(studyCardId);
+      }
+    }, 0);
   };
 
   const handleReadingToggleMode = (event, studyCardId) => {
@@ -2010,6 +2015,14 @@ export default function App() {
         handleJumpToStudyCard(studyCardId);
       }
     }, 0);
+  };
+
+  const handleReadingViewInClean = (event, studyCardId) => {
+    event.stopPropagation();
+    setReadingMode("clean");
+    setReadingHoverCardId(studyCardId);
+    setReadingPinnedCardId(studyCardId);
+    window.setTimeout(() => handleJumpToCleanSource(studyCardId), 0);
   };
 
   const handleReadingPin = (event, studyCardId) => {
@@ -2239,11 +2252,6 @@ export default function App() {
       setAutoCreateError("Check the source before continuing.");
       return;
     }
-    const parsedCount = Number.parseInt(autoQuestionCount, 10);
-    if (!Number.isInteger(parsedCount) || parsedCount < 1) {
-      setAutoCreateError("Question count must be at least 1.");
-      return;
-    }
     if (countWords(autoAdditionalInstructions) > 500) {
       setAutoCreateError("Additional generation instructions must be 500 words or fewer.");
       return;
@@ -2258,12 +2266,10 @@ export default function App() {
         module_id: selectedModuleId,
         source: trimmedSource,
         raw_text: autoRawText.trim(),
-        question_count: parsedCount,
         additional_generation_instructions: autoAdditionalInstructions.trim()
       });
       toast.info("Auto note group generation started.");
       setAutoRawText("");
-      setAutoQuestionCount(String(getModuleAutoQuestionDefault(selectedModule)));
       setAutoAdditionalInstructions(getModuleAdditionalInstructions(selectedModule));
       setNoteGroupMode("overview");
       setReviewSummary(null);
@@ -2494,9 +2500,6 @@ export default function App() {
     }
     setModuleTitleDraft(selectedModule?.title || "");
     setModuleDescriptionDraft(selectedModule?.description || "");
-    setModuleAutoQuestionDefaultDraft(
-      String(getModuleAutoQuestionDefault(selectedModule))
-    );
     setModuleAdditionalInstructionsDraft(
       getModuleAdditionalInstructions(selectedModule)
     );
@@ -2515,11 +2518,6 @@ export default function App() {
       setModuleMetadataError("Title cannot be empty.");
       return;
     }
-    const parsedDefaultCount = Number.parseInt(moduleAutoQuestionDefaultDraft, 10);
-    if (!Number.isInteger(parsedDefaultCount) || parsedDefaultCount < 1) {
-      setModuleMetadataError("Default question count must be at least 1.");
-      return;
-    }
     const instructionsWordCount = countWords(moduleAdditionalInstructionsDraft);
     if (instructionsWordCount > 500) {
       setModuleMetadataError("Default instructions must be 500 words or fewer.");
@@ -2534,21 +2532,16 @@ export default function App() {
         goal: moduleGoalDraft.trim() || null,
         scope: moduleScopeDraft.trim() || null,
         settings: {
-          auto_question_count: parsedDefaultCount,
           additional_generation_instructions: moduleAdditionalInstructionsDraft.trim()
         }
       });
       setModules((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
       setModuleTitleDraft(updated.title || "");
       setModuleDescriptionDraft(updated.description || "");
-      setModuleAutoQuestionDefaultDraft(
-        String(getModuleAutoQuestionDefault(updated))
-      );
       setModuleAdditionalInstructionsDraft(
         getModuleAdditionalInstructions(updated)
       );
       if (selectedModuleId === updated.id) {
-        setAutoQuestionCount(String(getModuleAutoQuestionDefault(updated)));
         setAdditionalInstructionsDraft(getModuleAdditionalInstructions(updated));
         setAutoAdditionalInstructions(getModuleAdditionalInstructions(updated));
       }
@@ -2687,7 +2680,6 @@ export default function App() {
     setQuestionJobStatus("queued");
     try {
       const job = await generateQuestionCards(selectedNoteGroupId, {
-        count: Number(questionCount) || 6,
         difficulty: "mixed"
       });
       await pollJob(job.id, setQuestionJobStatus);
@@ -3828,18 +3820,8 @@ export default function App() {
                           aria-label={readingMode === "study" ? "Switch to clean text" : "Switch to study notes"}
                           onClick={(event) => handleReadingToggleMode(event, card.id)}
                         >
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                             <path d="M4 9h16M4 9l4-4M4 9l4 4M20 15H4M20 15l-4-4M20 15l-4 4"/>
-                          </svg>
-                        </button>
-                        <button
-                          className="reading-pin"
-                          type="button"
-                          aria-label={isPinned ? "Unpin study card" : "Pin study card"}
-                          onClick={(event) => handleReadingPin(event, card.id)}
-                        >
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                            <path d="M15 3H9l1 7-4.5 3h5.5v8h2v-8h5.5L14 10l1-7z"/>
                           </svg>
                         </button>
                       </div>
@@ -3848,7 +3830,7 @@ export default function App() {
                 </aside>
                 <div className="reading-content" ref={readingContentRef}>
                   {readingMode === "clean" ? (
-                    <div className="clean-source">
+                    <div className={`clean-source${readingPinnedCardId ? " has-pin" : ""}`}>
                       {renderCleanedMarkdown(effectiveCleanedText, readingHighlights)}
                     </div>
                   ) : (
@@ -3864,14 +3846,22 @@ export default function App() {
                           className={`reading-section ${isHovered ? "hovered" : ""} ${
                             isPinned ? "pinned" : ""
                           }`}
+                          onMouseEnter={() => setReadingHoverCardId(section.study_card_id)}
+                          onMouseLeave={() => setReadingHoverCardId("")}
                         >
+                          <button
+                            className="reading-section-toggle"
+                            type="button"
+                            aria-label="View in clean text"
+                            onClick={(event) => handleReadingViewInClean(event, section.study_card_id)}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <circle cx="11" cy="11" r="8"/>
+                              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                            </svg>
+                          </button>
                           <div className="reading-section-header">
                             <h3>{section.title || `Section ${index + 1}`}</h3>
-                            <span className="pill">
-                              Study card:{" "}
-                              {cardTitle ||
-                                (section.study_card_id ? section.study_card_id.slice(0, 8) : "—")}
-                            </span>
                           </div>
                           <div className="reading-section-body">
                             {renderMarkdownBlocks(section.content)}
@@ -4418,16 +4408,6 @@ export default function App() {
                 value={moduleDescriptionDraft}
                 onChange={(event) => setModuleDescriptionDraft(event.target.value)}
                 placeholder="Optional description"
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="module-auto-question-default">Default auto question count</label>
-              <input
-                id="module-auto-question-default"
-                type="number"
-                min="1"
-                value={moduleAutoQuestionDefaultDraft}
-                onChange={(event) => setModuleAutoQuestionDefaultDraft(event.target.value)}
               />
             </div>
             <div className="field">
@@ -5098,20 +5078,8 @@ export default function App() {
                   <h2>Auto-create note group</h2>
                   <p className="muted">
                     Paste raw text and we will select a title, attach topic chips, generate study
-                    cards, and suggest question cards in the background (default{" "}
-                    {getModuleAutoQuestionDefault(selectedModule)}).
+                    cards, and generate question cards in the background.
                   </p>
-                  <div className="field">
-                    <label htmlFor="auto-question-count">Desired questions</label>
-                    <input
-                      id="auto-question-count"
-                      type="number"
-                      min="1"
-                      value={autoQuestionCount}
-                      onChange={(event) => setAutoQuestionCount(event.target.value)}
-                      disabled={!selectedModuleId || !isSourceReady}
-                    />
-                  </div>
                   <div className="field">
                     <label htmlFor="auto-additional-instructions">
                       Additional generation instructions (optional)
@@ -6064,17 +6032,6 @@ export default function App() {
                           <div className="form-block" id="question-generate">
                             <h3>Generate question cards</h3>
                             <div className="results-meta">
-                              <div className="field inline">
-                                <label htmlFor="question-count">Count</label>
-                                <input
-                                  id="question-count"
-                                  type="number"
-                                  min="1"
-                                  max="20"
-                                  value={questionCount}
-                                  onChange={(event) => setQuestionCount(event.target.value)}
-                                />
-                              </div>
                               <button
                                 className="button primary"
                                 type="button"

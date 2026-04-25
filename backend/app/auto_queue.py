@@ -65,18 +65,6 @@ def remove_auto_job(job_id: str) -> bool:
     return True
 
 
-def _get_question_count(job: Job) -> int:
-    payload = job.payload_json or ""
-    if not payload:
-        return 30
-    try:
-        data = json.loads(payload)
-        count = int(data.get("question_count", 30))
-        return count if count > 0 else 30
-    except (ValueError, TypeError, json.JSONDecodeError):
-        return 30
-
-
 def _worker_loop() -> None:
     while True:
         with _condition:
@@ -94,8 +82,7 @@ def _worker_loop() -> None:
                 continue
             if job.status in {"cancelled", "failed", "completed"}:
                 continue
-            question_count = _get_question_count(job)
         finally:
             db.close()
 
-        run_auto_note_group_generation(job_id, question_count)
+        run_auto_note_group_generation(job_id)

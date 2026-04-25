@@ -275,7 +275,6 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
 def generate_question_cards(
     study_cards: List[dict],
     existing_questions: List[str],
-    count: int,
     difficulty: str,
     additional_instructions: Optional[str] = None,
     module_goal: Optional[str] = None,
@@ -304,8 +303,9 @@ def generate_question_cards(
         "- correct_option_indices must be 0-based indices into options.\n"
         "- If more than one correct index is provided, type must be 'multi'.\n"
         "- For multi-answer, include all correct indices.\n\n"
-        f"Desired count (suggestion): {count}\n"
         f"Difficulty: {difficulty}\n\n"
+        "Generate as many high-quality, non-redundant questions as the material warrants. "
+        "Do not pad with weak or repetitive questions to reach any particular number.\n"
         "If no new non-duplicative questions remain, return an empty list.\n"
         "Output JSON as { \"question_cards\": [ ... ] }."
     )
