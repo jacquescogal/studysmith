@@ -325,3 +325,17 @@ export function sendModuleIntentChat(payload) {
     body: JSON.stringify(payload)
   });
 }
+
+export function sendSubjectIntentChat(payload) {
+  return request("/subjects/intent-chat", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function updateSubject(subjectId, payload) {
+  return request(`/subjects/${subjectId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
