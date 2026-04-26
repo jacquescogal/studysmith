@@ -559,6 +559,11 @@ export default function App() {
   const wizardChatRef = useRef(null);
   const selectedModuleIdRef = useRef(selectedModuleId);
   const activeAutoJobsRef = useRef(new Set());
+  const reviewDKeyTimeRef = useRef(0);
+  const readingNavRef = useRef(null);
+  const scrollSyncLockRef = useRef(false);
+  const rightRafPendingRef = useRef(false);
+  const leftRafPendingRef = useRef(false);
   const location = useLocation();
   const navigate = useNavigate();
   const routeMatch = location.pathname.match(/^\/note-groups\/([^/]+)\/(study-cards|question-cards)$/);
@@ -1470,6 +1475,40 @@ export default function App() {
   ]);
 
   useEffect(() => {
+    if (!isReviewing || reviewSummary || !currentReviewCard) {
+      return;
+    }
+    reviewDKeyTimeRef.current = 0;
+    const handleReviewDeleteKeyDown = (event) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+      const tag = event.target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || event.target?.isContentEditable) {
+        return;
+      }
+      if (event.key !== "d") {
+        return;
+      }
+      if (!reviewStartTime || Date.now() - reviewStartTime < 2000) {
+        return;
+      }
+      const now = Date.now();
+      if (reviewDKeyTimeRef.current && now - reviewDKeyTimeRef.current <= 500) {
+        reviewDKeyTimeRef.current = 0;
+        executeReviewDelete();
+      } else {
+        reviewDKeyTimeRef.current = now;
+      }
+    };
+    window.addEventListener("keydown", handleReviewDeleteKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleReviewDeleteKeyDown);
+      reviewDKeyTimeRef.current = 0;
+    };
+  }, [isReviewing, reviewSummary, currentReviewCard, reviewStartTime, reviewFeedback, reviewDeleteLoading]);
+
+  useEffect(() => {
     if (routeNoteGroupId && routeNoteGroupId !== selectedNoteGroupId) {
       setSelectedNoteGroupId(routeNoteGroupId);
     }
@@ -2023,6 +2062,64 @@ export default function App() {
     setReadingHoverCardId(studyCardId);
     setReadingPinnedCardId(studyCardId);
     window.setTimeout(() => handleJumpToCleanSource(studyCardId), 0);
+  };
+
+  const handleReadingContentScroll = () => {
+    if (rightRafPendingRef.current) return;
+    rightRafPendingRef.current = true;
+    requestAnimationFrame(() => {
+      rightRafPendingRef.current = false;
+      if (scrollSyncLockRef.current || readingMode !== "study") return;
+      const container = readingContentRef.current;
+      const nav = readingNavRef.current;
+      if (!container || !nav) return;
+      const containerTop = container.getBoundingClientRect().top;
+      const sections = container.querySelectorAll('[id^="reading-study-"]');
+      let activeCardId = "";
+      for (const section of sections) {
+        const top = section.getBoundingClientRect().top - containerTop;
+        if (top <= 40) {
+          activeCardId = section.id.slice("reading-study-".length);
+        } else {
+          if (!activeCardId) activeCardId = section.id.slice("reading-study-".length);
+          break;
+        }
+      }
+      if (!activeCardId) return;
+      const navItem = nav.querySelector(`[data-card-id="${activeCardId}"]`);
+      if (!navItem) return;
+      scrollSyncLockRef.current = true;
+      navItem.scrollIntoView({ block: "nearest" });
+      requestAnimationFrame(() => { scrollSyncLockRef.current = false; });
+    });
+  };
+
+  const handleReadingNavScroll = () => {
+    if (leftRafPendingRef.current) return;
+    leftRafPendingRef.current = true;
+    requestAnimationFrame(() => {
+      leftRafPendingRef.current = false;
+      if (scrollSyncLockRef.current || readingMode !== "study") return;
+      const nav = readingNavRef.current;
+      const container = readingContentRef.current;
+      if (!nav || !container) return;
+      const navTop = nav.getBoundingClientRect().top;
+      const rows = nav.querySelectorAll(".reading-link-row");
+      let activeCardId = "";
+      for (const row of rows) {
+        const top = row.getBoundingClientRect().top - navTop;
+        if (top >= 0) {
+          activeCardId = row.dataset.cardId;
+          break;
+        }
+      }
+      if (!activeCardId) return;
+      const section = container.querySelector(`#reading-study-${activeCardId}`);
+      if (!section) return;
+      scrollSyncLockRef.current = true;
+      section.scrollIntoView({ block: "nearest" });
+      requestAnimationFrame(() => { scrollSyncLockRef.current = false; });
+    });
   };
 
   const handleReadingPin = (event, studyCardId) => {
@@ -2849,14 +2946,8 @@ export default function App() {
     setReviewDeleteStep(0);
   };
 
-  const confirmReviewDelete = async () => {
+  const executeReviewDelete = async () => {
     if (!currentReviewCard || reviewDeleteLoading) {
-      return;
-    }
-    const shouldDelete = window.confirm(
-      "Delete this question card? This cannot be undone."
-    );
-    if (!shouldDelete) {
       return;
     }
     setReviewDeleteLoading(true);
@@ -2904,6 +2995,19 @@ export default function App() {
     } finally {
       setReviewDeleteLoading(false);
     }
+  };
+
+  const confirmReviewDelete = async () => {
+    if (!currentReviewCard || reviewDeleteLoading) {
+      return;
+    }
+    const shouldDelete = window.confirm(
+      "Delete this question card? This cannot be undone."
+    );
+    if (!shouldDelete) {
+      return;
+    }
+    await executeReviewDelete();
   };
 
   const nextReviewCard = () => {
@@ -3793,7 +3897,7 @@ export default function App() {
               <p className="muted">No formatted text available for this note group yet.</p>
             ) : (
               <div className="reading-body">
-                <aside className="reading-nav">
+                <aside className="reading-nav" ref={readingNavRef} onScroll={handleReadingNavScroll}>
                   <p className="label">Study cards</p>
                   {studyCards.map((card, index) => {
                     const isHovered = readingHoverCardId === card.id;
@@ -3801,6 +3905,7 @@ export default function App() {
                     return (
                       <div
                         key={`nav-${card.id}`}
+                        data-card-id={card.id}
                         className={`reading-link-row ${isHovered ? "hovered" : ""} ${
                           isPinned ? "pinned" : ""
                         }`}
@@ -3828,7 +3933,7 @@ export default function App() {
                     );
                   })}
                 </aside>
-                <div className="reading-content" ref={readingContentRef}>
+                <div className="reading-content" ref={readingContentRef} onScroll={handleReadingContentScroll}>
                   {readingMode === "clean" ? (
                     <div className={`clean-source${readingPinnedCardId ? " has-pin" : ""}`}>
                       {renderCleanedMarkdown(effectiveCleanedText, readingHighlights)}
