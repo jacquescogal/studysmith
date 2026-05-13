@@ -1,5 +1,11 @@
 Run Instructions
 
+Docker
+1) cp .env.example .env, then edit .env and set OPENAI_API_KEY
+2) docker compose up --build
+
+Open http://localhost:8000
+
 Backend
 1) cd backend
 2) python -m venv .venv
@@ -16,4 +22,5 @@ Frontend
 Notes
 - The API base URL defaults to http://localhost:8000. Override with VITE_API_BASE_URL if needed.
 - SQLite DB file and ChromaDB embeddings are stored under backend/.
+- Docker stores SQLite and ChromaDB data in the study-data named volume. Reset it with docker compose down -v.
 - If you ran earlier versions, delete backend/study.db and backend/chroma to pick up the new schema.

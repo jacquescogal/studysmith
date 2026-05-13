@@ -66,11 +66,25 @@ Subject
 ## Setup
 
 ### Requirements
-- Python 3.10+
-- Node.js 18+ (build only — not needed at runtime after building)
-- An OpenAI API key
+- Docker path: Docker with Compose, plus an OpenAI API key
+- Manual path: Python 3.10+, Node.js 18+, plus an OpenAI API key
 
-### Install dependencies
+### Fastest path with Docker
+
+For users who already have Docker, this is the simplest setup:
+
+```bash
+cp .env.example .env
+# edit .env and set OPENAI_API_KEY
+
+docker compose up --build
+```
+
+Open [http://localhost:8000](http://localhost:8000).
+
+Docker Compose reads configuration from the repo-root `.env`, then runs the built frontend and API in one container. SQLite and ChromaDB data are stored in the named Docker volume `flashcard_study_study-data`. To reset local Docker data, run `docker compose down -v`.
+
+### Manual install
 
 ```bash
 # Backend
@@ -90,14 +104,14 @@ Create `backend/.env`:
 OPENAI_API_KEY=sk-...
 ```
 
-### Run (production — one process)
+### Run manually (production — one process)
 
 ```bash
 make build      # build the frontend once (or after frontend changes)
 make run-prod   # open http://localhost:8000
 ```
 
-### Run (development — hot reload)
+### Run manually (development — hot reload)
 
 ```bash
 make run        # backend on :8000, frontend dev server on :5173
