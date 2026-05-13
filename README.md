@@ -6,6 +6,64 @@ Paste in raw study text — lecture notes, textbook excerpts, articles — and t
 
 ---
 
+## Setup
+
+### Requirements
+- Docker path: Docker with Compose, plus an OpenAI API key
+- Manual path: Python 3.10+, Node.js 18+, plus an OpenAI API key
+
+### Fastest path with Docker
+
+For users who already have Docker, this is the simplest setup:
+
+```bash
+cp .env.example .env
+# edit .env and set OPENAI_API_KEY
+
+docker compose up --build
+```
+
+Open [http://localhost:8000](http://localhost:8000).
+
+Docker Compose reads configuration from the repo-root `.env`, then runs the built frontend and API in one container. SQLite and ChromaDB data are stored in the named Docker volume `flashcard_study_study-data`. To reset local Docker data, run `docker compose down -v`.
+
+### Manual install
+
+```bash
+# Backend
+cd backend
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cd ..
+
+# Frontend
+cd frontend && npm install && cd ..
+```
+
+Create `backend/.env`:
+
+```env
+OPENAI_API_KEY=sk-...
+```
+
+### Run manually (production — one process)
+
+```bash
+make build      # build the frontend once (or after frontend changes)
+make run-prod   # open http://localhost:8000
+```
+
+### Run manually (development — hot reload)
+
+```bash
+make run        # backend on :8000, frontend dev server on :5173
+```
+
+Open [http://localhost:5173](http://localhost:5173) in dev mode.
+
+---
+
 ## Concept
 
 Content is organised in layers. Each layer narrows the retrieval scope for AI search (RAG), so answers are always grounded in the relevant slice of your material.
@@ -62,62 +120,6 @@ Subject
 - **Manual setup.** Running the app requires setting up a Python venv and Node environment separately (see below).
 
 ---
-
-## Setup
-
-### Requirements
-- Docker path: Docker with Compose, plus an OpenAI API key
-- Manual path: Python 3.10+, Node.js 18+, plus an OpenAI API key
-
-### Fastest path with Docker
-
-For users who already have Docker, this is the simplest setup:
-
-```bash
-cp .env.example .env
-# edit .env and set OPENAI_API_KEY
-
-docker compose up --build
-```
-
-Open [http://localhost:8000](http://localhost:8000).
-
-Docker Compose reads configuration from the repo-root `.env`, then runs the built frontend and API in one container. SQLite and ChromaDB data are stored in the named Docker volume `flashcard_study_study-data`. To reset local Docker data, run `docker compose down -v`.
-
-### Manual install
-
-```bash
-# Backend
-cd backend
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-cd ..
-
-# Frontend
-cd frontend && npm install && cd ..
-```
-
-Create `backend/.env`:
-
-```env
-OPENAI_API_KEY=sk-...
-```
-
-### Run manually (production — one process)
-
-```bash
-make build      # build the frontend once (or after frontend changes)
-make run-prod   # open http://localhost:8000
-```
-
-### Run manually (development — hot reload)
-
-```bash
-make run        # backend on :8000, frontend dev server on :5173
-```
-
-Open [http://localhost:5173](http://localhost:5173) in dev mode.
 
 ### Schema changes
 
