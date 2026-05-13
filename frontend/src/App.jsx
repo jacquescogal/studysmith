@@ -560,10 +560,6 @@ export default function App() {
   const selectedModuleIdRef = useRef(selectedModuleId);
   const activeAutoJobsRef = useRef(new Set());
   const reviewDKeyTimeRef = useRef(0);
-  const readingNavRef = useRef(null);
-  const scrollSyncLockRef = useRef(false);
-  const rightRafPendingRef = useRef(false);
-  const leftRafPendingRef = useRef(false);
   const location = useLocation();
   const navigate = useNavigate();
   const routeMatch = location.pathname.match(/^\/note-groups\/([^/]+)\/(study-cards|question-cards)$/);
@@ -2064,62 +2060,11 @@ export default function App() {
     window.setTimeout(() => handleJumpToCleanSource(studyCardId), 0);
   };
 
-  const handleReadingContentScroll = () => {
-    if (rightRafPendingRef.current) return;
-    rightRafPendingRef.current = true;
-    requestAnimationFrame(() => {
-      rightRafPendingRef.current = false;
-      if (scrollSyncLockRef.current || readingMode !== "study") return;
-      const container = readingContentRef.current;
-      const nav = readingNavRef.current;
-      if (!container || !nav) return;
-      const containerTop = container.getBoundingClientRect().top;
-      const sections = container.querySelectorAll('[id^="reading-study-"]');
-      let activeCardId = "";
-      for (const section of sections) {
-        const top = section.getBoundingClientRect().top - containerTop;
-        if (top <= 40) {
-          activeCardId = section.id.slice("reading-study-".length);
-        } else {
-          if (!activeCardId) activeCardId = section.id.slice("reading-study-".length);
-          break;
-        }
-      }
-      if (!activeCardId) return;
-      const navItem = nav.querySelector(`[data-card-id="${activeCardId}"]`);
-      if (!navItem) return;
-      scrollSyncLockRef.current = true;
-      navItem.scrollIntoView({ block: "nearest" });
-      requestAnimationFrame(() => { scrollSyncLockRef.current = false; });
-    });
-  };
-
-  const handleReadingNavScroll = () => {
-    if (leftRafPendingRef.current) return;
-    leftRafPendingRef.current = true;
-    requestAnimationFrame(() => {
-      leftRafPendingRef.current = false;
-      if (scrollSyncLockRef.current || readingMode !== "study") return;
-      const nav = readingNavRef.current;
-      const container = readingContentRef.current;
-      if (!nav || !container) return;
-      const navTop = nav.getBoundingClientRect().top;
-      const rows = nav.querySelectorAll(".reading-link-row");
-      let activeCardId = "";
-      for (const row of rows) {
-        const top = row.getBoundingClientRect().top - navTop;
-        if (top >= 0) {
-          activeCardId = row.dataset.cardId;
-          break;
-        }
-      }
-      if (!activeCardId) return;
-      const section = container.querySelector(`#reading-study-${activeCardId}`);
-      if (!section) return;
-      scrollSyncLockRef.current = true;
-      section.scrollIntoView({ block: "nearest" });
-      requestAnimationFrame(() => { scrollSyncLockRef.current = false; });
-    });
+  const handleScrollNavToCard = (studyCardId) => {
+    const navEl = document.getElementById(`reading-nav-${studyCardId}`);
+    if (navEl) {
+      navEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
   };
 
   const handleReadingPin = (event, studyCardId) => {
@@ -3897,7 +3842,7 @@ export default function App() {
               <p className="muted">No formatted text available for this note group yet.</p>
             ) : (
               <div className="reading-body">
-                <aside className="reading-nav" ref={readingNavRef} onScroll={handleReadingNavScroll}>
+                <aside className="reading-nav">
                   <p className="label">Study cards</p>
                   {studyCards.map((card, index) => {
                     const isHovered = readingHoverCardId === card.id;
@@ -3905,7 +3850,7 @@ export default function App() {
                     return (
                       <div
                         key={`nav-${card.id}`}
-                        data-card-id={card.id}
+                        id={`reading-nav-${card.id}`}
                         className={`reading-link-row ${isHovered ? "hovered" : ""} ${
                           isPinned ? "pinned" : ""
                         }`}
@@ -3933,7 +3878,7 @@ export default function App() {
                     );
                   })}
                 </aside>
-                <div className="reading-content" ref={readingContentRef} onScroll={handleReadingContentScroll}>
+                <div className="reading-content" ref={readingContentRef}>
                   {readingMode === "clean" ? (
                     <div className={`clean-source${readingPinnedCardId ? " has-pin" : ""}`}>
                       {renderCleanedMarkdown(effectiveCleanedText, readingHighlights)}
@@ -3953,6 +3898,10 @@ export default function App() {
                           }`}
                           onMouseEnter={() => setReadingHoverCardId(section.study_card_id)}
                           onMouseLeave={() => setReadingHoverCardId("")}
+                          onClick={() => {
+                            setReadingPinnedCardId((current) => current === section.study_card_id ? "" : section.study_card_id);
+                            handleScrollNavToCard(section.study_card_id);
+                          }}
                         >
                           <button
                             className="reading-section-toggle"
