@@ -1,0 +1,17 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY in .env or your shell}
+      OPENAI_WEAK_MODEL: ${OPENAI_WEAK_MODEL:-gpt-5.4-mini}
+      OPENAI_STRONG_MODEL: ${OPENAI_STRONG_MODEL:-gpt-5.4}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      DATABASE_URL: sqlite:////data/study.db
+      CHROMA_PATH: /data/chroma
+    volumes:
+      - study-data:/data
+
+volumes:
+  study-data:

@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: run run-backend run-frontend build run-prod stop status open
+.PHONY: run run-backend run-frontend build run-prod docker-up docker-down stop status open
 
 run:
 	@echo "Starting backend (http://localhost:8000) and frontend (http://localhost:5173)."
@@ -18,6 +18,12 @@ build:
 run-prod:
 	@echo "Starting production server at http://localhost:8000"
 	@cd backend && if [ -f .venv/bin/activate ]; then . .venv/bin/activate; fi && uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+docker-up:
+	@docker compose up --build
+
+docker-down:
+	@docker compose down
 
 run-backend:
 	@cd backend && if [ -f .venv/bin/activate ]; then . .venv/bin/activate; fi && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
