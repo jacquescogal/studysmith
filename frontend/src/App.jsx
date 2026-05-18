@@ -37,6 +37,9 @@ import {
   listSubjects,
   listTopicChips,
   retryAutoJob,
+  resolveAppModuleRoute,
+  resolveAppNoteGroupRoute,
+  resolveAppSubjectRoute,
   reviewQuestionCard,
   sendChat,
   sendModuleIntentChat,
@@ -358,11 +361,15 @@ const selectStyles = {
   menuPortal: (base) => ({ ...base, zIndex: 9999 })
 };
 
-const subjectPath = (subjectId) => `/app/subjects/${subjectId}`;
-const modulePath = (moduleId) => `/app/modules/${moduleId}`;
-const createNoteGroupPath = (moduleId) => `/app/modules/${moduleId}/create-note-group`;
-const noteGroupPath = (noteGroupId, panel = "overview") =>
-  `/app/note-groups/${noteGroupId}/${panel}`;
+const subjectPath = (subjectCode) => `/app/subject/${subjectCode}`;
+const modulePath = (subjectCode, moduleCode) =>
+  `/app/subject/${subjectCode}/module/${moduleCode}`;
+const createNoteGroupPath = (subjectCode, moduleCode) =>
+  `/app/subject/${subjectCode}/module/${moduleCode}/create-note-group`;
+const noteGroupPath = (subjectCode, moduleCode, noteGroupCode, panel = "overview") => {
+  const basePath = `/app/subject/${subjectCode}/module/${moduleCode}/note-groups/${noteGroupCode}`;
+  return panel && panel !== "overview" ? `${basePath}/${panel}` : basePath;
+};
 
 const withRouteRestoreTimeout = (promise, label) =>
   Promise.race([
@@ -455,6 +462,7 @@ export default function App() {
   const [noteGroupSearch, setNoteGroupSearch] = useState("");
   const [noteGroupMode, setNoteGroupMode] = useState("overview");
   const [routeRestoreError, setRouteRestoreError] = useState("");
+  const [resolvedRouteContext, setResolvedRouteContext] = useState(null);
   const [formattedSections, setFormattedSections] = useState([]);
   const [cleanedTextMarkdown, setCleanedTextMarkdown] = useState("");
   const [readingMode, setReadingMode] = useState("study");
@@ -577,27 +585,52 @@ export default function App() {
   const reviewDKeyTimeRef = useRef(0);
   const location = useLocation();
   const navigate = useNavigate();
-  const routeMatch = location.pathname.match(
-    /^\/app\/note-groups\/([^/]+)\/(overview|study-cards|question-cards)$/
+  const routeSubjectPageMatch = location.pathname.match(/^\/app\/subject\/([a-zA-Z0-9_-]+)$/);
+  const routeModuleMatch = location.pathname.match(
+    /^\/app\/subject\/([a-zA-Z0-9_-]+)\/module\/([a-zA-Z0-9_-]+)$/
   );
-  const routeSubjectMatch = location.pathname.match(/^\/app\/subjects\/([^/]+)$/);
-  const routeModuleMatch = location.pathname.match(/^\/app\/modules\/([^/]+)$/);
   const routeCreateNoteGroupMatch = location.pathname.match(
-    /^\/app\/modules\/([^/]+)\/create-note-group$/
+    /^\/app\/subject\/([a-zA-Z0-9_-]+)\/module\/([a-zA-Z0-9_-]+)\/create-note-group$/
   );
-  const routeNoteGroupId = routeMatch ? routeMatch[1] : "";
-  const routePanel = routeMatch ? routeMatch[2] : "";
-  const routeSubjectId = routeSubjectMatch ? routeSubjectMatch[1] : "";
-  const routeModuleId = routeModuleMatch
-    ? routeModuleMatch[1]
+  const routeNoteGroupMatch = location.pathname.match(
+    /^\/app\/subject\/([a-zA-Z0-9_-]+)\/module\/([a-zA-Z0-9_-]+)\/note-groups\/([a-zA-Z0-9_-]+)(?:\/(overview|study-cards|question-cards))?$/
+  );
+  const routeSubjectPageCode = routeSubjectPageMatch ? routeSubjectPageMatch[1] : "";
+  const routeSubjectCode = routeSubjectPageMatch
+    ? routeSubjectPageMatch[1]
+    : routeModuleMatch
+      ? routeModuleMatch[1]
+      : routeCreateNoteGroupMatch
+        ? routeCreateNoteGroupMatch[1]
+        : routeNoteGroupMatch
+          ? routeNoteGroupMatch[1]
+          : "";
+  const routeModuleCode = routeModuleMatch
+    ? routeModuleMatch[2]
     : routeCreateNoteGroupMatch
-      ? routeCreateNoteGroupMatch[1]
-      : "";
+      ? routeCreateNoteGroupMatch[2]
+      : routeNoteGroupMatch
+        ? routeNoteGroupMatch[2]
+        : "";
+  const routeNoteGroupCode = routeNoteGroupMatch ? routeNoteGroupMatch[3] : "";
+  const routePanel = routeNoteGroupMatch ? routeNoteGroupMatch[4] || "overview" : "";
   const routeCreateNoteGroup = Boolean(routeCreateNoteGroupMatch);
+  const resolvedRouteMatches =
+    resolvedRouteContext &&
+    resolvedRouteContext.subject_short_code === routeSubjectCode &&
+    (!routeModuleCode || resolvedRouteContext.module_short_code === routeModuleCode) &&
+    (!routeNoteGroupCode ||
+      resolvedRouteContext.note_group_short_code === routeNoteGroupCode);
+  const routeSubjectId = resolvedRouteMatches ? resolvedRouteContext.subject_id : "";
+  const routeModuleId = resolvedRouteMatches ? resolvedRouteContext.module_id || "" : "";
+  const routeNoteGroupId = resolvedRouteMatches
+    ? resolvedRouteContext.note_group_id || ""
+    : "";
   const isStudyPage = routePanel === "study-cards";
   const isQuestionPage = routePanel === "question-cards";
   const hasUnresolvedRouteTarget = Boolean(
-    (routeSubjectId && selectedSubjectId !== routeSubjectId) ||
+    (routeSubjectCode && !resolvedRouteMatches) ||
+      (routeSubjectId && selectedSubjectId !== routeSubjectId) ||
       (routeModuleId && (!selectedSubjectId || selectedModuleId !== routeModuleId)) ||
       (routeNoteGroupId &&
         (!selectedSubjectId ||
@@ -618,6 +651,9 @@ export default function App() {
     () => noteGroups.find((group) => group.id === selectedNoteGroupId),
     [noteGroups, selectedNoteGroupId]
   );
+  const selectedSubjectCode = selectedSubject?.short_code || "";
+  const selectedModuleCode = selectedModule?.short_code || "";
+  const selectedNoteGroupCode = selectedNoteGroup?.short_code || "";
   const focusQuestionCard = useMemo(
     () => questionCards.find((card) => card.id === focusQuestionCardId),
     [questionCards, focusQuestionCardId]
@@ -975,34 +1011,64 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!routeSubjectId) {
-      return;
-    }
-    setRouteRestoreError("");
-    setSelectedSubjectId(routeSubjectId);
-    setSelectedModuleId("");
-    setSelectedNoteGroupId("");
-    setNoteGroupMode("overview");
-    setReviewSummary(null);
-    setIsChatOpen(false);
-    setIsMetadataOpen(false);
-    setIsModuleMetadataOpen(false);
-  }, [routeSubjectId]);
+    setResolvedRouteContext(null);
+  }, [location.pathname]);
 
   useEffect(() => {
-    if (!routeModuleId) {
+    if (!routeSubjectPageCode) {
+      return;
+    }
+    let cancelled = false;
+    setRouteRestoreError("");
+    const restoreSubjectRoute = async () => {
+      try {
+        const context = await withRouteRestoreTimeout(
+          resolveAppSubjectRoute(routeSubjectPageCode),
+          "Subject route restore"
+        );
+        if (cancelled) {
+          return;
+        }
+        setResolvedRouteContext(context);
+        setSelectedSubjectId(context.subject_id);
+        setSelectedModuleId("");
+        setSelectedNoteGroupId("");
+        setNoteGroupMode("overview");
+        setReviewSummary(null);
+        setIsChatOpen(false);
+        setIsMetadataOpen(false);
+        setIsModuleMetadataOpen(false);
+      } catch (error) {
+        if (!cancelled) {
+          setRouteRestoreError(error.message || "Unable to restore subject page");
+          setSidebarError(error.message || "Failed to restore subject page");
+        }
+      }
+    };
+    restoreSubjectRoute();
+    return () => {
+      cancelled = true;
+    };
+  }, [routeSubjectPageCode]);
+
+  useEffect(() => {
+    if (!routeModuleCode || routeNoteGroupCode) {
       return;
     }
     let cancelled = false;
     setRouteRestoreError("");
     const restoreModuleRoute = async () => {
       try {
-        const module = await resolveModuleForRouteRestore(routeModuleId);
+        const context = await withRouteRestoreTimeout(
+          resolveAppModuleRoute(routeSubjectCode, routeModuleCode),
+          "Module route restore"
+        );
         if (cancelled) {
           return;
         }
-        setSelectedSubjectId(module.subject_id);
-        setSelectedModuleId(module.id);
+        setResolvedRouteContext(context);
+        setSelectedSubjectId(context.subject_id);
+        setSelectedModuleId(context.module_id);
         setSelectedNoteGroupId("");
         setNoteGroupMode(routeCreateNoteGroup ? "auto" : "overview");
         setReviewSummary(null);
@@ -1020,7 +1086,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [routeModuleId, routeCreateNoteGroup]);
+  }, [routeSubjectCode, routeModuleCode, routeNoteGroupCode, routeCreateNoteGroup]);
 
   useEffect(() => {
     if (!selectedSubjectId) {
@@ -1571,37 +1637,25 @@ export default function App() {
   }, [isReviewing, reviewSummary, currentReviewCard, reviewStartTime, reviewFeedback, reviewDeleteLoading]);
 
   useEffect(() => {
-    if (!routeNoteGroupId) {
+    if (!routeNoteGroupCode) {
       return;
     }
     let cancelled = false;
     setRouteRestoreError("");
-    setSelectedNoteGroupId(routeNoteGroupId);
     setNoteGroupMode("overview");
     const restoreNoteGroupRoute = async () => {
       try {
-        const data = await withRouteRestoreTimeout(
-          getNoteGroup(routeNoteGroupId),
+        const context = await withRouteRestoreTimeout(
+          resolveAppNoteGroupRoute(routeSubjectCode, routeModuleCode, routeNoteGroupCode),
           "Note group route restore"
         );
         if (cancelled) {
           return;
         }
-        if (data.subject_id && data.module_id) {
-          setSelectedSubjectId(data.subject_id);
-          setSelectedModuleId(data.module_id);
-          return;
-        }
-        if (data.module_id) {
-          const module = await resolveModuleForRouteRestore(data.module_id);
-          if (cancelled) {
-            return;
-          }
-          setSelectedSubjectId(module.subject_id);
-          setSelectedModuleId(module.id);
-          return;
-        }
-        setRouteRestoreError("Note group is missing module context.");
+        setResolvedRouteContext(context);
+        setSelectedSubjectId(context.subject_id);
+        setSelectedModuleId(context.module_id);
+        setSelectedNoteGroupId(context.note_group_id);
       } catch (error) {
         if (!cancelled) {
           setRouteRestoreError(error.message || "Unable to restore note group page");
@@ -1612,7 +1666,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [routeNoteGroupId]);
+  }, [routeSubjectCode, routeModuleCode, routeNoteGroupCode]);
 
   useEffect(() => {
     if (routePanel) {
@@ -1727,6 +1781,7 @@ export default function App() {
 
   const handleSelectSubject = (option) => {
     const nextId = option ? option.value : "";
+    const subject = nextId ? subjects.find((item) => item.id === nextId) : null;
     setSelectedSubjectId(nextId);
     setSelectedModuleId("");
     setSelectedNoteGroupId("");
@@ -1736,11 +1791,12 @@ export default function App() {
     setIsChatOpen(false);
     setIsMetadataOpen(false);
     setIsModuleMetadataOpen(false);
-    navigate(nextId ? subjectPath(nextId) : "/");
+    navigate(subject?.short_code ? subjectPath(subject.short_code) : "/");
   };
 
   const handleSelectModule = (option) => {
     const nextId = option ? option.value : "";
+    const module = nextId ? modules.find((item) => item.id === nextId) : null;
     setSelectedModuleId(nextId);
     setSelectedNoteGroupId("");
     setNoteGroupSearch("");
@@ -1750,10 +1806,10 @@ export default function App() {
     setIsMetadataOpen(false);
     setIsModuleMetadataOpen(false);
     navigate(
-      nextId
-        ? modulePath(nextId)
-        : selectedSubjectId
-          ? subjectPath(selectedSubjectId)
+      nextId && selectedSubjectCode && module?.short_code
+        ? modulePath(selectedSubjectCode, module.short_code)
+        : selectedSubjectCode
+          ? subjectPath(selectedSubjectCode)
           : "/"
     );
   };
@@ -1777,7 +1833,7 @@ export default function App() {
       setIsChatOpen(false);
       setIsMetadataOpen(false);
       setIsModuleMetadataOpen(false);
-      navigate(subjectPath(subject.id));
+      navigate(subject.short_code ? subjectPath(subject.short_code) : "/");
       setNewSubjectTitle("");
       setNewSubjectDescription("");
     } catch (error) {
@@ -1857,7 +1913,7 @@ export default function App() {
       setIsMetadataOpen(false);
       setIsModuleMetadataOpen(false);
       setIsSubjectWizardOpen(false);
-      navigate(subjectPath(created.id));
+      navigate(created.short_code ? subjectPath(created.short_code) : "/");
     } catch (error) {
       setSubjectWizardError(error.message || "Failed to create subject");
     } finally {
@@ -2010,7 +2066,11 @@ export default function App() {
       setIsChatOpen(false);
       setIsMetadataOpen(false);
       setIsModuleMetadataOpen(false);
-      navigate(modulePath(created.id));
+      navigate(
+        selectedSubjectCode && created.short_code
+          ? modulePath(selectedSubjectCode, created.short_code)
+          : "/"
+      );
     } catch (error) {
       setModuleWizardError(error.message || "Failed to create module");
     } finally {
@@ -2042,7 +2102,7 @@ export default function App() {
         setIsChatOpen(false);
         setIsMetadataOpen(false);
         setIsModuleMetadataOpen(false);
-        navigate(selectedSubjectId ? subjectPath(selectedSubjectId) : "/");
+        navigate(selectedSubjectCode ? subjectPath(selectedSubjectCode) : "/");
       }
     } catch (error) {
       setSidebarError(error.message || "Failed to delete module");
@@ -2058,17 +2118,22 @@ export default function App() {
     setIsModuleMetadataOpen(false);
     if (!noteGroupId) {
       navigate(
-        selectedModuleId
-          ? modulePath(selectedModuleId)
-          : selectedSubjectId
-            ? subjectPath(selectedSubjectId)
+        selectedSubjectCode && selectedModuleCode
+          ? modulePath(selectedSubjectCode, selectedModuleCode)
+          : selectedSubjectCode
+            ? subjectPath(selectedSubjectCode)
             : "/"
       );
       return;
     }
+    const noteGroup = noteGroups.find((group) => group.id === noteGroupId);
     const nextPanel =
       panelOverride || (isStudyPage || isQuestionPage ? routePanel : "overview");
-    navigate(noteGroupPath(noteGroupId, nextPanel));
+    navigate(
+      selectedSubjectCode && selectedModuleCode && noteGroup?.short_code
+        ? noteGroupPath(selectedSubjectCode, selectedModuleCode, noteGroup.short_code, nextPanel)
+        : "/"
+    );
   };
 
   const handleJumpToSection = (anchor) => {
@@ -2237,7 +2302,11 @@ export default function App() {
     setIsMetadataOpen(false);
     setIsModuleMetadataOpen(false);
     setAutoCreateError("");
-    navigate(selectedModuleId ? createNoteGroupPath(selectedModuleId) : "/");
+    navigate(
+      selectedSubjectCode && selectedModuleCode
+        ? createNoteGroupPath(selectedSubjectCode, selectedModuleCode)
+        : "/"
+    );
   };
 
   const handleAutoCreateNoteGroup = async () => {
@@ -2276,7 +2345,11 @@ export default function App() {
       setIsModuleMetadataOpen(false);
       trackAutoNoteGroupJob(job.id, selectedModuleId);
       loadAutoJobs(selectedModuleId).catch(() => null);
-      navigate(modulePath(selectedModuleId));
+      navigate(
+        selectedSubjectCode && selectedModuleCode
+          ? modulePath(selectedSubjectCode, selectedModuleCode)
+          : "/"
+      );
       resetSourceState();
     } catch (error) {
       setAutoCreateError(error.message || "Failed to start note group creation.");
@@ -2581,7 +2654,11 @@ export default function App() {
       setReviewSummary(null);
       setIsChatOpen(false);
       setIsMetadataOpen(false);
-      navigate(selectedModuleId ? modulePath(selectedModuleId) : "/");
+      navigate(
+        selectedSubjectCode && selectedModuleCode
+          ? modulePath(selectedSubjectCode, selectedModuleCode)
+          : "/"
+      );
     } catch (error) {
       setSidebarError(error.message || "Failed to delete note group");
     }
@@ -3208,7 +3285,7 @@ export default function App() {
     setIsChatOpen(false);
     setIsMetadataOpen(false);
     setIsModuleMetadataOpen(false);
-    navigate(selectedSubjectId ? subjectPath(selectedSubjectId) : "/");
+    navigate(selectedSubjectCode ? subjectPath(selectedSubjectCode) : "/");
   };
 
   const handleBreadcrumbModule = () => {
@@ -3217,7 +3294,11 @@ export default function App() {
     setIsChatOpen(false);
     setIsMetadataOpen(false);
     setIsModuleMetadataOpen(false);
-    navigate(selectedModuleId ? modulePath(selectedModuleId) : "/");
+    navigate(
+      selectedSubjectCode && selectedModuleCode
+        ? modulePath(selectedSubjectCode, selectedModuleCode)
+        : "/"
+    );
   };
 
   const handleBackToOverview = () => {
@@ -3225,10 +3306,10 @@ export default function App() {
     setIsChatOpen(false);
     setIsMetadataOpen(false);
     navigate(
-      selectedNoteGroupId
-        ? noteGroupPath(selectedNoteGroupId)
-        : selectedModuleId
-          ? modulePath(selectedModuleId)
+      selectedSubjectCode && selectedModuleCode && selectedNoteGroupCode
+        ? noteGroupPath(selectedSubjectCode, selectedModuleCode, selectedNoteGroupCode)
+        : selectedSubjectCode && selectedModuleCode
+          ? modulePath(selectedSubjectCode, selectedModuleCode)
           : "/"
     );
   };
@@ -5345,7 +5426,14 @@ export default function App() {
                             className="button primary"
                             type="button"
                             onClick={() =>
-                              navigate(noteGroupPath(selectedNoteGroupId, "study-cards"))
+                              navigate(
+                                noteGroupPath(
+                                  selectedSubjectCode,
+                                  selectedModuleCode,
+                                  selectedNoteGroupCode,
+                                  "study-cards"
+                                )
+                              )
                             }
                           >
                             View study cards
@@ -5354,7 +5442,14 @@ export default function App() {
                             className="button ghost"
                             type="button"
                             onClick={() =>
-                              navigate(noteGroupPath(selectedNoteGroupId, "question-cards"))
+                              navigate(
+                                noteGroupPath(
+                                  selectedSubjectCode,
+                                  selectedModuleCode,
+                                  selectedNoteGroupCode,
+                                  "question-cards"
+                                )
+                              )
                             }
                           >
                             View question cards

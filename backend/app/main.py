@@ -26,14 +26,25 @@ from app.models import (
     DEFAULT_MODULE_SETTINGS,
     Job,
     Module,
+    ModuleShortCode,
     NoteGroup,
+    NoteGroupShortCode,
     QuestionCard,
     StudyCard,
     StudyCardSourceRange,
     Subject,
+    SubjectShortCode,
     TopicChip,
     note_group_topic_chips,
     study_card_topic_chips,
+)
+from app.short_codes import (
+    ensure_module_short_code,
+    ensure_module_short_codes,
+    ensure_note_group_short_code,
+    ensure_note_group_short_codes,
+    ensure_subject_short_code,
+    ensure_subject_short_codes,
 )
 from app.fsrs_utils import initialize_question_card, review_question_card
 from app.openai_client import (
@@ -45,6 +56,7 @@ from app.openai_client import (
 from app.schemas import (
     ChatRequest,
     ChatResponse,
+    AppRouteContext,
     IntentChatRequest,
     IntentChatResponse,
     JobOut,
@@ -369,6 +381,9 @@ def _delete_note_groups(db: Session, note_group_ids: list[str]) -> list[str]:
             note_group_topic_chips.c.note_group_id.in_(note_group_ids)
         )
     )
+    db.query(NoteGroupShortCode).filter(
+        NoteGroupShortCode.note_group_id.in_(note_group_ids)
+    ).delete(synchronize_session=False)
     db.query(QuestionCard).filter(
         QuestionCard.note_group_id.in_(note_group_ids)
     ).delete(synchronize_session=False)
@@ -421,9 +436,110 @@ def _reset_note_group_for_retry(db: Session, note_group: NoteGroup) -> list[str]
     return study_card_ids
 
 
+def _commit_short_code_backfill(db: Session) -> None:
+    db.commit()
+
+
+def _not_found_route() -> None:
+    raise HTTPException(status_code=404, detail="App route not found")
+
+
+def _get_subject_short_code_record(db: Session, subject_code: str) -> SubjectShortCode:
+    record = (
+        db.query(SubjectShortCode)
+        .filter(SubjectShortCode.short_code == subject_code)
+        .first()
+    )
+    if not record:
+        _not_found_route()
+    return record
+
+
+def _get_module_short_code_record(db: Session, module_code: str) -> ModuleShortCode:
+    record = (
+        db.query(ModuleShortCode)
+        .filter(ModuleShortCode.short_code == module_code)
+        .first()
+    )
+    if not record:
+        _not_found_route()
+    return record
+
+
+def _get_note_group_short_code_record(
+    db: Session, note_group_code: str
+) -> NoteGroupShortCode:
+    record = (
+        db.query(NoteGroupShortCode)
+        .filter(NoteGroupShortCode.short_code == note_group_code)
+        .first()
+    )
+    if not record:
+        _not_found_route()
+    return record
+
+
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
+
+@app.get("/routes/app/subject/{subject_code}", response_model=AppRouteContext)
+def resolve_subject_app_route(subject_code: str, db: Session = Depends(get_db)):
+    subject_record = _get_subject_short_code_record(db, subject_code)
+    return {
+        "subject_id": subject_record.subject_id,
+        "subject_short_code": subject_record.short_code,
+    }
+
+
+@app.get(
+    "/routes/app/subject/{subject_code}/module/{module_code}",
+    response_model=AppRouteContext,
+)
+def resolve_module_app_route(
+    subject_code: str, module_code: str, db: Session = Depends(get_db)
+):
+    subject_record = _get_subject_short_code_record(db, subject_code)
+    module_record = _get_module_short_code_record(db, module_code)
+    module = db.get(Module, module_record.module_id)
+    if not module or module.subject_id != subject_record.subject_id:
+        _not_found_route()
+    return {
+        "subject_id": subject_record.subject_id,
+        "subject_short_code": subject_record.short_code,
+        "module_id": module_record.module_id,
+        "module_short_code": module_record.short_code,
+    }
+
+
+@app.get(
+    "/routes/app/subject/{subject_code}/module/{module_code}/note-groups/{note_group_code}",
+    response_model=AppRouteContext,
+)
+def resolve_note_group_app_route(
+    subject_code: str,
+    module_code: str,
+    note_group_code: str,
+    db: Session = Depends(get_db),
+):
+    subject_record = _get_subject_short_code_record(db, subject_code)
+    module_record = _get_module_short_code_record(db, module_code)
+    module = db.get(Module, module_record.module_id)
+    if not module or module.subject_id != subject_record.subject_id:
+        _not_found_route()
+    note_group_record = _get_note_group_short_code_record(db, note_group_code)
+    note_group = db.get(NoteGroup, note_group_record.note_group_id)
+    if not note_group or note_group.module_id != module_record.module_id:
+        _not_found_route()
+    return {
+        "subject_id": subject_record.subject_id,
+        "subject_short_code": subject_record.short_code,
+        "module_id": module_record.module_id,
+        "module_short_code": module_record.short_code,
+        "note_group_id": note_group_record.note_group_id,
+        "note_group_short_code": note_group_record.short_code,
+    }
 
 
 @app.post("/modules/intent-chat", response_model=IntentChatResponse)
@@ -448,7 +564,10 @@ def module_intent_chat(payload: IntentChatRequest):
 
 @app.get("/subjects", response_model=list[SubjectOut])
 def list_subjects(db: Session = Depends(get_db)):
-    return db.query(Subject).order_by(Subject.created_at.desc()).all()
+    subjects = db.query(Subject).order_by(Subject.created_at.desc()).all()
+    ensure_subject_short_codes(db, subjects)
+    db.commit()
+    return subjects
 
 
 @app.post("/subjects", response_model=SubjectOut)
@@ -464,6 +583,8 @@ def create_subject(payload: SubjectCreate, db: Session = Depends(get_db)):
     )
     db.add(subject)
     try:
+        db.flush()
+        ensure_subject_short_code(db, subject)
         db.commit()
         db.refresh(subject)
         return subject
@@ -495,6 +616,8 @@ def get_subject(subject_id: str, db: Session = Depends(get_db)):
     subject = db.get(Subject, subject_id)
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
+    ensure_subject_short_code(db, subject)
+    db.commit()
     return subject
 
 
@@ -525,6 +648,8 @@ def update_subject(subject_id: str, payload: SubjectUpdate, db: Session = Depend
     try:
         db.commit()
         db.refresh(subject)
+        ensure_subject_short_code(db, subject)
+        db.commit()
         return subject
     except IntegrityError:
         db.rollback()
@@ -548,10 +673,16 @@ def delete_subject(subject_id: str, db: Session = Depends(get_db)):
 
     study_card_ids = _delete_note_groups(db, note_group_ids)
     if module_ids:
+        db.query(ModuleShortCode).filter(ModuleShortCode.module_id.in_(module_ids)).delete(
+            synchronize_session=False
+        )
         db.query(TopicChip).filter(TopicChip.module_id.in_(module_ids)).delete(
             synchronize_session=False
         )
         db.query(Module).filter(Module.id.in_(module_ids)).delete(synchronize_session=False)
+    db.query(SubjectShortCode).filter(SubjectShortCode.subject_id == subject_id).delete(
+        synchronize_session=False
+    )
     db.delete(subject)
     db.commit()
 
@@ -567,12 +698,15 @@ def list_subject_modules(subject_id: str, db: Session = Depends(get_db)):
     subject = db.get(Subject, subject_id)
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
-    return (
+    modules = (
         db.query(Module)
         .filter(Module.subject_id == subject_id)
         .order_by(Module.created_at.desc())
         .all()
     )
+    ensure_module_short_codes(db, modules)
+    db.commit()
+    return modules
 
 
 @app.post("/subjects/{subject_id}/modules", response_model=ModuleOut)
@@ -595,6 +729,8 @@ def create_subject_module(
     )
     db.add(module)
     try:
+        db.flush()
+        ensure_module_short_code(db, module)
         db.commit()
         db.refresh(module)
         return module
@@ -605,7 +741,10 @@ def create_subject_module(
 
 @app.get("/modules", response_model=list[ModuleOut])
 def list_modules(db: Session = Depends(get_db)):
-    return db.query(Module).order_by(Module.created_at.desc()).all()
+    modules = db.query(Module).order_by(Module.created_at.desc()).all()
+    ensure_module_short_codes(db, modules)
+    db.commit()
+    return modules
 
 
 @app.post("/modules", response_model=ModuleOut)
@@ -620,6 +759,8 @@ def get_module(module_id: str, db: Session = Depends(get_db)):
     module = db.get(Module, module_id)
     if not module:
         raise HTTPException(status_code=404, detail="Module not found")
+    ensure_module_short_code(db, module)
+    db.commit()
     return module
 
 
@@ -686,6 +827,8 @@ def update_module(module_id: str, payload: ModuleUpdate, db: Session = Depends(g
     try:
         db.commit()
         db.refresh(module)
+        ensure_module_short_code(db, module)
+        db.commit()
         return module
     except IntegrityError:
         db.rollback()
@@ -702,6 +845,9 @@ def delete_module(module_id: str, db: Session = Depends(get_db)):
     note_group_ids = [row[0] for row in note_group_rows]
 
     study_card_ids = _delete_note_groups(db, note_group_ids)
+    db.query(ModuleShortCode).filter(ModuleShortCode.module_id == module_id).delete(
+        synchronize_session=False
+    )
     db.query(TopicChip).filter(TopicChip.module_id == module_id).delete(
         synchronize_session=False
     )
@@ -736,7 +882,7 @@ def list_note_groups(
             )
 
     sort_nulls_last = case((NoteGroup.sort_order.is_(None), 1), else_=0)
-    return (
+    note_groups = (
         query.order_by(
             sort_nulls_last,
             NoteGroup.sort_order.asc(),
@@ -744,6 +890,9 @@ def list_note_groups(
         )
         .all()
     )
+    ensure_note_group_short_codes(db, note_groups)
+    db.commit()
+    return note_groups
 
 
 @app.get("/modules/{module_id}/overview", response_model=ModuleOverviewResponse)
@@ -767,6 +916,8 @@ def get_module_overview(
         )
         .all()
     )
+    ensure_note_group_short_codes(db, note_groups)
+    db.commit()
     note_group_ids = [group.id for group in note_groups]
     now = datetime.now(timezone.utc)
 
@@ -952,6 +1103,7 @@ def auto_create_note_group(
     )
     db.add(note_group)
     db.flush()
+    ensure_note_group_short_code(db, note_group)
     job = Job(
         type=JOB_TYPE_NOTE_GROUP_AUTO_GENERATION,
         note_group_id=note_group.id,
@@ -982,6 +1134,8 @@ def update_note_group_title(
     note_group.suggested_titles_json = None
     db.commit()
     db.refresh(note_group)
+    ensure_note_group_short_code(db, note_group)
+    db.commit()
     return note_group
 
 
@@ -1067,6 +1221,8 @@ def get_note_group(note_group_id: str, db: Session = Depends(get_db)):
     )
     if not note_group:
         raise HTTPException(status_code=404, detail="Note group not found")
+    ensure_note_group_short_code(db, note_group)
+    db.commit()
     return note_group
 
 

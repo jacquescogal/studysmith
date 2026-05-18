@@ -32,6 +32,20 @@ export function listSubjects() {
   return request("/subjects");
 }
 
+export function resolveAppSubjectRoute(subjectCode) {
+  return request(`/routes/app/subject/${subjectCode}`);
+}
+
+export function resolveAppModuleRoute(subjectCode, moduleCode) {
+  return request(`/routes/app/subject/${subjectCode}/module/${moduleCode}`);
+}
+
+export function resolveAppNoteGroupRoute(subjectCode, moduleCode, noteGroupCode) {
+  return request(
+    `/routes/app/subject/${subjectCode}/module/${moduleCode}/note-groups/${noteGroupCode}`
+  );
+}
+
 export function createSubject(payload) {
   return request("/subjects", {
     method: "POST",
