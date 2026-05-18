@@ -292,6 +292,12 @@ h1 {
   font-size: 1.2rem;
 }
 
+#create-note-group {
+  position: relative;
+  z-index: 5;
+  overflow: visible;
+}
+
 .subject-page {
   border: 1px solid rgba(209, 96, 61, 0.35);
   background: linear-gradient(135deg, rgba(248, 212, 178, 0.35), #fffaf3 55%);
@@ -640,6 +646,73 @@ h1 {
 label {
   font-size: 0.9rem;
   color: var(--muted);
+}
+
+.label-with-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.help-tooltip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: help;
+}
+
+.tooltip-content {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  z-index: 10;
+  width: min(320px, 80vw);
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 16px 32px rgba(31, 27, 22, 0.14);
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 500;
+  line-height: 1.4;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.help-tooltip:hover .tooltip-content,
+.help-tooltip:focus .tooltip-content {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.optional-parameters {
+  margin: 0 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(31, 27, 22, 0.02);
+}
+
+.optional-parameters summary {
+  cursor: pointer;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.optional-parameters .field {
+  margin-top: 12px;
+  margin-bottom: 0;
 }
 
 input,

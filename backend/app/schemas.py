@@ -57,11 +57,6 @@ class ModuleOut(BaseModel):
         from_attributes = True
 
 
-class NoteGroupCreate(BaseModel):
-    raw_text: str
-    title: Optional[str] = None
-
-
 class NoteGroupSectionOut(BaseModel):
     study_card_id: str
     title: str
@@ -170,6 +165,30 @@ class QuestionTimelineResponse(BaseModel):
     timeline: QuestionTimelineOut
     question_count: int
     stale_count: int
+
+
+class ModuleOverviewStatsOut(BaseModel):
+    study_count: int
+    question_count: int
+    due_count: int
+    stale_count: int
+
+
+class NoteGroupOverviewOut(BaseModel):
+    id: str
+    title: Optional[str] = None
+    study_count: int
+    question_count: int
+    due_count: int
+    stale_count: int
+    timeline: QuestionTimelineOut
+
+
+class ModuleOverviewResponse(BaseModel):
+    note_groups: List[NoteGroupOut]
+    note_group_stats: List[NoteGroupOverviewOut]
+    module_stats: ModuleOverviewStatsOut
+    module_timeline: QuestionTimelineOut
 
 
 class ChatRequest(BaseModel):
@@ -291,25 +310,6 @@ class NoteGroupTitleUpdate(BaseModel):
     title: str
 
 
-class NoteGroupTitleSuggestionsRequest(BaseModel):
-    module_id: str
-    raw_text: str
-
-
-class NoteGroupTitleSuggestionsResponse(BaseModel):
-    titles: List[str]
-
-
-class NoteGroupTopicChipSuggestRequest(BaseModel):
-    module_id: str
-    raw_text: str
-
-
-class NoteGroupTopicChipSuggestResponse(BaseModel):
-    suggested_existing_ids: List[str]
-    new_chips: List[str]
-
-
 class NoteGroupSourceCheckRequest(BaseModel):
     source: str
 
@@ -327,21 +327,6 @@ class NoteGroupSourceMatch(BaseModel):
 class NoteGroupSourceCheckResponse(BaseModel):
     normalized: str
     duplicates: List[NoteGroupSourceMatch] = []
-
-
-class NoteGroupFinalizeRequest(BaseModel):
-    module_id: str
-    raw_text: str
-    title: str
-    source: str
-    additional_generation_instructions: Optional[str] = None
-    existing_chip_ids: List[str] = []
-    new_chip_labels: List[str] = []
-
-
-class NoteGroupFinalizeResponse(BaseModel):
-    note_group: NoteGroupOut
-    study_cards: List[StudyCardOut]
 
 
 class NoteGroupAutoRequest(BaseModel):

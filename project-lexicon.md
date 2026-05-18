@@ -61,16 +61,18 @@ The actual study material pasted or supplied by the user. Raw text is the input
 for cleaning, title suggestion, topic chip suggestion, study card generation,
 and question card generation.
 
-Raw text should not be treated as a citation label. Use `Source` for origin or
-provenance labels.
+Raw text should not be treated as an identifier. Use `Unique ID` for duplicate
+detection and note group provenance labels.
 
-### Source
+### Unique ID
 
-The user-provided citation or origin label for a note group. It is used for
-provenance and duplicate detection.
+The user-provided or generated identifier for a note group. It is used for
+duplicate detection and can also carry provenance when the user supplies a
+meaningful citation or origin label.
 
-`Source` is separate from `Raw Text`: source names where the material came from;
-raw text is the material itself.
+`Unique ID` is separate from `Raw Text`: unique ID identifies the note group;
+raw text is the study material itself. The backend still stores this value in
+the legacy `source` field.
 
 ### Cleaned Text
 
@@ -128,30 +130,15 @@ reusable labels rather than highly specific source titles.
 
 ## Generation Workflows
 
-### Wizard Workflow
-
-The user-guided note group generation path. The user supplies source and raw
-text, reviews or chooses title suggestions, selects existing or new topic chips,
-and then finalizes the note group to generate study cards.
-
-Use this term only for note group generation unless the workflow is explicitly
-expanded.
-
 ### Auto Workflow
 
-The background note group generation path. The user supplies source and raw
-text, and the system chooses a title, attaches or creates topic chips, generates
-study cards, and generates question cards with minimal intervention.
+The canonical note group generation path. The user supplies or generates a
+unique ID, supplies raw text, then the system chooses a title, attaches or
+creates topic chips, generates study cards, and generates question cards in the
+background.
 
-Use this term only for note group generation unless the workflow is explicitly
-expanded.
-
-### Finalize Note Group
-
-The commit point in the wizard workflow. Finalizing persists the selected
-source, raw text, title, and topic chip choices, then generates study cards.
-
-This does not mean a general "mark finished" state.
+The user-facing action should be `Create note group`; `Auto Workflow` names the
+underlying generation behavior.
 
 ### Additional Generation Instructions
 
@@ -250,14 +237,24 @@ references.
 
 ## Implementation Terms
 
+### Module Overview
+
+A compound read model for the module overview screen. It returns the module's
+note groups, note group stats, module stats, and module-level question timeline
+in one response.
+
+Module overview is an API and UI aggregation boundary. It does not create a new
+domain hierarchy level and should not replace `Module`, `Note Group`, `Study
+Card`, `Question Card`, or `Topic Chip` as model terms.
+
 ### Job
 
 A backend-tracked background operation for AI generation. Jobs have types and
-statuses and are used to track work such as auto note group generation or
+statuses and are used to track work such as note group generation or
 question card generation.
 
 `Job` is primarily an implementation term. Prefer user-facing workflow language
-such as "auto workflow", "generation", "queued", or "retry" in the UI unless the
+such as "create", "generation", "queued", or "retry" in the UI unless the
 technical object is specifically being exposed.
 
 ### Job Status
@@ -288,7 +285,8 @@ This is an infrastructure term, not product vocabulary.
 - Use `Question Card` for assessment and spaced repetition.
 - Use `Topic Chip` for reusable module-owned tags; do not call chips categories,
   folders, groups, or modules.
-- Use `Source` for origin labels and `Raw Text` for pasted material.
+- Use `Unique ID` for note group identifiers and duplicate detection; use `Raw
+  Text` for pasted material.
 - Use `Cleaned Text` for source-preserving markdown and `Formatted Text` for
   study-card-aligned display output.
 - Use `Tutor Chat` for retrieval-grounded study answers and `Intent Chat` for

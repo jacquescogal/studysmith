@@ -1,5 +1,6 @@
 import json
 import os
+from collections import Counter, defaultdict
 from datetime import datetime, timezone, timedelta
 
 from typing import Optional
@@ -17,10 +18,8 @@ from sqlalchemy.exc import IntegrityError
 from app.chroma import get_collection
 from app.auto_queue import enqueue_auto_job, remove_auto_job, resume_auto_jobs, start_auto_worker
 from app.jobs import (
-    JOB_TYPE_NOTE_GROUP_GENERATION,
     JOB_TYPE_NOTE_GROUP_QUESTION_GENERATION,
     JOB_TYPE_NOTE_GROUP_AUTO_GENERATION,
-    run_note_group_generation,
     run_question_card_generation,
 )
 from app.models import (
@@ -40,16 +39,9 @@ from app.fsrs_utils import initialize_question_card, review_question_card
 from app.openai_client import (
     embed_texts,
     generate_chat_response,
-    generate_cleaned_text_markdown,
-    generate_formatted_sections,
     generate_module_intent_response,
-    generate_note_group_title_suggestions,
-    generate_study_cards_with_context,
     generate_subject_intent_response,
-    suggest_topic_chips,
 )
-from app.source_ranges import find_evidence_ranges
-from app.text_formatter import build_formatted_sections, sections_to_markdown
 from app.schemas import (
     ChatRequest,
     ChatResponse,
@@ -58,19 +50,13 @@ from app.schemas import (
     JobOut,
     ModuleCreate,
     ModuleOut,
+    ModuleOverviewResponse,
     ModuleUpdate,
-    NoteGroupCreate,
     NoteGroupOut,
-    NoteGroupFinalizeRequest,
-    NoteGroupFinalizeResponse,
     NoteGroupAutoRequest,
     NoteGroupSourceCheckRequest,
     NoteGroupSourceCheckResponse,
-    NoteGroupTitleSuggestionsRequest,
-    NoteGroupTitleSuggestionsResponse,
     NoteGroupTitleUpdate,
-    NoteGroupTopicChipSuggestRequest,
-    NoteGroupTopicChipSuggestResponse,
     NoteGroupOrderUpdate,
     QuestionCardCreate,
     QuestionCardGenerate,
@@ -335,32 +321,6 @@ def _upsert_study_card_embedding(card: StudyCard, module_id: str) -> None:
             }
         ],
     )
-
-
-def _store_study_card_source_ranges(
-    db: Session,
-    study_card: StudyCard,
-    cleaned_text_markdown: Optional[str],
-    evidence_snippets,
-) -> None:
-    if not cleaned_text_markdown:
-        return
-    if not isinstance(evidence_snippets, list):
-        return
-    db.query(StudyCardSourceRange).filter(
-        StudyCardSourceRange.study_card_id == study_card.id
-    ).delete(synchronize_session=False)
-    for start_index, end_index in find_evidence_ranges(
-        cleaned_text_markdown, evidence_snippets
-    ):
-        db.add(
-            StudyCardSourceRange(
-                note_group_id=study_card.note_group_id,
-                study_card_id=study_card.id,
-                start_index=start_index,
-                end_index=end_index,
-            )
-        )
 
 
 def _next_note_group_sort_order(db: Session, module_id: str) -> Optional[int]:
@@ -747,13 +707,6 @@ def delete_module(module_id: str, db: Session = Depends(get_db)):
     return {"deleted": True}
 
 
-@app.post("/modules/{module_id}/note-groups", response_model=NoteGroupOut)
-def create_note_group(module_id: str, payload: NoteGroupCreate, db: Session = Depends(get_db)):
-    raise HTTPException(
-        status_code=400, detail="Use /note-groups/finalize for note group creation"
-    )
-
-
 @app.get("/modules/{module_id}/note-groups", response_model=list[NoteGroupOut])
 def list_note_groups(
     module_id: str,
@@ -785,6 +738,102 @@ def list_note_groups(
     )
 
 
+@app.get("/modules/{module_id}/overview", response_model=ModuleOverviewResponse)
+def get_module_overview(
+    module_id: str,
+    chip_ids: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    module = db.get(Module, module_id)
+    if not module:
+        raise HTTPException(status_code=404, detail="Module not found")
+
+    sort_nulls_last = case((NoteGroup.sort_order.is_(None), 1), else_=0)
+    note_groups = (
+        db.query(NoteGroup)
+        .filter(NoteGroup.module_id == module_id)
+        .order_by(
+            sort_nulls_last,
+            NoteGroup.sort_order.asc(),
+            NoteGroup.created_at.asc(),
+        )
+        .all()
+    )
+    note_group_ids = [group.id for group in note_groups]
+    now = datetime.now(timezone.utc)
+
+    study_count_by_group: Counter[str] = Counter()
+    cards_by_group: defaultdict[str, list[QuestionCard]] = defaultdict(list)
+    filtered_cards: list[QuestionCard] = []
+
+    if note_group_ids:
+        chip_id_list = _parse_chip_ids(chip_ids)
+        study_card_query = db.query(StudyCard.id, StudyCard.note_group_id).filter(
+            StudyCard.note_group_id.in_(note_group_ids)
+        )
+        if chip_id_list:
+            study_card_query = (
+                study_card_query.join(
+                    study_card_topic_chips,
+                    StudyCard.id == study_card_topic_chips.c.study_card_id,
+                )
+                .filter(study_card_topic_chips.c.chip_id.in_(chip_id_list))
+                .distinct()
+            )
+        study_card_rows = study_card_query.all()
+        study_count_by_group = Counter(row.note_group_id for row in study_card_rows)
+        allowed_study_ids = {row.id for row in study_card_rows} if chip_id_list else None
+
+        question_cards = (
+            db.query(QuestionCard)
+            .filter(QuestionCard.note_group_id.in_(note_group_ids))
+            .order_by(QuestionCard.due_at.asc())
+            .all()
+        )
+        if allowed_study_ids is not None:
+            question_cards = [
+                card
+                for card in question_cards
+                if any(ref in allowed_study_ids for ref in _question_card_refs(card))
+            ]
+        filtered_cards = question_cards
+        for card in filtered_cards:
+            cards_by_group[card.note_group_id].append(card)
+
+    note_group_stats = []
+    module_stats = {
+        "study_count": 0,
+        "question_count": 0,
+        "due_count": 0,
+        "stale_count": 0,
+    }
+    for group in note_groups:
+        group_cards = cards_by_group[group.id]
+        timeline = _build_question_timeline(group_cards, now)
+        stale_count = sum(1 for card in group_cards if card.stale)
+        stats = {
+            "id": group.id,
+            "title": group.title,
+            "study_count": study_count_by_group[group.id],
+            "question_count": len(group_cards),
+            "due_count": timeline["due"],
+            "stale_count": stale_count,
+            "timeline": timeline,
+        }
+        note_group_stats.append(stats)
+        module_stats["study_count"] += stats["study_count"]
+        module_stats["question_count"] += stats["question_count"]
+        module_stats["due_count"] += stats["due_count"]
+        module_stats["stale_count"] += stats["stale_count"]
+
+    return {
+        "note_groups": note_groups,
+        "note_group_stats": note_group_stats,
+        "module_stats": module_stats,
+        "module_timeline": _build_question_timeline(filtered_cards, now),
+    }
+
+
 @app.post("/note-groups/source-check", response_model=NoteGroupSourceCheckResponse)
 def check_note_group_source(
     payload: NoteGroupSourceCheckRequest,
@@ -792,7 +841,7 @@ def check_note_group_source(
 ):
     normalized = _normalize_source_text(payload.source or "")
     if not normalized:
-        raise HTTPException(status_code=400, detail="Source cannot be empty")
+        raise HTTPException(status_code=400, detail="Unique ID cannot be empty")
     matches = (
         db.query(NoteGroup)
         .filter(NoteGroup.source_normalized == normalized)
@@ -855,7 +904,7 @@ def auto_create_note_group(
     source_raw = payload.source.strip()
     source_normalized = _normalize_source_text(source_raw)
     if not source_normalized:
-        raise HTTPException(status_code=400, detail="Source cannot be empty")
+        raise HTTPException(status_code=400, detail="Unique ID cannot be empty")
 
     if payload.additional_generation_instructions is None:
         additional_instructions = ""
@@ -907,242 +956,6 @@ def auto_create_note_group(
 
     enqueue_auto_job(job.id)
     return job
-
-
-@app.post(
-    "/note-groups/title-suggestions",
-    response_model=NoteGroupTitleSuggestionsResponse,
-)
-def note_group_title_suggestions(
-    payload: NoteGroupTitleSuggestionsRequest,
-    db: Session = Depends(get_db),
-):
-    module = db.get(Module, payload.module_id)
-    if not module:
-        raise HTTPException(status_code=404, detail="Module not found")
-    if not payload.raw_text.strip():
-        raise HTTPException(status_code=400, detail="Raw text cannot be empty")
-    titles = generate_note_group_title_suggestions(module.title, payload.raw_text)
-    return {"titles": titles}
-
-
-@app.post(
-    "/note-groups/topic-chips/suggest",
-    response_model=NoteGroupTopicChipSuggestResponse,
-)
-def note_group_topic_chip_suggestions(
-    payload: NoteGroupTopicChipSuggestRequest,
-    db: Session = Depends(get_db),
-):
-    module = db.get(Module, payload.module_id)
-    if not module:
-        raise HTTPException(status_code=404, detail="Module not found")
-    if not payload.raw_text.strip():
-        raise HTTPException(status_code=400, detail="Raw text cannot be empty")
-    chips = (
-        db.query(TopicChip)
-        .filter(TopicChip.module_id == payload.module_id)
-        .order_by(TopicChip.label.asc())
-        .all()
-    )
-    module_chip_pool = [{"chipId": chip.id, "label": chip.label} for chip in chips]
-    subject = module.subject
-    suggestion = suggest_topic_chips(
-        module_chip_pool,
-        payload.raw_text,
-        module_goal=module.goal,
-        module_scope=module.scope,
-        subject_title=subject.title,
-        subject_goal=subject.goal,
-        subject_scope=subject.scope,
-    )
-    attach_ids = [
-        chip_id
-        for chip_id in suggestion.get("attach_chip_ids", [])
-        if any(chip.id == chip_id for chip in chips)
-    ]
-    new_chips = [
-        label.strip()
-        for label in suggestion.get("new_chips", [])
-        if isinstance(label, str) and label.strip()
-    ]
-    return {"suggested_existing_ids": attach_ids, "new_chips": new_chips}
-
-
-@app.post("/note-groups/finalize", response_model=NoteGroupFinalizeResponse)
-def finalize_note_group(
-    payload: NoteGroupFinalizeRequest,
-    db: Session = Depends(get_db),
-):
-    module = db.get(Module, payload.module_id)
-    if not module:
-        raise HTTPException(status_code=404, detail="Module not found")
-    subject = module.subject
-    raw_text = payload.raw_text.strip()
-    title = payload.title.strip()
-    if not raw_text:
-        raise HTTPException(status_code=400, detail="Raw text cannot be empty")
-    if not title:
-        raise HTTPException(status_code=400, detail="Title cannot be empty")
-    source_raw = payload.source.strip()
-    source_normalized = _normalize_source_text(source_raw)
-    if not source_normalized:
-        raise HTTPException(status_code=400, detail="Source cannot be empty")
-    additional_instructions = payload.additional_generation_instructions or ""
-    if not isinstance(additional_instructions, str):
-        raise HTTPException(
-            status_code=400,
-            detail="Additional generation instructions must be text",
-        )
-    additional_instructions = additional_instructions.strip()
-    _validate_additional_instructions(additional_instructions)
-
-    existing_chip_ids = payload.existing_chip_ids or []
-    new_chip_labels = payload.new_chip_labels or []
-
-    chips_in_module = (
-        db.query(TopicChip)
-        .filter(TopicChip.module_id == payload.module_id)
-        .all()
-    )
-    chip_by_id = {chip.id: chip for chip in chips_in_module}
-    chip_by_label = {chip.label.strip().lower(): chip for chip in chips_in_module}
-
-    selected_chips: list[TopicChip] = []
-    for chip_id in existing_chip_ids:
-        chip = chip_by_id.get(chip_id)
-        if chip and chip not in selected_chips:
-            selected_chips.append(chip)
-
-    for label in new_chip_labels:
-        normalized = label.strip()
-        if not normalized:
-            continue
-        key = normalized.lower()
-        chip = chip_by_label.get(key)
-        if not chip:
-            chip = TopicChip(module_id=payload.module_id, label=normalized)
-            db.add(chip)
-            db.flush()
-            chip_by_label[key] = chip
-        if chip not in selected_chips:
-            selected_chips.append(chip)
-
-    chip_labels = [chip.label for chip in selected_chips]
-    cleaned_text_markdown = generate_cleaned_text_markdown(raw_text)
-    study_card_payloads = generate_study_cards_with_context(
-        module_title=module.title,
-        module_description=module.description,
-        note_group_title=title,
-        raw_text=cleaned_text_markdown,
-        chip_labels=chip_labels,
-        additional_instructions=additional_instructions,
-        module_goal=module.goal,
-        module_scope=module.scope,
-        subject_title=subject.title,
-        subject_goal=subject.goal,
-        subject_scope=subject.scope,
-    )
-    if not study_card_payloads:
-        raise HTTPException(status_code=422, detail="No study cards generated")
-
-    note_group = NoteGroup(
-        module_id=payload.module_id,
-        title=title,
-        source=source_raw,
-        source_normalized=source_normalized,
-        raw_text=raw_text,
-        cleaned_text_markdown=cleaned_text_markdown,
-        additional_generation_instructions=additional_instructions,
-        generation_status="complete",
-        sort_order=_next_note_group_sort_order(db, payload.module_id),
-    )
-    note_group.topic_chips = selected_chips
-    db.add(note_group)
-
-    study_cards: list[StudyCard] = []
-    chip_label_map = {chip.label.strip().lower(): chip for chip in selected_chips}
-    ids: list[str] = []
-    collection = get_collection()
-
-    try:
-        db.flush()
-        card_payload_pairs = []
-        for payload_card in study_card_payloads:
-            content = (payload_card.get("content") or "").strip()
-            if not content:
-                continue
-            card_title = payload_card.get("title")
-            card = StudyCard(
-                note_group_id=note_group.id,
-                title=card_title,
-                content=content,
-            )
-            raw_chips = payload_card.get("topic_chips") or []
-            if isinstance(raw_chips, list):
-                for chip_label in raw_chips:
-                    if not isinstance(chip_label, str):
-                        continue
-                    chip = chip_label_map.get(chip_label.strip().lower())
-                    if chip and chip not in card.topic_chips:
-                        card.topic_chips.append(chip)
-            db.add(card)
-            study_cards.append(card)
-            card_payload_pairs.append((card, payload_card))
-
-        if not study_cards:
-            raise HTTPException(status_code=422, detail="Generated study cards were empty")
-
-        db.flush()
-        for card, payload_card in card_payload_pairs:
-            _store_study_card_source_ranges(
-                db,
-                card,
-                cleaned_text_markdown,
-                payload_card.get("evidence_snippets"),
-            )
-        study_card_context = [
-            {"id": card.id, "title": card.title, "content": card.content}
-            for card in study_cards
-        ]
-        raw_sections = []
-        try:
-            raw_sections = generate_formatted_sections(raw_text, study_card_context)
-        except Exception:
-            raw_sections = []
-        formatted_sections = build_formatted_sections(raw_sections, study_card_context)
-        note_group.formatted_sections_json = json.dumps(formatted_sections)
-        note_group.formatted_text = sections_to_markdown(formatted_sections)
-
-        embeddings = embed_texts([card.content for card in study_cards])
-        ids = [card.id for card in study_cards]
-        collection.upsert(
-            ids=ids,
-            embeddings=embeddings,
-            documents=[card.content for card in study_cards],
-            metadatas=[
-                {
-                    "note_group_id": note_group.id,
-                    "module_id": module.id,
-                    "chip_ids": ",".join([chip.id for chip in card.topic_chips]),
-                }
-                for card in study_cards
-            ],
-        )
-        db.commit()
-        db.refresh(note_group)
-    except HTTPException:
-        db.rollback()
-        if ids:
-            collection.delete(ids=ids)
-        raise
-    except Exception as exc:
-        db.rollback()
-        if ids:
-            collection.delete(ids=ids)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    return {"note_group": note_group, "study_cards": study_cards}
 
 
 @app.put("/note-groups/{note_group_id}/title", response_model=NoteGroupOut)
@@ -1258,27 +1071,6 @@ def delete_note_group(note_group_id: str, db: Session = Depends(get_db)):
         collection.delete(ids=study_card_ids)
 
     return {"deleted": True}
-
-
-@app.post("/note-groups/{note_group_id}/generate", response_model=JobOut)
-def generate_note_group(
-    note_group_id: str,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-):
-    note_group = db.get(NoteGroup, note_group_id)
-    if not note_group:
-        raise HTTPException(status_code=404, detail="Note group not found")
-
-    note_group.generation_status = "queued"
-    job = Job(type=JOB_TYPE_NOTE_GROUP_GENERATION, note_group_id=note_group_id)
-    db.add(job)
-    db.commit()
-    db.refresh(job)
-
-    background_tasks.add_task(run_note_group_generation, job.id)
-
-    return job
 
 
 @app.get("/jobs/{job_id}", response_model=JobOut)

@@ -83,8 +83,7 @@ Subject
 ## Features
 
 ### Card Creation
-- **Wizard workflow** — paste text, get AI title suggestions, pick topic chips, review generated study cards before committing
-- **Auto workflow** — paste text and walk away; study cards and question cards are generated as a background job, with retry support
+- **Create note group** — paste source material and walk away; title, topic chips, study cards, and question cards are generated as a background job, with retry support
 - **Manual** — create or edit study cards by hand at any time
 
 ### Study & Review
