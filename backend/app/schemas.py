@@ -20,6 +20,7 @@ class SubjectUpdate(BaseModel):
 
 class SubjectOut(BaseModel):
     id: str
+    short_code: str
     title: str
     description: Optional[str] = None
     goal: Optional[str] = None
@@ -46,6 +47,7 @@ class ModuleUpdate(BaseModel):
 
 class ModuleOut(BaseModel):
     id: str
+    short_code: str
     subject_id: str
     title: str
     description: Optional[str] = None
@@ -66,6 +68,7 @@ class NoteGroupSectionOut(BaseModel):
 
 class NoteGroupOut(BaseModel):
     id: str
+    short_code: str
     module_id: str
     subject_id: Optional[str] = None
     title: Optional[str] = None
@@ -190,6 +193,15 @@ class ModuleOverviewResponse(BaseModel):
     note_group_stats: List[NoteGroupOverviewOut]
     module_stats: ModuleOverviewStatsOut
     module_timeline: QuestionTimelineOut
+
+
+class AppRouteContext(BaseModel):
+    subject_id: str
+    subject_short_code: str
+    module_id: Optional[str] = None
+    module_short_code: Optional[str] = None
+    note_group_id: Optional[str] = None
+    note_group_short_code: Optional[str] = None
 
 
 class ChatRequest(BaseModel):

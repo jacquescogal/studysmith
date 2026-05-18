@@ -54,6 +54,30 @@ class Subject(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     modules = relationship("Module", back_populates="subject")
+    short_code_record = relationship(
+        "SubjectShortCode",
+        back_populates="subject",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+    @property
+    def short_code(self) -> str | None:
+        return self.short_code_record.short_code if self.short_code_record else None
+
+
+class SubjectShortCode(Base):
+    __tablename__ = "subject_short_codes"
+
+    subject_id = Column(
+        String,
+        ForeignKey("subjects.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    short_code = Column(String, nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    subject = relationship("Subject", back_populates="short_code_record")
 
 
 class Module(Base):
@@ -72,6 +96,16 @@ class Module(Base):
     subject = relationship("Subject", back_populates="modules")
     note_groups = relationship("NoteGroup", back_populates="module")
     topic_chips = relationship("TopicChip", back_populates="module")
+    short_code_record = relationship(
+        "ModuleShortCode",
+        back_populates="module",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+    @property
+    def short_code(self) -> str | None:
+        return self.short_code_record.short_code if self.short_code_record else None
 
     @property
     def settings(self) -> dict:
@@ -84,6 +118,20 @@ class Module(Base):
         if not isinstance(data, dict):
             data = {}
         return {**DEFAULT_MODULE_SETTINGS, **data}
+
+
+class ModuleShortCode(Base):
+    __tablename__ = "module_short_codes"
+
+    module_id = Column(
+        String,
+        ForeignKey("modules.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    short_code = Column(String, nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    module = relationship("Module", back_populates="short_code_record")
 
 
 class NoteGroup(Base):
@@ -109,11 +157,21 @@ class NoteGroup(Base):
     study_cards = relationship("StudyCard", back_populates="note_group")
     question_cards = relationship("QuestionCard", back_populates="note_group")
     jobs = relationship("Job", back_populates="note_group")
+    short_code_record = relationship(
+        "NoteGroupShortCode",
+        back_populates="note_group",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
     topic_chips = relationship(
         "TopicChip",
         secondary=note_group_topic_chips,
         back_populates="note_groups",
     )
+
+    @property
+    def short_code(self) -> str | None:
+        return self.short_code_record.short_code if self.short_code_record else None
 
     @property
     def suggested_titles(self) -> list[str]:
@@ -138,6 +196,20 @@ class NoteGroup(Base):
     @property
     def subject_id(self) -> str | None:
         return self.module.subject_id if self.module else None
+
+
+class NoteGroupShortCode(Base):
+    __tablename__ = "note_group_short_codes"
+
+    note_group_id = Column(
+        String,
+        ForeignKey("note_groups.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    short_code = Column(String, nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    note_group = relationship("NoteGroup", back_populates="short_code_record")
 
 
 class StudyCard(Base):

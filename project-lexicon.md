@@ -237,6 +237,15 @@ references.
 
 ## Implementation Terms
 
+### Short Code
+
+A compact, URL-safe route alias for a subject, module, or note group. Short
+codes use the `[a-zA-Z0-9_-]` character set and are case-sensitive.
+
+Short codes are URL plumbing only. They are not the internal ID, not a
+user-facing label, and not a replacement for the UUID primary keys used by
+backend domain operations.
+
 ### Module Overview
 
 A compound read model for the module overview screen. It returns the module's
