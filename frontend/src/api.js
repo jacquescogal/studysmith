@@ -49,6 +49,14 @@ export function listModules(subjectId) {
   return request(`/subjects/${subjectId}/modules`);
 }
 
+export function listAllModules() {
+  return request("/modules");
+}
+
+export function getModule(moduleId) {
+  return request(`/modules/${moduleId}`);
+}
+
 export function createModule(subjectId, payload) {
   return request(`/subjects/${subjectId}/modules`, {
     method: "POST",

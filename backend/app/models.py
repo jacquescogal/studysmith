@@ -135,6 +135,10 @@ class NoteGroup(Base):
             return []
         return data if isinstance(data, list) else []
 
+    @property
+    def subject_id(self) -> str | None:
+        return self.module.subject_id if self.module else None
+
 
 class StudyCard(Base):
     __tablename__ = "study_cards"

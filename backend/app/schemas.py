@@ -67,6 +67,7 @@ class NoteGroupSectionOut(BaseModel):
 class NoteGroupOut(BaseModel):
     id: str
     module_id: str
+    subject_id: Optional[str] = None
     title: Optional[str] = None
     source: Optional[str] = None
     additional_generation_instructions: Optional[str] = None
