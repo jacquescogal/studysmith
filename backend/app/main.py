@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fsrs import Rating
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import case, func, or_, text
 
 from app.db import Base, engine, get_db
@@ -615,6 +615,14 @@ def create_module(payload: ModuleCreate, db: Session = Depends(get_db)):
     )
 
 
+@app.get("/modules/{module_id}", response_model=ModuleOut)
+def get_module(module_id: str, db: Session = Depends(get_db)):
+    module = db.get(Module, module_id)
+    if not module:
+        raise HTTPException(status_code=404, detail="Module not found")
+    return module
+
+
 @app.put("/modules/{module_id}", response_model=ModuleOut)
 def update_module(module_id: str, payload: ModuleUpdate, db: Session = Depends(get_db)):
     module = db.get(Module, module_id)
@@ -1051,7 +1059,12 @@ def detach_topic_chip(note_group_id: str, chip_id: str, db: Session = Depends(ge
 
 @app.get("/note-groups/{note_group_id}", response_model=NoteGroupOut)
 def get_note_group(note_group_id: str, db: Session = Depends(get_db)):
-    note_group = db.get(NoteGroup, note_group_id)
+    note_group = (
+        db.query(NoteGroup)
+        .options(joinedload(NoteGroup.module))
+        .filter(NoteGroup.id == note_group_id)
+        .first()
+    )
     if not note_group:
         raise HTTPException(status_code=404, detail="Note group not found")
     return note_group
