@@ -23,7 +23,6 @@ from app.openai_client import (
     generate_formatted_sections,
     generate_note_group_title_suggestions,
     generate_question_cards,
-    generate_study_cards,
     generate_study_cards_with_context,
     suggest_topic_chips,
 )
@@ -31,7 +30,6 @@ from app.source_ranges import find_evidence_ranges
 from app.text_formatter import build_formatted_sections, sections_to_markdown
 
 
-JOB_TYPE_NOTE_GROUP_GENERATION = "NOTE_GROUP_GENERATION"
 JOB_TYPE_NOTE_GROUP_QUESTION_GENERATION = "NOTE_GROUP_QUESTION_GENERATION"
 JOB_TYPE_NOTE_GROUP_AUTO_GENERATION = "NOTE_GROUP_AUTO_GENERATION"
 
@@ -244,127 +242,6 @@ def _normalize_question_payload(payload: dict) -> Optional[dict]:
         "option_explanations": option_explanations,
         "study_card_refs": refs,
     }
-
-
-def run_note_group_generation(job_id: str) -> None:
-    db: Session = SessionLocal()
-    note_group: Optional[NoteGroup] = None
-    job: Optional[Job] = None
-    try:
-        job = db.get(Job, job_id)
-        if not job:
-            return
-        job.status = "running"
-        note_group = job.note_group
-        if not note_group:
-            job.status = "failed"
-            job.error = "Note group not found"
-            db.commit()
-            return
-        note_group.generation_status = "generating"
-        db.commit()
-
-        module = note_group.module
-        subject = module.subject
-        additional_instructions = note_group.additional_generation_instructions
-        if not note_group.title:
-            try:
-                suggestions = generate_note_group_title_suggestions(
-                    module.title, note_group.raw_text
-                )
-            except Exception:
-                words = note_group.raw_text.strip().split()
-                base = " ".join(words[:6]) or "Study notes"
-                suggestions = [
-                    base,
-                    f"{base} overview",
-                    f"Key concepts: {base}",
-                ]
-            note_group.suggested_titles_json = json.dumps(suggestions[:3])
-            db.commit()
-        cleaned_text_markdown = generate_cleaned_text_markdown(note_group.raw_text)
-        note_group.cleaned_text_markdown = cleaned_text_markdown
-        study_card_payloads = generate_study_cards_with_context(
-            module_title=module.title,
-            module_description=module.description,
-            note_group_title=note_group.title or "",
-            raw_text=cleaned_text_markdown,
-            chip_labels=[],
-            additional_instructions=additional_instructions,
-            module_goal=module.goal,
-            module_scope=module.scope,
-            subject_title=subject.title,
-            subject_goal=subject.goal,
-            subject_scope=subject.scope,
-        )
-        if not study_card_payloads:
-            raise ValueError("No study cards generated")
-
-        study_cards: list[StudyCard] = []
-        card_payload_pairs = []
-        for payload in study_card_payloads:
-            content = (payload.get("content") or "").strip()
-            if not content:
-                continue
-            title = payload.get("title")
-            study_card = StudyCard(
-                note_group_id=note_group.id,
-                title=title,
-                content=content,
-            )
-            db.add(study_card)
-            study_cards.append(study_card)
-            card_payload_pairs.append((study_card, payload))
-        db.flush()
-        for card, payload in card_payload_pairs:
-            _store_study_card_source_ranges(
-                db,
-                card,
-                cleaned_text_markdown,
-                payload.get("evidence_snippets"),
-            )
-        db.commit()
-
-        if not study_cards:
-            raise ValueError("Generated study cards were empty")
-
-        study_card_context = [
-            {"id": card.id, "title": card.title, "content": card.content}
-            for card in study_cards
-        ]
-        raw_sections = []
-        try:
-            raw_sections = generate_formatted_sections(note_group.raw_text, study_card_context)
-        except Exception:
-            raw_sections = []
-        formatted_sections = build_formatted_sections(raw_sections, study_card_context)
-        note_group.formatted_sections_json = json.dumps(formatted_sections)
-        note_group.formatted_text = sections_to_markdown(formatted_sections)
-
-        embeddings = embed_texts([card.content for card in study_cards])
-        collection = get_collection()
-        collection.upsert(
-            ids=[card.id for card in study_cards],
-            embeddings=embeddings,
-            documents=[card.content for card in study_cards],
-            metadatas=[
-                {"note_group_id": note_group.id, "module_id": module.id}
-                for _ in study_cards
-            ],
-        )
-
-        note_group.generation_status = "complete"
-        job.status = "completed"
-        db.commit()
-    except Exception as exc:
-        if job:
-            job.status = "failed"
-            job.error = str(exc)
-        if note_group:
-            note_group.generation_status = "failed"
-        db.commit()
-    finally:
-        db.close()
 
 
 def run_question_card_generation(job_id: str, count: int, difficulty: str) -> None:

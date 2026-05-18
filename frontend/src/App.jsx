@@ -19,18 +19,16 @@ import {
   deleteStudyCard,
   deleteSubject,
   detachTopicChip,
-  finalizeNoteGroup,
   generateQuestionCards,
   getJob,
+  getModuleOverview,
   getModuleQuestionTimeline,
   getNoteGroupQuestionTimeline,
   getNoteGroup,
   getStudyCard,
-  getTitleSuggestions,
   listJobs,
   listModuleReviewQuestionCards,
   listModules,
-  listNoteGroups,
   listQuestionCards,
   listReviewQuestionCards,
   listStudyCards,
@@ -42,7 +40,6 @@ import {
   sendModuleIntentChat,
   sendSubjectIntentChat,
   updateNoteGroupOrder,
-  suggestTopicChips,
   updateNoteGroupTitle,
   updateQuestionCard,
   updateStudyCard,
@@ -51,6 +48,13 @@ import {
 } from "./api";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const generateUniqueId = () => {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+  return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+};
 
 const parseOptions = (text) =>
   text
@@ -443,31 +447,11 @@ export default function App() {
   const [topicChips, setTopicChips] = useState([]);
   const [chipFilterIds, setChipFilterIds] = useState([]);
   const [noteGroupChipIds, setNoteGroupChipIds] = useState([]);
-  const [wizardChipLabel, setWizardChipLabel] = useState("");
   const [moduleChipLabel, setModuleChipLabel] = useState("");
   const [moduleChipDescription, setModuleChipDescription] = useState("");
 
-  const [rawTextDraft, setRawTextDraft] = useState("");
-  const [additionalInstructionsDraft, setAdditionalInstructionsDraft] = useState("");
   const [autoRawText, setAutoRawText] = useState("");
   const [autoAdditionalInstructions, setAutoAdditionalInstructions] = useState("");
-  const [titleSuggestions, setTitleSuggestions] = useState([]);
-  const [selectedTitleSuggestion, setSelectedTitleSuggestion] = useState("");
-  const [customTitle, setCustomTitle] = useState("");
-  const [hasTitleSuggestions, setHasTitleSuggestions] = useState(false);
-  const [titleLoading, setTitleLoading] = useState(false);
-  const [titleError, setTitleError] = useState("");
-
-  const [chipSuggestionIds, setChipSuggestionIds] = useState([]);
-  const [chipSuggestionNew, setChipSuggestionNew] = useState([]);
-  const [selectedExistingChipIds, setSelectedExistingChipIds] = useState([]);
-  const [selectedNewChipLabels, setSelectedNewChipLabels] = useState([]);
-  const [hasChipSuggestions, setHasChipSuggestions] = useState(false);
-  const [chipLoading, setChipLoading] = useState(false);
-  const [chipError, setChipError] = useState("");
-
-  const [finalizeLoading, setFinalizeLoading] = useState(false);
-  const [finalizeError, setFinalizeError] = useState("");
   const [autoCreateLoading, setAutoCreateLoading] = useState(false);
   const [autoCreateError, setAutoCreateError] = useState("");
   const [sidebarError, setSidebarError] = useState("");
@@ -709,17 +693,11 @@ export default function App() {
   );
 
   const sectionNavItems = useMemo(() => {
-    if (noteGroupMode === "create") {
-      return [
-        { id: "step-source", label: "Source" },
-        { id: "step-raw", label: "Paste raw text" },
-        { id: "step-title", label: "Choose a title" },
-        { id: "step-chips", label: "Select topic chips" },
-        { id: "step-finalize", label: "Generate study cards" }
-      ];
-    }
     if (noteGroupMode === "auto") {
-      return [{ id: "auto-note-group", label: "Auto-create" }];
+      return [
+        { id: "step-source", label: "Unique ID" },
+        { id: "create-note-group", label: "Create note group" }
+      ];
     }
     if (!selectedModuleId) {
       return [];
@@ -875,11 +853,6 @@ export default function App() {
   const getSectionAnchor = (section, index) =>
     section.anchor ||
     `section-${index + 1}-${(section.study_card_id || "note").slice(0, 8)}`;
-  const newChipDisplay = useMemo(() => {
-    const merged = [...chipSuggestionNew, ...selectedNewChipLabels];
-    return Array.from(new Set(merged));
-  }, [chipSuggestionNew, selectedNewChipLabels]);
-
   const currentReviewCard = reviewQueue[reviewIndex];
   const reviewCardType = useMemo(() => {
     if (!currentReviewCard) {
@@ -989,15 +962,6 @@ export default function App() {
   }, [selectedModuleId]);
 
   useEffect(() => {
-    setSourceChecked(false);
-    setSourceConfirmed(false);
-    setSourceDuplicateCount(0);
-    setSourceDuplicates([]);
-    setSourceCheckError("");
-    setSourceChecking(false);
-  }, [noteGroupSource]);
-
-  useEffect(() => {
     if (modules.length === 0) {
       setModuleDueCounts({});
       return;
@@ -1032,21 +996,94 @@ export default function App() {
     if (!selectedModuleId) {
       setNoteGroups([]);
       setSelectedNoteGroupId("");
+      setModuleNoteGroupStats([]);
+      setModuleStats({
+        studyCount: 0,
+        questionCount: 0,
+        dueCount: 0,
+        staleCount: 0
+      });
+      setModuleQuestionTimeline({
+        due: 0,
+        week: 0,
+        month: 0,
+        sixMonths: 0,
+        longTerm: 0
+      });
+      setModuleStatsError("");
+      setModuleStatsLoading(false);
       return;
     }
-    listNoteGroups(selectedModuleId)
-      .then((data) => {
-        setNoteGroups(normalizeNoteGroups(data));
-        if (
-          !routeNoteGroupId &&
-          selectedNoteGroupId &&
-          !data.some((group) => group.id === selectedNoteGroupId)
-        ) {
-          setSelectedNoteGroupId("");
+    let cancelled = false;
+    const loadModuleOverview = async () => {
+      setModuleStatsLoading(true);
+      setModuleStatsError("");
+      try {
+        const data = await getModuleOverview(selectedModuleId, chipFilterIds);
+        if (cancelled) {
+          return;
         }
-      })
-      .catch((error) => setSidebarError(error.message));
-  }, [selectedModuleId, routeNoteGroupId, selectedNoteGroupId]);
+        const groups = normalizeNoteGroups(data.note_groups || []);
+        const stats = (data.note_group_stats || []).map((group) => {
+          const timeline = normalizeTimeline(group.timeline);
+          return {
+            id: group.id,
+            title: group.title || "Untitled note group",
+            studyCount: group.study_count || 0,
+            questionCount: group.question_count || 0,
+            dueCount: group.due_count || timeline.due,
+            staleCount: group.stale_count || 0,
+            timeline
+          };
+        });
+        const moduleOverviewStats = data.module_stats || {};
+        setNoteGroups(groups);
+        setSelectedNoteGroupId((currentId) => {
+          if (!routeNoteGroupId && currentId && !groups.some((group) => group.id === currentId)) {
+            return "";
+          }
+          return currentId;
+        });
+        setModuleNoteGroupStats(stats);
+        setModuleStats({
+          studyCount: moduleOverviewStats.study_count || 0,
+          questionCount: moduleOverviewStats.question_count || 0,
+          dueCount: moduleOverviewStats.due_count || 0,
+          staleCount: moduleOverviewStats.stale_count || 0
+        });
+        setModuleQuestionTimeline(normalizeTimeline(data.module_timeline));
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setNoteGroups([]);
+        setModuleNoteGroupStats([]);
+        setModuleStats({
+          studyCount: 0,
+          questionCount: 0,
+          dueCount: 0,
+          staleCount: 0
+        });
+        setModuleQuestionTimeline({
+          due: 0,
+          week: 0,
+          month: 0,
+          sixMonths: 0,
+          longTerm: 0
+        });
+        setModuleStatsError(error.message || "Failed to load module overview");
+        setSidebarError(error.message || "Failed to load note groups");
+      } finally {
+        if (!cancelled) {
+          setModuleStatsLoading(false);
+        }
+      }
+    };
+    loadModuleOverview();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedModuleId, chipFilterIds, reviewRefreshToken, routeNoteGroupId]);
 
   useEffect(() => {
     if (!selectedModuleId) {
@@ -1056,135 +1093,9 @@ export default function App() {
       if (error.message === "Not Found") {
         return;
       }
-      toast.error(error.message || "Failed to check auto note group jobs.");
+      toast.error(error.message || "Failed to check note group creation jobs.");
     });
   }, [selectedModuleId]);
-
-  useEffect(() => {
-    if (!selectedModuleId) {
-      setModuleNoteGroupStats([]);
-      setModuleStats({
-        studyCount: 0,
-        questionCount: 0,
-        dueCount: 0,
-        staleCount: 0
-      });
-      setModuleStatsError("");
-      setModuleStatsLoading(false);
-      return;
-    }
-    if (noteGroups.length === 0) {
-      setModuleNoteGroupStats([]);
-      setModuleStats({
-        studyCount: 0,
-        questionCount: 0,
-        dueCount: 0,
-        staleCount: 0
-      });
-      setModuleStatsError("");
-      setModuleStatsLoading(false);
-      return;
-    }
-    let cancelled = false;
-    const loadStats = async () => {
-      setModuleStatsLoading(true);
-      setModuleStatsError("");
-      try {
-        const stats = await Promise.all(
-          noteGroups.map(async (group) => {
-            const [studyResponse, timelineResponse] = await Promise.all([
-              listStudyCards(group.id),
-              getNoteGroupQuestionTimeline(group.id, chipFilterIds)
-            ]);
-            const studyCardsList = studyResponse.study_cards || [];
-            let filteredStudyCardsList = studyCardsList;
-            if (chipFilterIds.length) {
-              filteredStudyCardsList = studyCardsList.filter((card) =>
-                (card.topic_chips || []).some((chip) => chipFilterIds.includes(chip.id))
-              );
-            }
-            const timeline = normalizeTimeline(timelineResponse.timeline);
-            return {
-              id: group.id,
-              title: group.title || "Untitled note group",
-              studyCount: filteredStudyCardsList.length,
-              questionCount: timelineResponse.question_count || 0,
-              dueCount: timeline.due,
-              staleCount: timelineResponse.stale_count || 0,
-              timeline
-            };
-          })
-        );
-        if (cancelled) {
-          return;
-        }
-        setModuleNoteGroupStats(stats);
-        setModuleStats(
-          stats.reduce(
-            (acc, group) => ({
-              studyCount: acc.studyCount + group.studyCount,
-              questionCount: acc.questionCount + group.questionCount,
-              dueCount: acc.dueCount + group.dueCount,
-              staleCount: acc.staleCount + group.staleCount
-            }),
-            { studyCount: 0, questionCount: 0, dueCount: 0, staleCount: 0 }
-          )
-        );
-      } catch (error) {
-        if (!cancelled) {
-          setModuleStatsError(error.message || "Failed to load module stats");
-        }
-      } finally {
-        if (!cancelled) {
-          setModuleStatsLoading(false);
-        }
-      }
-    };
-
-    loadStats();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedModuleId, noteGroups, chipFilterIds, reviewRefreshToken]);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!selectedModuleId) {
-      setModuleQuestionTimeline({
-        due: 0,
-        week: 0,
-        month: 0,
-        sixMonths: 0,
-        longTerm: 0
-      });
-      return () => {
-        cancelled = true;
-      };
-    }
-    const loadTimeline = async () => {
-      try {
-        const data = await getModuleQuestionTimeline(selectedModuleId, chipFilterIds);
-        if (cancelled) {
-          return;
-        }
-        setModuleQuestionTimeline(normalizeTimeline(data.timeline));
-      } catch (error) {
-        if (!cancelled) {
-          setModuleQuestionTimeline({
-            due: 0,
-            week: 0,
-            month: 0,
-            sixMonths: 0,
-            longTerm: 0
-          });
-        }
-      }
-    };
-    loadTimeline();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedModuleId, chipFilterIds, noteGroups, reviewRefreshToken]);
 
   useEffect(() => {
     if (!selectedNoteGroupId) {
@@ -1521,22 +1432,9 @@ export default function App() {
   }, [routePanel]);
 
   useEffect(() => {
-    setRawTextDraft("");
     setAutoRawText("");
-    setTitleSuggestions([]);
-    setSelectedTitleSuggestion("");
-    setCustomTitle("");
-    setHasTitleSuggestions(false);
-    setTitleError("");
-    setChipSuggestionIds([]);
-    setChipSuggestionNew([]);
-    setSelectedExistingChipIds([]);
-    setSelectedNewChipLabels([]);
-    setHasChipSuggestions(false);
-    setChipError("");
     setAutoCreateError("");
     setSidebarError("");
-    setAdditionalInstructionsDraft(getModuleAdditionalInstructions(selectedModule));
     setAutoAdditionalInstructions(getModuleAdditionalInstructions(selectedModule));
   }, [selectedModuleId]);
 
@@ -1572,13 +1470,13 @@ export default function App() {
     activeAutoJobsRef.current.add(jobId);
     pollJob(jobId, () => null, { maxAttempts: 180, intervalMs: 2000 })
       .then(async (job) => {
-        let toastLabel = "Auto note group ready.";
+        let toastLabel = "Note group ready.";
         let resolvedModuleId = moduleId;
         if (job.note_group_id) {
           try {
             const noteGroup = await getNoteGroup(job.note_group_id);
             if (noteGroup?.title) {
-              toastLabel = `Auto note group ready: ${noteGroup.title}`;
+              toastLabel = `Note group ready: ${noteGroup.title}`;
             }
             if (noteGroup?.module_id) {
               resolvedModuleId = noteGroup.module_id;
@@ -1590,14 +1488,10 @@ export default function App() {
         toast.success(toastLabel);
         if (resolvedModuleId && selectedModuleIdRef.current === resolvedModuleId) {
           try {
-            const [groups, chips] = await Promise.all([
-              listNoteGroups(resolvedModuleId),
-              listTopicChips(resolvedModuleId)
-            ]);
-            setNoteGroups(normalizeNoteGroups(groups));
+            const chips = await listTopicChips(resolvedModuleId);
             setTopicChips(chips);
           } catch (error) {
-            toast.error(error.message || "Failed to refresh auto-generated note group.");
+            toast.error(error.message || "Failed to refresh generated note group.");
           }
         }
         setReviewRefreshToken((prev) => prev + 1);
@@ -1607,9 +1501,9 @@ export default function App() {
       })
       .catch((error) => {
         if (error.message === "Job cancelled") {
-          toast.info("Auto note group cancelled.");
+          toast.info("Note group creation cancelled.");
         } else {
-          toast.error(error.message || "Auto note group generation failed.");
+          toast.error(error.message || "Note group creation failed.");
         }
         if (moduleId) {
           loadAutoJobs(moduleId).catch(() => null);
@@ -2081,10 +1975,29 @@ export default function App() {
     navigateToNoteGroup(nextId);
   };
 
-  const resetSourceState = () => {
-    setNoteGroupSource("");
+  const resetSourceCheckState = () => {
     setSourceChecked(false);
     setSourceConfirmed(false);
+    setSourceDuplicateCount(0);
+    setSourceDuplicates([]);
+    setSourceCheckError("");
+    setSourceChecking(false);
+  };
+
+  const resetSourceState = () => {
+    setNoteGroupSource("");
+    resetSourceCheckState();
+  };
+
+  const handleUniqueIdChange = (value) => {
+    setNoteGroupSource(value);
+    resetSourceCheckState();
+  };
+
+  const handleUseGeneratedUniqueId = () => {
+    setNoteGroupSource(generateUniqueId());
+    setSourceChecked(true);
+    setSourceConfirmed(true);
     setSourceDuplicateCount(0);
     setSourceDuplicates([]);
     setSourceCheckError("");
@@ -2094,7 +2007,7 @@ export default function App() {
   const handleCheckSource = async () => {
     const trimmed = noteGroupSource.trim();
     if (!trimmed) {
-      setSourceCheckError("Source is required before continuing.");
+      setSourceCheckError("Unique ID is required before continuing.");
       return;
     }
     setSourceChecking(true);
@@ -2107,7 +2020,7 @@ export default function App() {
       setSourceChecked(true);
       setSourceConfirmed(duplicates.length === 0);
     } catch (error) {
-      setSourceCheckError(error.message || "Failed to check source.");
+      setSourceCheckError(error.message || "Failed to check unique ID.");
     } finally {
       setSourceChecking(false);
     }
@@ -2115,16 +2028,6 @@ export default function App() {
 
   const handleConfirmDuplicateSource = () => {
     setSourceConfirmed(true);
-  };
-
-  const handleStartCreateNoteGroup = () => {
-    setNoteGroupMode("create");
-    setSelectedNoteGroupId("");
-    setReviewSummary(null);
-    setIsChatOpen(false);
-    setIsMetadataOpen(false);
-    setIsModuleMetadataOpen(false);
-    navigate("/");
   };
 
   const handleStartAutoNoteGroup = () => {
@@ -2138,160 +2041,14 @@ export default function App() {
     navigate("/");
   };
 
-  const handleGenerateTitleSuggestions = async () => {
-    if (!selectedModuleId || !rawTextDraft.trim()) {
-      return;
-    }
-    setTitleLoading(true);
-    setTitleError("");
-    try {
-      const response = await getTitleSuggestions({
-        module_id: selectedModuleId,
-        raw_text: rawTextDraft.trim()
-      });
-      const suggestions = response.titles || [];
-      setTitleSuggestions(suggestions);
-      if (suggestions.length > 0) {
-        setSelectedTitleSuggestion(suggestions[0]);
-        setCustomTitle(suggestions[0]);
-      }
-      setHasTitleSuggestions(true);
-    } catch (error) {
-      setTitleError(error.message || "Failed to generate titles");
-    } finally {
-      setTitleLoading(false);
-    }
-  };
-
-  const handleSelectTitleSuggestion = (title) => {
-    setSelectedTitleSuggestion(title);
-    setCustomTitle(title);
-  };
-
-  const handleGenerateChipSuggestions = async () => {
-    if (!selectedModuleId || !rawTextDraft.trim()) {
-      return;
-    }
-    setChipLoading(true);
-    setChipError("");
-    try {
-      const response = await suggestTopicChips({
-        module_id: selectedModuleId,
-        raw_text: rawTextDraft.trim()
-      });
-      const suggestedExisting = response.suggested_existing_ids || [];
-      const newChips = response.new_chips || [];
-      setChipSuggestionIds(suggestedExisting);
-      setChipSuggestionNew(newChips);
-      setSelectedExistingChipIds(suggestedExisting);
-      setSelectedNewChipLabels(newChips);
-      setHasChipSuggestions(true);
-    } catch (error) {
-      setChipError(error.message || "Failed to generate topic chips");
-    } finally {
-      setChipLoading(false);
-    }
-  };
-
-  const handleToggleExistingChip = (chipId) => {
-    setSelectedExistingChipIds((prev) =>
-      prev.includes(chipId) ? prev.filter((id) => id !== chipId) : [...prev, chipId]
-    );
-  };
-
-  const handleToggleNewChip = (chipLabel) => {
-    setSelectedNewChipLabels((prev) =>
-      prev.includes(chipLabel)
-        ? prev.filter((label) => label !== chipLabel)
-        : [...prev, chipLabel]
-    );
-  };
-
-  const handleAddNewChipLabel = () => {
-    const label = wizardChipLabel.trim();
-    if (!label) {
-      return;
-    }
-    setSelectedNewChipLabels((prev) =>
-      prev.includes(label) ? prev : [...prev, label]
-    );
-    setWizardChipLabel("");
-  };
-
-  const handleFinalizeNoteGroup = async () => {
-    const finalTitle = customTitle.trim() || selectedTitleSuggestion.trim();
-    const trimmedSource = noteGroupSource.trim();
-    if (!trimmedSource) {
-      setFinalizeError("Source is required before continuing.");
-      return;
-    }
-    if (!sourceConfirmed) {
-      setFinalizeError("Check the source before continuing.");
-      return;
-    }
-    if (!selectedModuleId || !rawTextDraft.trim() || !finalTitle) {
-      setFinalizeError("Provide raw text and select a title first.");
-      return;
-    }
-    if (countWords(additionalInstructionsDraft) > 500) {
-      setFinalizeError("Additional generation instructions must be 500 words or fewer.");
-      return;
-    }
-    if (!hasTitleSuggestions || !hasChipSuggestions) {
-      setFinalizeError("Generate title and topic chip suggestions before finalizing.");
-      return;
-    }
-    setFinalizeLoading(true);
-    setSidebarError("");
-    try {
-      const response = await finalizeNoteGroup({
-        module_id: selectedModuleId,
-        source: trimmedSource,
-        raw_text: rawTextDraft.trim(),
-        title: finalTitle,
-        additional_generation_instructions: additionalInstructionsDraft.trim(),
-        existing_chip_ids: selectedExistingChipIds,
-        new_chip_labels: selectedNewChipLabels
-      });
-      const createdNoteGroup = response.note_group;
-      setSelectedNoteGroupId(createdNoteGroup.id);
-      setNoteGroupChipIds((createdNoteGroup.topic_chips || []).map((chip) => chip.id));
-      setFormattedSections(createdNoteGroup.formatted_sections || []);
-      setCleanedTextMarkdown(createdNoteGroup.cleaned_text_markdown || "");
-      setStudyCards(response.study_cards || []);
-      const groups = await listNoteGroups(selectedModuleId);
-      setNoteGroups(normalizeNoteGroups(groups));
-      const chips = await listTopicChips(selectedModuleId);
-      setTopicChips(chips);
-      setNoteGroupMode("overview");
-      navigate(`/note-groups/${createdNoteGroup.id}/study-cards`);
-      setRawTextDraft("");
-      setAdditionalInstructionsDraft(getModuleAdditionalInstructions(selectedModule));
-      setTitleSuggestions([]);
-      setSelectedTitleSuggestion("");
-      setCustomTitle("");
-      setHasTitleSuggestions(false);
-      setChipSuggestionIds([]);
-      setChipSuggestionNew([]);
-      setSelectedExistingChipIds([]);
-      setSelectedNewChipLabels([]);
-      setHasChipSuggestions(false);
-      resetSourceState();
-    } catch (error) {
-      setFinalizeError(error.message || "Failed to finalize note group");
-    } finally {
-      setFinalizeLoading(false);
-    }
-  };
-
   const handleAutoCreateNoteGroup = async () => {
     const trimmedSource = noteGroupSource.trim();
     if (!trimmedSource) {
-      setAutoCreateError("Source is required before continuing.");
+      setAutoCreateError("Unique ID is required before continuing.");
       return;
     }
     if (!sourceConfirmed) {
-      setAutoCreateError("Check the source before continuing.");
+      setAutoCreateError("Check the unique ID before continuing.");
       return;
     }
     if (countWords(autoAdditionalInstructions) > 500) {
@@ -2310,7 +2067,7 @@ export default function App() {
         raw_text: autoRawText.trim(),
         additional_generation_instructions: autoAdditionalInstructions.trim()
       });
-      toast.info("Auto note group generation started.");
+      toast.info("Note group creation started.");
       setAutoRawText("");
       setAutoAdditionalInstructions(getModuleAdditionalInstructions(selectedModule));
       setNoteGroupMode("overview");
@@ -2323,30 +2080,11 @@ export default function App() {
       navigate("/");
       resetSourceState();
     } catch (error) {
-      setAutoCreateError(error.message || "Failed to start auto note group.");
-      toast.error(error.message || "Failed to start auto note group.");
+      setAutoCreateError(error.message || "Failed to start note group creation.");
+      toast.error(error.message || "Failed to start note group creation.");
     } finally {
       setAutoCreateLoading(false);
     }
-  };
-
-  const handleCreateChip = async (label) => {
-    const trimmed = label.trim();
-    if (!selectedModuleId || !trimmed) {
-      return;
-    }
-    setFinalizeError("");
-    try {
-      const chip = await createTopicChip(selectedModuleId, { label: trimmed });
-      setTopicChips((prev) => [...prev, chip]);
-    } catch (error) {
-      setSidebarError(error.message || "Failed to create topic chip");
-    }
-  };
-
-  const handleCreateWizardChip = async () => {
-    await handleCreateChip(wizardChipLabel);
-    setWizardChipLabel("");
   };
 
   const handleCreateModuleChip = async () => {
@@ -2354,7 +2092,7 @@ export default function App() {
     if (!selectedModuleId || !trimmed) {
       return;
     }
-    setFinalizeError("");
+    setSidebarError("");
     try {
       const chip = await createTopicChip(selectedModuleId, {
         label: trimmed,
@@ -2500,14 +2238,13 @@ export default function App() {
     setAutoJobActionId(jobId);
     try {
       await cancelJob(jobId);
-      toast.info("Auto note group job cancelled.");
+      toast.info("Note group creation job cancelled.");
       if (selectedModuleId) {
-        const groups = await listNoteGroups(selectedModuleId);
-        setNoteGroups(normalizeNoteGroups(groups));
+        setReviewRefreshToken((prev) => prev + 1);
         await loadAutoJobs(selectedModuleId);
       }
     } catch (error) {
-      toast.error(error.message || "Failed to cancel auto note group job.");
+      toast.error(error.message || "Failed to cancel note group creation job.");
     } finally {
       setAutoJobActionId("");
     }
@@ -2520,17 +2257,16 @@ export default function App() {
     setAutoJobActionId(jobId);
     try {
       const newJob = await retryAutoJob(jobId);
-      toast.info("Retrying auto note group generation.");
+      toast.info("Retrying note group creation.");
       if (selectedModuleId) {
-        const groups = await listNoteGroups(selectedModuleId);
-        setNoteGroups(normalizeNoteGroups(groups));
+        setReviewRefreshToken((prev) => prev + 1);
         await loadAutoJobs(selectedModuleId);
       }
       if (newJob?.id) {
         trackAutoNoteGroupJob(newJob.id, selectedModuleId);
       }
     } catch (error) {
-      toast.error(error.message || "Failed to retry auto note group job.");
+      toast.error(error.message || "Failed to retry note group creation job.");
     } finally {
       setAutoJobActionId("");
     }
@@ -2584,7 +2320,6 @@ export default function App() {
         getModuleAdditionalInstructions(updated)
       );
       if (selectedModuleId === updated.id) {
-        setAdditionalInstructionsDraft(getModuleAdditionalInstructions(updated));
         setAutoAdditionalInstructions(getModuleAdditionalInstructions(updated));
       }
     } catch (error) {
@@ -3296,37 +3031,45 @@ export default function App() {
   const hasSidebar = Boolean(selectedSubjectId && selectedModuleId);
   const sourcePanel = (
     <section className="panel" id="step-source">
-      <h2>1. Source</h2>
-      <p className="muted">Add the source before continuing.</p>
+      <h2>1. Unique ID</h2>
+      <p className="muted">Enter a unique ID, or generate one automatically.</p>
       <div className="field">
-        <label htmlFor="note-group-source">Source</label>
+        <label htmlFor="note-group-source">Unique ID</label>
         <input
           id="note-group-source"
           type="text"
           value={noteGroupSource}
-          onChange={(event) => setNoteGroupSource(event.target.value)}
-          placeholder="e.g., BIO101 lecture 3, 2023-09-14"
+          onChange={(event) => handleUniqueIdChange(event.target.value)}
+          placeholder="e.g., BIO101-lecture-3 or generated UUID"
         />
       </div>
       <div className="button-row">
         <button
           className="button ghost"
           type="button"
+          onClick={handleUseGeneratedUniqueId}
+          disabled={sourceChecking}
+        >
+          Use generated ID
+        </button>
+        <button
+          className="button ghost"
+          type="button"
           onClick={handleCheckSource}
           disabled={!noteGroupSource.trim() || sourceChecking}
         >
-          {sourceChecking ? "Checking..." : sourceChecked ? "Re-check source" : "Check source"}
+          {sourceChecking ? "Checking..." : sourceChecked ? "Re-check unique ID" : "Check unique ID"}
         </button>
         {isSourceReady ? <span className="pill status-completed">Verified</span> : null}
       </div>
       {sourceCheckError ? <p className="error">{sourceCheckError}</p> : null}
       {!isSourceReady ? (
-        <p className="muted">Check the source to unlock the rest of the form.</p>
+        <p className="muted">Check the unique ID to unlock the rest of the form.</p>
       ) : null}
       {sourceChecked && sourceDuplicateCount > 0 && !sourceConfirmed ? (
         <div className="warning-block">
           <p className="warning">
-            Source already used in {sourceDuplicateCount} note group
+            Unique ID already used in {sourceDuplicateCount} note group
             {sourceDuplicateCount === 1 ? "" : "s"}. Continue anyway?
           </p>
           <ul className="warning-list">
@@ -4682,20 +4425,12 @@ export default function App() {
             </div>
             <div className="form-block">
               <button
-                className={`button ghost ${noteGroupMode === "create" ? "active" : ""}`}
-                type="button"
-                onClick={handleStartCreateNoteGroup}
-                disabled={!selectedModuleId}
-              >
-                Create new note group
-              </button>
-              <button
                 className={`button ghost ${noteGroupMode === "auto" ? "active" : ""}`}
                 type="button"
                 onClick={handleStartAutoNoteGroup}
                 disabled={!selectedModuleId}
               >
-                Auto-create note group
+                Create note group
               </button>
             </div>
           </div>
@@ -4728,15 +4463,10 @@ export default function App() {
                   </button>
                 </>
               ) : null}
-              {noteGroupMode === "create" ? (
+              {noteGroupMode === "auto" ? (
                 <>
                   <span>/</span>
-                  <span className="current">New note group</span>
-                </>
-              ) : noteGroupMode === "auto" ? (
-                <>
-                  <span>/</span>
-                  <span className="current">Auto note group</span>
+                  <span className="current">Create note group</span>
                 </>
               ) : selectedNoteGroup ? (
                 <>
@@ -4746,10 +4476,8 @@ export default function App() {
               ) : null}
             </div>
             <p className="subhead">
-              {noteGroupMode === "create"
-                ? "Paste raw text, pick a title, select topic chips, then generate study cards in one workflow."
-                : noteGroupMode === "auto"
-                  ? "Paste raw text and we will auto-generate a note group and questions in the background."
+              {noteGroupMode === "auto"
+                ? "Paste raw text and we will create a note group and questions in the background."
                 : selectedNoteGroupId
                   ? "Manage your note group, review questions, and chat with your study cards."
                   : selectedModuleId
@@ -4920,238 +4648,31 @@ export default function App() {
                 )}
                 {sidebarError ? <p className="error">{sidebarError}</p> : null}
               </section>
-            ) : noteGroupMode === "create" ? (
-              <>
-                {sourcePanel}
-                <section className="panel" id="step-raw">
-                  <h2>2. Paste raw text</h2>
-                  <div className="field">
-                    <label htmlFor="additional-instructions">
-                      Additional generation instructions (optional)
-                    </label>
-                    <textarea
-                      id="additional-instructions"
-                      value={additionalInstructionsDraft}
-                      onChange={(event) => setAdditionalInstructionsDraft(event.target.value)}
-                      placeholder="Optional guidance for study and question generation"
-                      rows={3}
-                      disabled={!selectedModuleId || !isSourceReady}
-                    />
-                    <p className="muted">
-                      Word count: {countWords(additionalInstructionsDraft)}/500
-                    </p>
-                  </div>
-                  <div className="field">
-                    <label htmlFor="raw-text">Raw text</label>
-                    <textarea
-                      id="raw-text"
-                      value={rawTextDraft}
-                      onChange={(event) => setRawTextDraft(event.target.value)}
-                      placeholder="Paste lecture notes or a chapter excerpt..."
-                      rows={8}
-                      disabled={!selectedModuleId || !isSourceReady}
-                    />
-                  </div>
-                  <button
-                    className="button primary"
-                    type="button"
-                    onClick={handleGenerateTitleSuggestions}
-                    disabled={
-                      !selectedModuleId ||
-                      !isSourceReady ||
-                      !rawTextDraft.trim() ||
-                      titleLoading
-                    }
-                  >
-                    {titleLoading ? "Generating titles..." : "Generate title suggestions"}
-                  </button>
-                  {titleError ? <p className="error">{titleError}</p> : null}
-                </section>
-
-                <section className="panel" id="step-title">
-                  <h2>3. Choose a title</h2>
-                  {titleSuggestions.length > 0 ? (
-                    <div className="suggestions">
-                      {titleSuggestions.map((title) => (
-                        <button
-                          key={title}
-                          type="button"
-                          className={`button ghost ${
-                            title === selectedTitleSuggestion ? "active" : ""
-                          }`}
-                          onClick={() => handleSelectTitleSuggestion(title)}
-                          disabled={!isSourceReady}
-                        >
-                          {title}
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="muted">Generate title suggestions first.</p>
-                  )}
-                  <div className="form-inline">
-                    <input
-                      type="text"
-                      value={customTitle}
-                      onChange={(event) => setCustomTitle(event.target.value)}
-                      placeholder="Edit or enter a custom title"
-                      disabled={!selectedModuleId || !isSourceReady}
-                    />
-                  </div>
-                </section>
-
-                <section className="panel" id="step-chips">
-                  <h2>4. Select topic chips</h2>
-                  <button
-                    className="button ghost"
-                    type="button"
-                    onClick={handleGenerateChipSuggestions}
-                    disabled={
-                      !selectedModuleId ||
-                      !isSourceReady ||
-                      !rawTextDraft.trim() ||
-                      chipLoading ||
-                      !hasTitleSuggestions
-                    }
-                  >
-                    {chipLoading ? "Generating chips..." : "Generate topic chip suggestions"}
-                  </button>
-                  {chipError ? <p className="error">{chipError}</p> : null}
-                  <div className="chip-section">
-                    <h3>Existing chips (module pool)</h3>
-                    <div className="chip-grid">
-                      {topicChips.length === 0 ? (
-                        <p className="muted">No topic chips yet.</p>
-                      ) : (
-                        topicChips.map((chip) => (
-                          <label
-                            key={chip.id}
-                            className={`chip-toggle ${
-                              chipSuggestionIds.includes(chip.id) ? "suggested" : ""
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={selectedExistingChipIds.includes(chip.id)}
-                              onChange={() => handleToggleExistingChip(chip.id)}
-                              disabled={!isSourceReady}
-                            />
-                            {chip.label}
-                          </label>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                  <div className="chip-section">
-                    <h3>New chip suggestions</h3>
-                    <div className="chip-grid">
-                      {newChipDisplay.length === 0 ? (
-                        <p className="muted">No new chip suggestions yet.</p>
-                      ) : (
-                        newChipDisplay.map((label) => (
-                          <label key={label} className="chip-toggle suggested">
-                            <input
-                              type="checkbox"
-                              checked={selectedNewChipLabels.includes(label)}
-                              onChange={() => handleToggleNewChip(label)}
-                              disabled={!isSourceReady}
-                            />
-                            {label}
-                          </label>
-                        ))
-                      )}
-                    </div>
-                    <div className="form-inline">
-                      <input
-                        type="text"
-                        value={wizardChipLabel}
-                        onChange={(event) => setWizardChipLabel(event.target.value)}
-                        placeholder="Add a new chip label"
-                        disabled={!selectedModuleId}
-                      />
-                      <button
-                        className="button ghost"
-                        type="button"
-                        onClick={handleAddNewChipLabel}
-                        disabled={!isSourceReady || !wizardChipLabel.trim()}
-                      >
-                        Add new chip
-                      </button>
-                      <button
-                        className="button ghost"
-                        type="button"
-                        onClick={handleCreateWizardChip}
-                        disabled={!selectedModuleId || !isSourceReady || !wizardChipLabel.trim()}
-                      >
-                        Save to module pool
-                      </button>
-                    </div>
-                  </div>
-                </section>
-
-                <section className="panel" id="step-finalize">
-                  <h2>5. Generate study cards</h2>
-                  <div className="summary">
-                    <p>
-                      <strong>Title:</strong>{" "}
-                      {customTitle.trim() || selectedTitleSuggestion || "—"}
-                    </p>
-                    <p>
-                      <strong>Selected chips:</strong>{" "}
-                      {[
-                        ...topicChips
-                          .filter((chip) => selectedExistingChipIds.includes(chip.id))
-                          .map((chip) => chip.label),
-                        ...selectedNewChipLabels
-                      ].join(", ") || "None"}
-                    </p>
-                  </div>
-                  <button
-                    className="button primary"
-                    type="button"
-                    onClick={handleFinalizeNoteGroup}
-                    disabled={
-                      !isSourceReady ||
-                      !selectedModuleId ||
-                      !rawTextDraft.trim() ||
-                      finalizeLoading ||
-                      !hasTitleSuggestions ||
-                      !hasChipSuggestions ||
-                      !(customTitle.trim() || selectedTitleSuggestion)
-                    }
-                  >
-                    {finalizeLoading ? "Finalizing..." : "Generate study cards"}
-                  </button>
-                  {finalizeError ? <p className="error">{finalizeError}</p> : null}
-                </section>
-              </>
             ) : noteGroupMode === "auto" ? (
               <>
                 {sourcePanel}
-                <section className="panel" id="auto-note-group">
-                  <h2>Auto-create note group</h2>
+                <section className="panel" id="create-note-group">
+                  <h2>Create note group</h2>
                   <p className="muted">
                     Paste raw text and we will select a title, attach topic chips, generate study
                     cards, and generate question cards in the background.
                   </p>
                   <div className="field">
-                    <label htmlFor="auto-additional-instructions">
-                      Additional generation instructions (optional)
-                    </label>
-                    <textarea
-                      id="auto-additional-instructions"
-                      value={autoAdditionalInstructions}
-                      onChange={(event) => setAutoAdditionalInstructions(event.target.value)}
-                      placeholder="Optional guidance for study and question generation"
-                      rows={3}
-                      disabled={!selectedModuleId || !isSourceReady}
-                    />
-                    <p className="muted">
-                      Word count: {countWords(autoAdditionalInstructions)}/500
-                    </p>
-                  </div>
-                  <div className="field">
-                    <label htmlFor="auto-raw-text">Raw text</label>
+                    <div className="label-with-help">
+                      <label htmlFor="auto-raw-text">Raw text</label>
+                      <span
+                        className="help-tooltip"
+                        aria-label="Raw text help"
+                        tabIndex={0}
+                      >
+                        ?
+                        <span className="tooltip-content" role="tooltip">
+                          Paste the study material itself: lecture notes, article excerpts,
+                          textbook sections, transcripts, or other source text to turn into
+                          study cards and question cards.
+                        </span>
+                      </span>
+                    </div>
                     <textarea
                       id="auto-raw-text"
                       value={autoRawText}
@@ -5161,6 +4682,25 @@ export default function App() {
                       disabled={!selectedModuleId || !isSourceReady}
                     />
                   </div>
+                  <details className="optional-parameters">
+                    <summary>Optional parameters</summary>
+                    <div className="field">
+                      <label htmlFor="auto-additional-instructions">
+                        Additional generation instructions
+                      </label>
+                      <textarea
+                        id="auto-additional-instructions"
+                        value={autoAdditionalInstructions}
+                        onChange={(event) => setAutoAdditionalInstructions(event.target.value)}
+                        placeholder="Optional guidance for study and question generation"
+                        rows={3}
+                        disabled={!selectedModuleId || !isSourceReady}
+                      />
+                      <p className="muted">
+                        Word count: {countWords(autoAdditionalInstructions)}/500
+                      </p>
+                    </div>
+                  </details>
                   <button
                     className="button primary"
                     type="button"
@@ -5169,7 +4709,7 @@ export default function App() {
                       !selectedModuleId || !isSourceReady || !autoRawText.trim() || autoCreateLoading
                     }
                   >
-                    {autoCreateLoading ? "Starting..." : "Run auto workflow"}
+                    {autoCreateLoading ? "Starting..." : "Create note group"}
                   </button>
                   {autoCreateError ? <p className="error">{autoCreateError}</p> : null}
                 </section>
