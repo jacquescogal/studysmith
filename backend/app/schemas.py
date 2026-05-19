@@ -172,6 +172,52 @@ class QuestionTimelineResponse(BaseModel):
     stale_count: int
 
 
+class NoteGroupProgressSummaryOut(BaseModel):
+    success_rate: float
+    mastery_percentage: float
+    reviewed_card_count: int
+    question_count: int
+    total_reviews: int
+    median_response_time_ms: Optional[int] = None
+
+
+class NoteGroupProgressBucketOut(BaseModel):
+    date: str
+    success_rate: float
+    review_count: int
+    correct: int
+    incorrect: int
+    average_mastery: Optional[float] = None
+    average_difficulty: Optional[float] = None
+
+
+class MasteryDistributionOut(BaseModel):
+    low: int
+    medium: int
+    high: int
+    unknown: int
+
+
+class NeedsAttentionQuestionOut(BaseModel):
+    id: str
+    prompt: str
+    mastery: Optional[float] = None
+    success_rate: Optional[float] = None
+    reviews: int
+    lapses: int
+    difficulty: Optional[float] = None
+    stale: bool
+    reason: str
+
+
+class NoteGroupProgressResponse(BaseModel):
+    summary: NoteGroupProgressSummaryOut
+    trend: List[NoteGroupProgressBucketOut]
+    activity: List[NoteGroupProgressBucketOut]
+    mastery_distribution: MasteryDistributionOut
+    needs_attention: List[NeedsAttentionQuestionOut]
+
+
 class ModuleOverviewStatsOut(BaseModel):
     study_count: int
     question_count: int
