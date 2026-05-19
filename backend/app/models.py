@@ -278,6 +278,37 @@ class QuestionCard(Base):
     note_group = relationship("NoteGroup", back_populates="question_cards")
 
 
+class QuestionCardReviewEvent(Base):
+    __tablename__ = "question_card_reviews"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    question_card_id = Column(String, ForeignKey("question_cards.id"), nullable=False, index=True)
+    note_group_id = Column(String, ForeignKey("note_groups.id"), nullable=False, index=True)
+    module_id = Column(String, ForeignKey("modules.id"), nullable=False, index=True)
+    correct = Column(Boolean, nullable=False)
+    response_time_ms = Column(Integer, nullable=False)
+    rating = Column(String, nullable=False)
+    previous_due_at = Column(DateTime)
+    next_due_at = Column(DateTime)
+    previous_difficulty = Column(Float, default=0.0)
+    next_difficulty = Column(Float, default=0.0)
+    previous_stability = Column(Float, default=0.0)
+    next_stability = Column(Float, default=0.0)
+    previous_state = Column(Integer)
+    next_state = Column(Integer)
+    previous_reps = Column(Integer, default=0)
+    next_reps = Column(Integer, default=0)
+    previous_lapses = Column(Integer, default=0)
+    next_lapses = Column(Integer, default=0)
+    answer_option_indices_json = Column(Text, nullable=False, default="[]")
+    correct_option_indices_json = Column(Text, nullable=False, default="[]")
+    reviewed_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    question_card = relationship("QuestionCard")
+    note_group = relationship("NoteGroup")
+    module = relationship("Module")
+
+
 class TopicChip(Base):
     __tablename__ = "topic_chips"
 
