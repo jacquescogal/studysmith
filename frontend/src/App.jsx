@@ -15,6 +15,7 @@ import { ModuleIndex } from "@/features/modules/ModuleIndex";
 import { ModuleOverview } from "@/features/modules/ModuleOverview";
 import { NoteGroupCreate } from "@/features/note-groups/NoteGroupCreate";
 import { NoteGroupOverview } from "@/features/note-groups/NoteGroupOverview";
+import { NoteGroupProgress } from "@/features/note-groups/NoteGroupProgress";
 import { QuestionCardList } from "@/features/question-cards/QuestionCardList";
 import { ReadingDialog } from "@/features/reading/ReadingDialog";
 import { ReviewDialog } from "@/features/review/ReviewDialog";
@@ -36,6 +37,7 @@ import {
   formatCreatedAt,
   getModuleAdditionalInstructions,
   getNoteGroupStatusMeta,
+  normalizeNoteGroupProgress,
   normalizeNoteGroups,
   normalizeTimeline
 } from "@/lib/format";
@@ -63,6 +65,7 @@ import {
   getModule,
   getModuleOverview,
   getModuleQuestionTimeline,
+  getNoteGroupProgress,
   getNoteGroupQuestionTimeline,
   getNoteGroup,
   getStudyCard,
@@ -252,6 +255,10 @@ export default function App() {
     sixMonths: 0,
     longTerm: 0
   });
+  const [progressRange, setProgressRange] = useState("30d");
+  const [noteGroupProgress, setNoteGroupProgress] = useState(normalizeNoteGroupProgress());
+  const [noteGroupProgressLoading, setNoteGroupProgressLoading] = useState(false);
+  const [noteGroupProgressError, setNoteGroupProgressError] = useState("");
   const [isReadingOpen, setIsReadingOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isMetadataOpen, setIsMetadataOpen] = useState(false);
@@ -1246,6 +1253,41 @@ export default function App() {
       cancelled = true;
     };
   }, [selectedNoteGroupId, selectedTopicId, chipFilterIds, questionCards, reviewRefreshToken]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedNoteGroupId || selectedTopicId) {
+      setNoteGroupProgress(normalizeNoteGroupProgress());
+      setNoteGroupProgressError("");
+      setNoteGroupProgressLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    const loadProgress = async () => {
+      setNoteGroupProgressLoading(true);
+      setNoteGroupProgressError("");
+      try {
+        const data = await getNoteGroupProgress(selectedNoteGroupId, progressRange, chipFilterIds);
+        if (!cancelled) {
+          setNoteGroupProgress(normalizeNoteGroupProgress(data));
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setNoteGroupProgress(normalizeNoteGroupProgress());
+          setNoteGroupProgressError(error.message || "Failed to load progress");
+        }
+      } finally {
+        if (!cancelled) {
+          setNoteGroupProgressLoading(false);
+        }
+      }
+    };
+    loadProgress();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedNoteGroupId, selectedTopicId, progressRange, chipFilterIds, reviewRefreshToken]);
 
   useEffect(() => {
     setChatMessages([]);
@@ -5199,6 +5241,23 @@ export default function App() {
                                     Delete note group
                                   </button>
                                 </>
+                              }
+                            />
+                            <NoteGroupProgress
+                              progress={noteGroupProgress}
+                              range={progressRange}
+                              loading={noteGroupProgressLoading}
+                              error={noteGroupProgressError}
+                              onRangeChange={setProgressRange}
+                              onOpenPerformance={() =>
+                                navigate(
+                                  noteGroupPath(
+                                    selectedSubjectCode,
+                                    selectedModuleCode,
+                                    selectedNoteGroupCode,
+                                    "question-cards"
+                                  )
+                                )
                               }
                             />
                             <section className={panelClass} id="note-group-content">
