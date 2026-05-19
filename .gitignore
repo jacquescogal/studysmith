@@ -21,6 +21,7 @@ frontend/dist/
 
 # Tooling
 docs/superpowers/
+.worktrees/
 
 .codex
 .env
