@@ -30,6 +30,7 @@ from app.models import (
     NoteGroup,
     NoteGroupShortCode,
     QuestionCard,
+    QuestionCardReviewEvent,
     StudyCard,
     StudyCardSourceRange,
     Subject,
@@ -1953,12 +1954,48 @@ def review_question(
         raise HTTPException(status_code=404, detail="Question card not found")
     if payload.response_time_ms < 0:
         raise HTTPException(status_code=400, detail="Response time must be non-negative")
+    correct_indices = json.loads(card.correct_option_indices_json or "[]")
+    option_count = len(json.loads(card.options_json or "[]"))
+    if any(index < 0 or index >= option_count for index in payload.answer_option_indices):
+        raise HTTPException(status_code=400, detail="Answer indices out of range")
     if payload.correct:
         rating = Rating.Easy if payload.response_time_ms <= 30000 else Rating.Good
     else:
         rating = Rating.Again
+
+    previous_due_at = card.due_at
+    previous_difficulty = card.difficulty
+    previous_stability = card.stability
+    previous_state = card.state
+    previous_reps = card.reps
+    previous_lapses = card.lapses
+
     now = datetime.now(timezone.utc)
     review_question_card(card, rating, now, review_duration_ms=payload.response_time_ms)
+    event = QuestionCardReviewEvent(
+        question_card_id=card.id,
+        note_group_id=card.note_group_id,
+        module_id=card.note_group.module_id,
+        correct=payload.correct,
+        response_time_ms=payload.response_time_ms,
+        rating=rating.name.lower(),
+        previous_due_at=previous_due_at,
+        next_due_at=card.due_at,
+        previous_difficulty=previous_difficulty,
+        next_difficulty=card.difficulty,
+        previous_stability=previous_stability,
+        next_stability=card.stability,
+        previous_state=previous_state,
+        next_state=card.state,
+        previous_reps=previous_reps,
+        next_reps=card.reps,
+        previous_lapses=previous_lapses,
+        next_lapses=card.lapses,
+        answer_option_indices_json=json.dumps(payload.answer_option_indices),
+        correct_option_indices_json=json.dumps(correct_indices),
+        reviewed_at=now,
+    )
+    db.add(event)
     db.commit()
     db.refresh(card)
     return _serialize_question_card(card)
