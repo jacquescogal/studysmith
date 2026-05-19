@@ -209,6 +209,16 @@ unknown tiers.
 Mastery is not a separate stored learning model and should not be presented as
 an authoritative proficiency score.
 
+### Review History
+
+The stored event trail of submitted Question Card reviews. Each Review History
+event records the answer result, timing, selected answer, FSRS rating, and the
+before/after scheduling state for the Question Card.
+
+Review History belongs to Question Cards and can be aggregated by Note Group,
+Module, or Topic for progress analytics. Review History is not a scheduling
+model; FSRS remains the scheduling model.
+
 ## Retrieval And Chat
 
 ### RAG Boundary
