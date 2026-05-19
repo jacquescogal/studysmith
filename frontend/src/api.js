@@ -325,6 +325,34 @@ export function getNoteGroupQuestionTimeline(noteGroupId, chipIds = []) {
   return request(`/note-groups/${noteGroupId}/question-cards/timeline${suffix}`);
 }
 
+export function getNoteGroupProgress(noteGroupId, range = "30d", chipIds = []) {
+  const params = new URLSearchParams({ range });
+  if (chipIds.length) {
+    params.set("chip_ids", chipIds.join(","));
+  }
+  return request(`/note-groups/${noteGroupId}/progress?${params.toString()}`);
+}
+
+export function getNoteGroupQuestionCardPerformance(noteGroupId, options = {}) {
+  const params = new URLSearchParams({
+    range: options.range || "30d",
+    sort: options.sort || "success_rate",
+    direction: options.direction || "asc",
+    mastery: options.mastery || "all",
+    reviewed: options.reviewed || "all"
+  });
+  if (typeof options.stale === "boolean") {
+    params.set("stale", String(options.stale));
+  }
+  if (options.attention) {
+    params.set("attention", "true");
+  }
+  if (options.chipIds?.length) {
+    params.set("chip_ids", options.chipIds.join(","));
+  }
+  return request(`/note-groups/${noteGroupId}/question-card-performance?${params.toString()}`);
+}
+
 export function getModuleQuestionTimeline(moduleId, chipIds = []) {
   const params = new URLSearchParams();
   if (chipIds.length) {
