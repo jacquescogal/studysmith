@@ -1,31 +1,68 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
+const MAX_REQUEST_ATTEMPTS = 3;
+const RETRY_DELAYS_MS = [250, 750];
+
+const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+const isRetryableStatus = (status) =>
+  status === 408 || status === 429 || (status >= 500 && status < 600);
+
+const isAbortError = (error) => error?.name === "AbortError";
+
+async function parseErrorResponse(response) {
+  const raw = await response.text();
+  let detail = raw || "Request failed";
+  try {
+    const parsed = JSON.parse(raw);
+    detail = parsed.detail || JSON.stringify(parsed);
+  } catch (error) {
+    // keep raw as detail
+  }
+  const error = new Error(detail);
+  error.status = response.status;
+  return error;
+}
 
 async function request(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const requestOptions = {
+    ...options,
     headers: {
       "Content-Type": "application/json",
       ...(options.headers || {})
-    },
-    ...options
-  });
-
-  if (!response.ok) {
-    const raw = await response.text();
-    let detail = raw || "Request failed";
-    try {
-      const parsed = JSON.parse(raw);
-      detail = parsed.detail || JSON.stringify(parsed);
-    } catch (error) {
-      // keep raw as detail
     }
-    throw new Error(detail);
+  };
+  let lastError;
+
+  for (let attempt = 1; attempt <= MAX_REQUEST_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetch(`${API_BASE}${path}`, requestOptions);
+
+      if (!response.ok) {
+        const error = await parseErrorResponse(response);
+        if (!isRetryableStatus(response.status) || attempt === MAX_REQUEST_ATTEMPTS) {
+          throw error;
+        }
+        lastError = error;
+      } else if (response.status === 204) {
+        return null;
+      } else {
+        return response.json();
+      }
+    } catch (error) {
+      if (
+        isAbortError(error) ||
+        (error.status && !isRetryableStatus(error.status)) ||
+        attempt === MAX_REQUEST_ATTEMPTS
+      ) {
+        throw error;
+      }
+      lastError = error;
+    }
+
+    await sleep(RETRY_DELAYS_MS[attempt - 1] ?? RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - 1]);
   }
 
-  if (response.status === 204) {
-    return null;
-  }
-
-  return response.json();
+  throw lastError || new Error("Request failed");
 }
 
 export function listSubjects() {
