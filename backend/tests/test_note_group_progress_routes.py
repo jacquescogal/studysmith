@@ -246,6 +246,71 @@ class NoteGroupProgressRoutesTests(unittest.TestCase):
         self.assertEqual(data["summary"]["total_reviews"], 1)
         self.assertEqual(data["summary"]["success_rate"], 100.0)
 
+    def test_question_card_performance_sorts_by_success_rate(self):
+        from app.main import get_note_group_question_card_performance
+
+        db = self.seed_review_scope()
+        try:
+            hard = QuestionCard(
+                id="question-hard",
+                note_group_id="group-1",
+                type="mcq",
+                prompt="Hard",
+                options_json='["A", "B"]',
+                correct_option_indices_json="[0]",
+                study_card_refs_json='["study-1"]',
+                stale=True,
+                difficulty=8.0,
+                lapses=2,
+                due_at=datetime.utcnow(),
+            )
+            db.add(hard)
+            db.add_all(
+                [
+                    QuestionCardReviewEvent(
+                        question_card_id="question-1",
+                        note_group_id="group-1",
+                        module_id="module-1",
+                        correct=True,
+                        response_time_ms=1000,
+                        rating="easy",
+                        answer_option_indices_json="[1]",
+                        correct_option_indices_json="[1]",
+                        reviewed_at=datetime.utcnow(),
+                    ),
+                    QuestionCardReviewEvent(
+                        question_card_id="question-hard",
+                        note_group_id="group-1",
+                        module_id="module-1",
+                        correct=False,
+                        response_time_ms=4000,
+                        rating="again",
+                        answer_option_indices_json="[1]",
+                        correct_option_indices_json="[0]",
+                        reviewed_at=datetime.utcnow(),
+                    ),
+                ]
+            )
+            db.commit()
+            data = get_note_group_question_card_performance(
+                "group-1",
+                range="30d",
+                sort="success_rate",
+                direction="asc",
+                mastery="all",
+                stale=None,
+                reviewed="all",
+                attention=False,
+                chip_ids=None,
+                db=db,
+            )
+        finally:
+            db.close()
+
+        self.assertEqual(data["rows"][0]["id"], "question-hard")
+        self.assertEqual(data["rows"][0]["success_rate"], 0.0)
+        self.assertTrue(data["rows"][0]["stale"])
+
 
 if __name__ == "__main__":
     unittest.main()

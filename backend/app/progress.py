@@ -189,3 +189,103 @@ def build_note_group_progress(
         },
         "needs_attention": needs_attention[:5],
     }
+
+
+def build_question_card_performance(
+    db: Session,
+    note_group_id: str,
+    range_value: str = "30d",
+    sort: str = "success_rate",
+    direction: str = "asc",
+    mastery: str = "all",
+    stale: Optional[bool] = None,
+    reviewed: str = "all",
+    attention: bool = False,
+    chip_ids: Optional[list[str]] = None,
+    now: Optional[datetime] = None,
+) -> dict:
+    current = now or datetime.now(timezone.utc)
+    start = progress_start(range_value, current)
+    allowed_ids = allowed_study_ids(db, note_group_id, chip_ids or [])
+    cards = db.query(QuestionCard).filter(QuestionCard.note_group_id == note_group_id).all()
+    cards = filter_cards_by_studies(cards, allowed_ids)
+    card_ids = {card.id for card in cards}
+    event_query = db.query(QuestionCardReviewEvent).filter(
+        QuestionCardReviewEvent.note_group_id == note_group_id
+    )
+    if start is not None:
+        event_query = event_query.filter(QuestionCardReviewEvent.reviewed_at >= start)
+    events_by_card = defaultdict(list)
+    for event in event_query.all():
+        if event.question_card_id in card_ids:
+            events_by_card[event.question_card_id].append(event)
+
+    rows = []
+    for card in cards:
+        events = events_by_card[card.id]
+        review_count = len(events)
+        correct_count = sum(1 for event in events if event.correct)
+        response_times = [event.response_time_ms for event in events]
+        score = mastery_score(card)
+        tier = mastery_tier(score)
+        success_rate = round((correct_count / review_count) * 100, 1) if review_count else None
+        is_attention = bool(
+            card.stale
+            or (card.lapses and card.lapses >= 2)
+            or (success_rate is not None and success_rate < 60)
+            or tier == "low"
+        )
+        rows.append(
+            {
+                "id": card.id,
+                "prompt": card.prompt,
+                "mastery": round(score, 1) if score is not None else None,
+                "mastery_tier": tier,
+                "success_rate": success_rate,
+                "reviews": review_count,
+                "lapses": card.lapses or 0,
+                "median_response_time_ms": int(median(response_times)) if response_times else None,
+                "last_reviewed_at": max(
+                    (event.reviewed_at for event in events if event.reviewed_at),
+                    default=None,
+                ),
+                "due_at": card.due_at,
+                "difficulty": card.difficulty,
+                "stability": card.stability,
+                "stale": bool(card.stale),
+                "attention": is_attention,
+            }
+        )
+
+    if mastery != "all":
+        rows = [row for row in rows if row["mastery_tier"] == mastery]
+    if stale is not None:
+        rows = [row for row in rows if row["stale"] == stale]
+    if reviewed == "reviewed":
+        rows = [row for row in rows if row["reviews"] > 0]
+    elif reviewed == "unreviewed":
+        rows = [row for row in rows if row["reviews"] == 0]
+    if attention:
+        rows = [row for row in rows if row["attention"]]
+
+    sort_fields = {
+        "success_rate",
+        "mastery",
+        "reviews",
+        "lapses",
+        "median_response_time_ms",
+        "last_reviewed",
+        "due_at",
+        "difficulty",
+    }
+    sort_key = sort if sort in sort_fields else "success_rate"
+    field = "last_reviewed_at" if sort_key == "last_reviewed" else sort_key
+    reverse = direction == "desc"
+    rows.sort(
+        key=lambda row: (
+            row[field] is None,
+            row[field] if row[field] is not None else 0,
+        ),
+        reverse=reverse,
+    )
+    return {"rows": rows}

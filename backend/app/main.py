@@ -51,7 +51,7 @@ from app.short_codes import (
     ensure_topic_chip_short_codes,
 )
 from app.fsrs_utils import initialize_question_card, review_question_card
-from app.progress import build_note_group_progress
+from app.progress import build_note_group_progress, build_question_card_performance
 from app.openai_client import (
     embed_texts,
     generate_chat_response,
@@ -78,6 +78,7 @@ from app.schemas import (
     NoteGroupProgressResponse,
     QuestionCardCreate,
     QuestionCardGenerate,
+    QuestionCardPerformanceResponse,
     QuestionCardList,
     QuestionCardOut,
     QuestionCardReview,
@@ -1794,6 +1795,40 @@ def get_note_group_progress(
         raise HTTPException(status_code=404, detail="Note group not found")
     chip_id_list = _parse_chip_ids(chip_ids)
     return build_note_group_progress(db, note_group_id, range, chip_id_list)
+
+
+@app.get(
+    "/note-groups/{note_group_id}/question-card-performance",
+    response_model=QuestionCardPerformanceResponse,
+)
+def get_note_group_question_card_performance(
+    note_group_id: str,
+    range: str = Query(default="30d"),
+    sort: str = Query(default="success_rate"),
+    direction: str = Query(default="asc"),
+    mastery: str = Query(default="all"),
+    stale: Optional[bool] = Query(default=None),
+    reviewed: str = Query(default="all"),
+    attention: bool = Query(default=False),
+    chip_ids: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    note_group = db.get(NoteGroup, note_group_id)
+    if not note_group:
+        raise HTTPException(status_code=404, detail="Note group not found")
+    chip_id_list = _parse_chip_ids(chip_ids)
+    return build_question_card_performance(
+        db,
+        note_group_id,
+        range,
+        sort,
+        direction,
+        mastery,
+        stale,
+        reviewed,
+        attention,
+        chip_id_list,
+    )
 
 
 @app.get("/note-groups/{note_group_id}/question-cards/review", response_model=QuestionCardList)
