@@ -65,7 +65,48 @@ export const normalizeTimeline = (timeline = {}) => ({
     ? timeline.long_term
     : Number.isInteger(timeline.longTerm)
       ? timeline.longTerm
-      : 0
+    : 0
+});
+
+export const formatPercent = (value) => {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "0%";
+  }
+  return `${number.toFixed(number % 1 === 0 ? 0 : 1)}%`;
+};
+
+export const formatDurationMs = (value) => {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "—";
+  }
+  if (number < 1000) {
+    return `${Math.round(number)} ms`;
+  }
+  return `${(number / 1000).toFixed(1)} s`;
+};
+
+export const normalizeNoteGroupProgress = (data = {}) => ({
+  summary: {
+    successRate: Number(data.summary?.success_rate) || 0,
+    masteryPercentage: Number(data.summary?.mastery_percentage) || 0,
+    reviewedCardCount: Number(data.summary?.reviewed_card_count) || 0,
+    questionCount: Number(data.summary?.question_count) || 0,
+    totalReviews: Number(data.summary?.total_reviews) || 0,
+    medianResponseTimeMs: Number.isFinite(Number(data.summary?.median_response_time_ms))
+      ? Number(data.summary.median_response_time_ms)
+      : null
+  },
+  trend: Array.isArray(data.trend) ? data.trend : [],
+  activity: Array.isArray(data.activity) ? data.activity : [],
+  masteryDistribution: {
+    low: Number(data.mastery_distribution?.low) || 0,
+    medium: Number(data.mastery_distribution?.medium) || 0,
+    high: Number(data.mastery_distribution?.high) || 0,
+    unknown: Number(data.mastery_distribution?.unknown) || 0
+  },
+  needsAttention: Array.isArray(data.needs_attention) ? data.needs_attention : []
 });
 
 export const formatAnswerLabels = (card, indices) => {
