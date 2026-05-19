@@ -13,21 +13,23 @@ class PageRoutesTests(unittest.TestCase):
     def test_frontend_uses_durable_subject_and_module_urls(self):
         app_source = Path(__file__).parents[2] / "frontend" / "src" / "App.jsx"
         api_source = Path(__file__).parents[2] / "frontend" / "src" / "api.js"
+        routes_source = Path(__file__).parents[2] / "frontend" / "src" / "lib" / "routes.js"
         content = app_source.read_text(encoding="utf-8")
         api_content = api_source.read_text(encoding="utf-8")
+        routes_content = routes_source.read_text(encoding="utf-8")
 
-        self.assertIn("/app/subject/", content)
-        self.assertIn("/module/", content)
-        self.assertIn("create-note-group", content)
+        self.assertIn("/app/subject/", routes_content)
+        self.assertIn("/module/", routes_content)
+        self.assertIn("create-note-group", routes_content)
         self.assertIn(
             "/app/subject/${subjectCode}/module/${moduleCode}/note-groups/${noteGroupCode}",
-            content,
+            routes_content,
         )
         self.assertIn(
             "/app/subject/${subjectCode}/module/${moduleCode}/topics/${topicCode}",
-            content,
+            routes_content,
         )
-        self.assertIn("overview|study-cards|question-cards", content)
+        self.assertIn("overview|study-cards|question-cards", routes_content)
         self.assertIn("routeSubjectCode", content)
         self.assertIn("routeModuleCode", content)
         self.assertIn("routeNoteGroupCode", content)
@@ -39,9 +41,9 @@ class PageRoutesTests(unittest.TestCase):
         self.assertIn("module.short_code", content)
         self.assertIn("noteGroup?.short_code", content)
         self.assertIn("topic.short_code", content)
-        self.assertNotIn("/app/subjects/", content)
-        self.assertNotIn("/app/modules/", content)
-        self.assertNotIn("/app/note-groups/", content)
+        self.assertNotIn("/app/subjects/", routes_content)
+        self.assertNotIn("/app/modules/", routes_content)
+        self.assertNotIn("/app/note-groups/", routes_content)
 
     def test_backend_exposes_module_lookup_for_url_restoration(self):
         from app.main import app
