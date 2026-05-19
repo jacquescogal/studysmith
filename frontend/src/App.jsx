@@ -18,6 +18,7 @@ import {
   deleteQuestionCard,
   deleteStudyCard,
   deleteSubject,
+  deleteTopic,
   detachTopicChip,
   generateQuestionCards,
   getJob,
@@ -27,6 +28,8 @@ import {
   getNoteGroupQuestionTimeline,
   getNoteGroup,
   getStudyCard,
+  getTopic,
+  getTopicQuestionTimeline,
   listJobs,
   listAllModules,
   listModuleReviewQuestionCards,
@@ -36,10 +39,14 @@ import {
   listStudyCards,
   listSubjects,
   listTopicChips,
+  listTopicQuestionCards,
+  listTopicReviewQuestionCards,
+  listTopicStudyCards,
   retryAutoJob,
   resolveAppModuleRoute,
   resolveAppNoteGroupRoute,
   resolveAppSubjectRoute,
+  resolveAppTopicRoute,
   reviewQuestionCard,
   sendChat,
   sendModuleIntentChat,
@@ -49,7 +56,8 @@ import {
   updateQuestionCard,
   updateStudyCard,
   updateModule,
-  updateSubject
+  updateSubject,
+  updateTopic
 } from "./api";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -370,6 +378,10 @@ const noteGroupPath = (subjectCode, moduleCode, noteGroupCode, panel = "overview
   const basePath = `/app/subject/${subjectCode}/module/${moduleCode}/note-groups/${noteGroupCode}`;
   return panel && panel !== "overview" ? `${basePath}/${panel}` : basePath;
 };
+const topicPath = (subjectCode, moduleCode, topicCode, panel = "overview") => {
+  const basePath = `/app/subject/${subjectCode}/module/${moduleCode}/topics/${topicCode}`;
+  return panel && panel !== "overview" ? `${basePath}/${panel}` : basePath;
+};
 
 const withRouteRestoreTimeout = (promise, label) =>
   Promise.race([
@@ -390,6 +402,10 @@ const resolveModuleForRouteRestore = async (moduleId) => {
     }
     return module;
   }
+};
+
+const showFetchToast = (error, fallback) => {
+  toast.error(error?.message || fallback);
 };
 
 export default function App() {
@@ -452,6 +468,8 @@ export default function App() {
   const [moduleStatsLoading, setModuleStatsLoading] = useState(false);
   const [moduleStatsError, setModuleStatsError] = useState("");
   const [selectedNoteGroupId, setSelectedNoteGroupId] = useState("");
+  const [selectedTopicId, setSelectedTopicId] = useState("");
+  const [sidebarScope, setSidebarScope] = useState("note-groups");
   const [noteGroupSource, setNoteGroupSource] = useState("");
   const [sourceChecking, setSourceChecking] = useState(false);
   const [sourceChecked, setSourceChecked] = useState(false);
@@ -483,6 +501,11 @@ export default function App() {
   const [metadataError, setMetadataError] = useState("");
 
   const [topicChips, setTopicChips] = useState([]);
+  const [topicSearch, setTopicSearch] = useState("");
+  const [topicTitleDraft, setTopicTitleDraft] = useState("");
+  const [topicDescriptionDraft, setTopicDescriptionDraft] = useState("");
+  const [topicSaving, setTopicSaving] = useState(false);
+  const [topicError, setTopicError] = useState("");
   const [chipFilterIds, setChipFilterIds] = useState([]);
   const [noteGroupChipIds, setNoteGroupChipIds] = useState([]);
   const [moduleChipLabel, setModuleChipLabel] = useState("");
@@ -595,6 +618,9 @@ export default function App() {
   const routeNoteGroupMatch = location.pathname.match(
     /^\/app\/subject\/([a-zA-Z0-9_-]+)\/module\/([a-zA-Z0-9_-]+)\/note-groups\/([a-zA-Z0-9_-]+)(?:\/(overview|study-cards|question-cards))?$/
   );
+  const routeTopicMatch = location.pathname.match(
+    /^\/app\/subject\/([a-zA-Z0-9_-]+)\/module\/([a-zA-Z0-9_-]+)\/topics\/([a-zA-Z0-9_-]+)(?:\/(overview|study-cards|question-cards))?$/
+  );
   const routeSubjectPageCode = routeSubjectPageMatch ? routeSubjectPageMatch[1] : "";
   const routeSubjectCode = routeSubjectPageMatch
     ? routeSubjectPageMatch[1]
@@ -604,28 +630,39 @@ export default function App() {
         ? routeCreateNoteGroupMatch[1]
         : routeNoteGroupMatch
           ? routeNoteGroupMatch[1]
-          : "";
+          : routeTopicMatch
+            ? routeTopicMatch[1]
+            : "";
   const routeModuleCode = routeModuleMatch
     ? routeModuleMatch[2]
     : routeCreateNoteGroupMatch
       ? routeCreateNoteGroupMatch[2]
       : routeNoteGroupMatch
         ? routeNoteGroupMatch[2]
-        : "";
+        : routeTopicMatch
+          ? routeTopicMatch[2]
+          : "";
   const routeNoteGroupCode = routeNoteGroupMatch ? routeNoteGroupMatch[3] : "";
-  const routePanel = routeNoteGroupMatch ? routeNoteGroupMatch[4] || "overview" : "";
+  const routeTopicCode = routeTopicMatch ? routeTopicMatch[3] : "";
+  const routePanel = routeNoteGroupMatch
+    ? routeNoteGroupMatch[4] || "overview"
+    : routeTopicMatch
+      ? routeTopicMatch[4] || "overview"
+      : "";
   const routeCreateNoteGroup = Boolean(routeCreateNoteGroupMatch);
   const resolvedRouteMatches =
     resolvedRouteContext &&
     resolvedRouteContext.subject_short_code === routeSubjectCode &&
     (!routeModuleCode || resolvedRouteContext.module_short_code === routeModuleCode) &&
     (!routeNoteGroupCode ||
-      resolvedRouteContext.note_group_short_code === routeNoteGroupCode);
+      resolvedRouteContext.note_group_short_code === routeNoteGroupCode) &&
+    (!routeTopicCode || resolvedRouteContext.topic_short_code === routeTopicCode);
   const routeSubjectId = resolvedRouteMatches ? resolvedRouteContext.subject_id : "";
   const routeModuleId = resolvedRouteMatches ? resolvedRouteContext.module_id || "" : "";
   const routeNoteGroupId = resolvedRouteMatches
     ? resolvedRouteContext.note_group_id || ""
     : "";
+  const routeTopicId = resolvedRouteMatches ? resolvedRouteContext.topic_id || "" : "";
   const isStudyPage = routePanel === "study-cards";
   const isQuestionPage = routePanel === "question-cards";
   const hasUnresolvedRouteTarget = Boolean(
@@ -635,7 +672,11 @@ export default function App() {
       (routeNoteGroupId &&
         (!selectedSubjectId ||
           !selectedModuleId ||
-          selectedNoteGroupId !== routeNoteGroupId))
+          selectedNoteGroupId !== routeNoteGroupId)) ||
+      (routeTopicId &&
+        (!selectedSubjectId ||
+          !selectedModuleId ||
+          selectedTopicId !== routeTopicId))
   );
   const isRestoringRoute = hasUnresolvedRouteTarget && !routeRestoreError;
 
@@ -651,9 +692,19 @@ export default function App() {
     () => noteGroups.find((group) => group.id === selectedNoteGroupId),
     [noteGroups, selectedNoteGroupId]
   );
+  const selectedTopic = useMemo(
+    () => topicChips.find((topic) => topic.id === selectedTopicId),
+    [topicChips, selectedTopicId]
+  );
   const selectedSubjectCode = selectedSubject?.short_code || "";
   const selectedModuleCode = selectedModule?.short_code || "";
   const selectedNoteGroupCode = selectedNoteGroup?.short_code || "";
+  const selectedTopicCode = selectedTopic?.short_code || "";
+  const activeStudyScopeTitle = selectedTopic
+    ? selectedTopic.label
+    : selectedNoteGroup?.title || "Untitled note group";
+  const isTopicScope = Boolean(selectedTopicId);
+  const canEditCurrentCards = Boolean(selectedNoteGroupId && !selectedTopicId);
   const focusQuestionCard = useMemo(
     () => questionCards.find((card) => card.id === focusQuestionCardId),
     [questionCards, focusQuestionCardId]
@@ -792,7 +843,7 @@ export default function App() {
     if (!selectedModuleId) {
       return [];
     }
-    if (!selectedNoteGroupId) {
+    if (!selectedNoteGroupId && !selectedTopicId) {
       return [
         { id: "module-overview", label: "Module overview" },
         { id: "module-review", label: "Review queue" },
@@ -811,8 +862,16 @@ export default function App() {
         { id: "question-generate", label: "Generate" }
       ];
     }
-    return [{ id: "note-group-overview", label: "Overview" }];
-  }, [noteGroupMode, selectedModuleId, selectedNoteGroupId, isStudyPage, isQuestionPage]);
+    return [{ id: isTopicScope ? "topic-overview" : "note-group-overview", label: "Overview" }];
+  }, [
+    noteGroupMode,
+    selectedModuleId,
+    selectedNoteGroupId,
+    selectedTopicId,
+    isStudyPage,
+    isQuestionPage,
+    isTopicScope
+  ]);
 
   const chipOptions = useMemo(
     () => topicChips.map((chip) => ({
@@ -844,6 +903,23 @@ export default function App() {
     }
     return noteGroupOptions.filter((group) => group.label.toLowerCase().includes(query));
   }, [noteGroupOptions, noteGroupSearch]);
+  const topicOptions = useMemo(
+    () =>
+      topicChips.map((topic) => ({
+        value: topic.id,
+        label: topic.label,
+        description: topic.description || "",
+        shortCode: topic.short_code
+      })),
+    [topicChips]
+  );
+  const filteredTopicOptions = useMemo(() => {
+    const query = topicSearch.trim().toLowerCase();
+    if (!query) {
+      return topicOptions;
+    }
+    return topicOptions.filter((topic) => topic.label.toLowerCase().includes(query));
+  }, [topicOptions, topicSearch]);
   const moduleNoteGroupStatsById = useMemo(() => {
     const map = new Map();
     moduleNoteGroupStats.forEach((group) => {
@@ -958,7 +1034,9 @@ export default function App() {
     return currentReviewCard.type || "mcq";
   }, [currentReviewCard]);
   const reviewNoteGroupId =
-    reviewScope === "module" ? currentReviewCard?.note_group_id : selectedNoteGroupId;
+    reviewScope === "module" || reviewScope === "topic"
+      ? currentReviewCard?.note_group_id
+      : selectedNoteGroupId;
   const reviewCardRefs = currentReviewCard?.study_card_refs || [];
   const reviewRefsMessage = reviewCardRefs.length
     ? "The relevant study cards are:"
@@ -968,6 +1046,7 @@ export default function App() {
   const canReorderNoteGroups = Boolean(
     selectedModuleId &&
       !selectedNoteGroupId &&
+      !selectedTopicId &&
       !chipFilterIds.length &&
       !moduleStatsLoading &&
       !isReviewOverlayVisible &&
@@ -1007,12 +1086,12 @@ export default function App() {
   useEffect(() => {
     listSubjects()
       .then((data) => setSubjects(data))
-      .catch((error) => setSidebarError(error.message));
+      .catch((error) => showFetchToast(error, "Failed to load subjects"));
   }, []);
 
   useEffect(() => {
     setResolvedRouteContext(null);
-  }, [location.pathname]);
+  }, [routeSubjectCode, routeModuleCode, routeNoteGroupCode, routeTopicCode, routeCreateNoteGroup]);
 
   useEffect(() => {
     if (!routeSubjectPageCode) {
@@ -1033,6 +1112,8 @@ export default function App() {
         setSelectedSubjectId(context.subject_id);
         setSelectedModuleId("");
         setSelectedNoteGroupId("");
+        setSelectedTopicId("");
+        setSidebarScope("note-groups");
         setNoteGroupMode("overview");
         setReviewSummary(null);
         setIsChatOpen(false);
@@ -1041,7 +1122,7 @@ export default function App() {
       } catch (error) {
         if (!cancelled) {
           setRouteRestoreError(error.message || "Unable to restore subject page");
-          setSidebarError(error.message || "Failed to restore subject page");
+          showFetchToast(error, "Failed to restore subject page");
         }
       }
     };
@@ -1052,7 +1133,7 @@ export default function App() {
   }, [routeSubjectPageCode]);
 
   useEffect(() => {
-    if (!routeModuleCode || routeNoteGroupCode) {
+    if (!routeModuleCode || routeNoteGroupCode || routeTopicCode) {
       return;
     }
     let cancelled = false;
@@ -1070,6 +1151,8 @@ export default function App() {
         setSelectedSubjectId(context.subject_id);
         setSelectedModuleId(context.module_id);
         setSelectedNoteGroupId("");
+        setSelectedTopicId("");
+        setSidebarScope("note-groups");
         setNoteGroupMode(routeCreateNoteGroup ? "auto" : "overview");
         setReviewSummary(null);
         setIsChatOpen(false);
@@ -1078,7 +1161,7 @@ export default function App() {
       } catch (error) {
         if (!cancelled) {
           setRouteRestoreError(error.message || "Unable to restore module page");
-          setSidebarError(error.message || "Failed to restore module page");
+          showFetchToast(error, "Failed to restore module page");
         }
       }
     };
@@ -1086,7 +1169,47 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [routeSubjectCode, routeModuleCode, routeNoteGroupCode, routeCreateNoteGroup]);
+  }, [routeSubjectCode, routeModuleCode, routeNoteGroupCode, routeTopicCode, routeCreateNoteGroup]);
+
+  useEffect(() => {
+    if (!routeTopicCode) {
+      return;
+    }
+    let cancelled = false;
+    setRouteRestoreError("");
+    const restoreTopicRoute = async () => {
+      try {
+        const context = await withRouteRestoreTimeout(
+          resolveAppTopicRoute(routeSubjectCode, routeModuleCode, routeTopicCode),
+          "Topic route restore"
+        );
+        if (cancelled) {
+          return;
+        }
+        setResolvedRouteContext(context);
+        setSelectedSubjectId(context.subject_id);
+        setSelectedModuleId(context.module_id);
+        setSelectedNoteGroupId("");
+        setSelectedTopicId(context.topic_id);
+        setSidebarScope("topics");
+        setChipFilterIds([]);
+        setNoteGroupMode("overview");
+        setReviewSummary(null);
+        setIsChatOpen(false);
+        setIsMetadataOpen(false);
+        setIsModuleMetadataOpen(false);
+      } catch (error) {
+        if (!cancelled) {
+          setRouteRestoreError(error.message || "Unable to restore topic page");
+          showFetchToast(error, "Failed to restore topic page");
+        }
+      }
+    };
+    restoreTopicRoute();
+    return () => {
+      cancelled = true;
+    };
+  }, [routeSubjectCode, routeModuleCode, routeTopicCode]);
 
   useEffect(() => {
     if (!selectedSubjectId) {
@@ -1098,25 +1221,34 @@ export default function App() {
       .then((data) => {
         setModules(data);
       })
-      .catch((error) => setSidebarError(error.message));
+      .catch((error) => showFetchToast(error, "Failed to load modules"));
   }, [selectedSubjectId]);
 
   useEffect(() => {
     if (!selectedModuleId) {
       setNoteGroups([]);
       setSelectedNoteGroupId("");
+      setSelectedTopicId("");
       setTopicChips([]);
       setChipFilterIds([]);
       return;
     }
     setChipFilterIds([]);
     listTopicChips(selectedModuleId)
-      .then((data) => setTopicChips(data))
-      .catch((error) => setSidebarError(error.message));
-  }, [selectedModuleId]);
+      .then((data) => {
+        setTopicChips(data);
+        if (!routeTopicId) {
+          setSelectedTopicId((currentId) =>
+            currentId && !data.some((topic) => topic.id === currentId) ? "" : currentId
+          );
+        }
+      })
+      .catch((error) => showFetchToast(error, "Failed to load topics"));
+  }, [selectedModuleId, routeTopicId]);
 
   useEffect(() => {
     setNoteGroupSearch("");
+    setTopicSearch("");
   }, [selectedModuleId]);
 
   useEffect(() => {
@@ -1150,7 +1282,7 @@ export default function App() {
       } catch (error) {
         if (!cancelled) {
           setModuleDueCounts({});
-          setSidebarError(error.message || "Failed to load module due counts");
+          showFetchToast(error, "Failed to load module due counts");
         }
       }
     };
@@ -1165,6 +1297,9 @@ export default function App() {
       setNoteGroups([]);
       if (!routeNoteGroupId) {
         setSelectedNoteGroupId("");
+      }
+      if (!routeTopicId) {
+        setSelectedTopicId("");
       }
       setModuleNoteGroupStats([]);
       setModuleStats({
@@ -1242,7 +1377,7 @@ export default function App() {
           longTerm: 0
         });
         setModuleStatsError(error.message || "Failed to load module overview");
-        setSidebarError(error.message || "Failed to load note groups");
+        showFetchToast(error, "Failed to load note groups");
       } finally {
         if (!cancelled) {
           setModuleStatsLoading(false);
@@ -1265,8 +1400,26 @@ export default function App() {
     if (routeNoteGroupRestoredFromList) {
       setRouteRestoreError("");
       setSelectedNoteGroupId(routeNoteGroupId);
+      setSelectedTopicId("");
+      setSidebarScope("note-groups");
     }
   }, [routeNoteGroupId, selectedModuleId, selectedNoteGroupId, noteGroups]);
+
+  useEffect(() => {
+    if (!routeTopicId || !selectedModuleId || selectedTopicId === routeTopicId) {
+      return;
+    }
+    const routeTopicRestoredFromList = topicChips.some(
+      (topic) => topic.id === routeTopicId
+    );
+    if (routeTopicRestoredFromList) {
+      setRouteRestoreError("");
+      setSelectedTopicId(routeTopicId);
+      setSelectedNoteGroupId("");
+      setSidebarScope("topics");
+      setChipFilterIds([]);
+    }
+  }, [routeTopicId, selectedModuleId, selectedTopicId, topicChips]);
 
   useEffect(() => {
     if (!selectedModuleId) {
@@ -1281,11 +1434,13 @@ export default function App() {
   }, [selectedModuleId]);
 
   useEffect(() => {
-    if (!selectedNoteGroupId) {
+    if (!selectedNoteGroupId && !selectedTopicId) {
       setStudyCards([]);
       setQuestionCards([]);
       setNoteGroupChipIds([]);
       setMetadataTitleDraft("");
+      setTopicTitleDraft("");
+      setTopicDescriptionDraft("");
       setFormattedSections([]);
       setCleanedTextMarkdown("");
       return;
@@ -1294,57 +1449,80 @@ export default function App() {
     setQuestionCardError("");
     setQuestionJobStatus("idle");
     let cancelled = false;
-    const loadNoteGroup = async () => {
+    const loadScope = async () => {
       try {
-        const data = await withRouteRestoreTimeout(
-          getNoteGroup(selectedNoteGroupId),
-          "Note group restore"
-        );
-        if (cancelled) {
-          return;
-        }
-        setNoteGroupChipIds((data.topic_chips || []).map((chip) => chip.id));
-        setMetadataTitleDraft(data.title || "");
-        setFormattedSections(data.formatted_sections || []);
-        setCleanedTextMarkdown(data.cleaned_text_markdown || "");
-        if (data.subject_id && data.module_id) {
-          setSelectedSubjectId(data.subject_id);
-          setSelectedModuleId(data.module_id);
-          setRouteRestoreError("");
-          return;
-        }
-        if (
-          data.module_id &&
-          (selectedModuleIdRef.current !== data.module_id || !selectedSubjectIdRef.current)
-        ) {
-          const module = await resolveModuleForRouteRestore(data.module_id);
+        if (selectedTopicId) {
+          const topic = await withRouteRestoreTimeout(
+            getTopic(selectedTopicId),
+            "Topic restore"
+          );
           if (cancelled) {
             return;
           }
-          setSelectedSubjectId(module.subject_id);
-          setSelectedModuleId(module.id);
-          setRouteRestoreError("");
+          setTopicTitleDraft(topic.label || "");
+          setTopicDescriptionDraft(topic.description || "");
+          setFormattedSections([]);
+          setCleanedTextMarkdown("");
+          setNoteGroupChipIds([]);
+        } else {
+          const data = await withRouteRestoreTimeout(
+            getNoteGroup(selectedNoteGroupId),
+            "Note group restore"
+          );
+          if (cancelled) {
+            return;
+          }
+          setNoteGroupChipIds((data.topic_chips || []).map((chip) => chip.id));
+          setMetadataTitleDraft(data.title || "");
+          setFormattedSections(data.formatted_sections || []);
+          setCleanedTextMarkdown(data.cleaned_text_markdown || "");
+          if (data.subject_id && data.module_id) {
+            setSelectedSubjectId(data.subject_id);
+            setSelectedModuleId(data.module_id);
+            setRouteRestoreError("");
+            return;
+          }
+          if (
+            data.module_id &&
+            (selectedModuleIdRef.current !== data.module_id || !selectedSubjectIdRef.current)
+          ) {
+            const module = await resolveModuleForRouteRestore(data.module_id);
+            if (cancelled) {
+              return;
+            }
+            setSelectedSubjectId(module.subject_id);
+            setSelectedModuleId(module.id);
+            setRouteRestoreError("");
+          }
         }
       } catch (error) {
         if (!cancelled) {
           if (routeNoteGroupId === selectedNoteGroupId) {
             setRouteRestoreError(error.message || "Unable to restore note group page");
+          } else if (routeTopicId === selectedTopicId) {
+            setRouteRestoreError(error.message || "Unable to restore topic page");
           }
           setStudyCardError(error.message);
         }
       }
     };
-    loadNoteGroup();
-    listStudyCards(selectedNoteGroupId)
+    loadScope();
+    const studyRequest = selectedTopicId
+      ? listTopicStudyCards(selectedTopicId)
+      : listStudyCards(selectedNoteGroupId);
+    studyRequest
       .then((data) => setStudyCards(data.study_cards || []))
       .catch((error) => setStudyCardError(error.message));
-    listQuestionCards(selectedNoteGroupId)
+    const questionRequest = selectedTopicId
+      ? listTopicQuestionCards(selectedTopicId)
+      : listQuestionCards(selectedNoteGroupId);
+    questionRequest
       .then((data) => setQuestionCards(data.question_cards || []))
       .catch((error) => setQuestionCardError(error.message));
     return () => {
       cancelled = true;
     };
-  }, [selectedNoteGroupId]);
+  }, [selectedNoteGroupId, selectedTopicId, routeNoteGroupId, routeTopicId]);
 
   useEffect(() => {
     if (!isReadingOpen) {
@@ -1356,7 +1534,7 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    if (!selectedNoteGroupId) {
+    if (!selectedNoteGroupId && !selectedTopicId) {
       setQuestionTimeline({
         due: 0,
         week: 0,
@@ -1370,10 +1548,9 @@ export default function App() {
     }
     const loadTimeline = async () => {
       try {
-        const data = await getNoteGroupQuestionTimeline(
-          selectedNoteGroupId,
-          chipFilterIds
-        );
+        const data = selectedTopicId
+          ? await getTopicQuestionTimeline(selectedTopicId)
+          : await getNoteGroupQuestionTimeline(selectedNoteGroupId, chipFilterIds);
         if (cancelled) {
           return;
         }
@@ -1394,7 +1571,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedNoteGroupId, chipFilterIds, questionCards, reviewRefreshToken]);
+  }, [selectedNoteGroupId, selectedTopicId, chipFilterIds, questionCards, reviewRefreshToken]);
 
   useEffect(() => {
     setChatMessages([]);
@@ -1409,12 +1586,12 @@ export default function App() {
     setIsStudyCreateOpen(false);
     setMetadataError("");
     setModuleMetadataError("");
-  }, [selectedNoteGroupId, selectedModuleId]);
+  }, [selectedNoteGroupId, selectedTopicId, selectedModuleId]);
 
   useEffect(() => {
     setNewQuestionRefs([]);
     setNewStudyCardChipIds([]);
-  }, [selectedNoteGroupId]);
+  }, [selectedNoteGroupId, selectedTopicId]);
 
   useEffect(() => {
     setReviewQueue([]);
@@ -1426,10 +1603,10 @@ export default function App() {
     setIsReviewing(false);
     setReviewFeedback(null);
     setReviewSummary(null);
-    setReviewScope("note-group");
+    setReviewScope(selectedTopicId ? "topic" : "note-group");
     setReviewDeleteStep(0);
     setReviewDeleteLoading(false);
-  }, [selectedNoteGroupId, selectedModuleId]);
+  }, [selectedNoteGroupId, selectedTopicId, selectedModuleId]);
 
   useEffect(() => {
     setReviewChatMessages([]);
@@ -1443,7 +1620,7 @@ export default function App() {
     setReviewDeleteStep(0);
     setReviewDeleteLoading(false);
     setReviewExplanationOpen([]);
-  }, [reviewIndex, reviewSummary, selectedNoteGroupId, selectedModuleId]);
+  }, [reviewIndex, reviewSummary, selectedNoteGroupId, selectedTopicId, selectedModuleId]);
 
   useEffect(() => {
     if (!isChatOpen) {
@@ -1785,6 +1962,8 @@ export default function App() {
     setSelectedSubjectId(nextId);
     setSelectedModuleId("");
     setSelectedNoteGroupId("");
+    setSelectedTopicId("");
+    setSidebarScope("note-groups");
     setNoteGroupSearch("");
     setNoteGroupMode("overview");
     setReviewSummary(null);
@@ -1799,6 +1978,8 @@ export default function App() {
     const module = nextId ? modules.find((item) => item.id === nextId) : null;
     setSelectedModuleId(nextId);
     setSelectedNoteGroupId("");
+    setSelectedTopicId("");
+    setSidebarScope("note-groups");
     setNoteGroupSearch("");
     setNoteGroupMode("overview");
     setReviewSummary(null);
@@ -1828,6 +2009,8 @@ export default function App() {
       setSelectedSubjectId(subject.id);
       setSelectedModuleId("");
       setSelectedNoteGroupId("");
+      setSelectedTopicId("");
+      setSidebarScope("note-groups");
       setNoteGroupMode("overview");
       setReviewSummary(null);
       setIsChatOpen(false);
@@ -1907,6 +2090,8 @@ export default function App() {
       setSelectedSubjectId(created.id);
       setSelectedModuleId("");
       setSelectedNoteGroupId("");
+      setSelectedTopicId("");
+      setSidebarScope("note-groups");
       setNoteGroupMode("overview");
       setReviewSummary(null);
       setIsChatOpen(false);
@@ -2111,6 +2296,8 @@ export default function App() {
 
   const navigateToNoteGroup = (noteGroupId, panelOverride = "") => {
     setSelectedNoteGroupId(noteGroupId);
+    setSelectedTopicId("");
+    setSidebarScope("note-groups");
     setNoteGroupMode("overview");
     setReviewSummary(null);
     setIsChatOpen(false);
@@ -2132,6 +2319,36 @@ export default function App() {
     navigate(
       selectedSubjectCode && selectedModuleCode && noteGroup?.short_code
         ? noteGroupPath(selectedSubjectCode, selectedModuleCode, noteGroup.short_code, nextPanel)
+        : "/"
+    );
+  };
+
+  const navigateToTopic = (topicId, panelOverride = "") => {
+    setSelectedTopicId(topicId);
+    setSelectedNoteGroupId("");
+    setSidebarScope("topics");
+    setChipFilterIds([]);
+    setNoteGroupMode("overview");
+    setReviewSummary(null);
+    setIsChatOpen(false);
+    setIsMetadataOpen(false);
+    setIsModuleMetadataOpen(false);
+    if (!topicId) {
+      navigate(
+        selectedSubjectCode && selectedModuleCode
+          ? modulePath(selectedSubjectCode, selectedModuleCode)
+          : selectedSubjectCode
+            ? subjectPath(selectedSubjectCode)
+            : "/"
+      );
+      return;
+    }
+    const topic = topicChips.find((item) => item.id === topicId);
+    const nextPanel =
+      panelOverride || (isStudyPage || isQuestionPage ? routePanel : "overview");
+    navigate(
+      selectedSubjectCode && selectedModuleCode && topic?.short_code
+        ? topicPath(selectedSubjectCode, selectedModuleCode, topic.short_code, nextPanel)
         : "/"
     );
   };
@@ -2239,6 +2456,15 @@ export default function App() {
     navigateToNoteGroup(nextId);
   };
 
+  const handleSelectTopic = (option) => {
+    const nextId = option ? option.value : "";
+    if (nextId && nextId === selectedTopicId) {
+      handleBreadcrumbModule();
+      return;
+    }
+    navigateToTopic(nextId);
+  };
+
   const resetSourceCheckState = () => {
     setSourceChecked(false);
     setSourceConfirmed(false);
@@ -2297,6 +2523,8 @@ export default function App() {
   const handleStartAutoNoteGroup = () => {
     setNoteGroupMode("auto");
     setSelectedNoteGroupId("");
+    setSelectedTopicId("");
+    setSidebarScope("note-groups");
     setReviewSummary(null);
     setIsChatOpen(false);
     setIsMetadataOpen(false);
@@ -2372,7 +2600,7 @@ export default function App() {
       });
       setTopicChips((prev) => [...prev, chip]);
     } catch (error) {
-      setSidebarError(error.message || "Failed to create topic chip");
+      setSidebarError(error.message || "Failed to create topic");
     }
     setModuleChipLabel("");
     setModuleChipDescription("");
@@ -2396,7 +2624,7 @@ export default function App() {
         : await detachTopicChip(selectedNoteGroupId, chipId);
       setNoteGroupChipIds(chips.map((chip) => chip.id));
     } catch (error) {
-      setStudyCardError(error.message || "Failed to update topic chips");
+      setStudyCardError(error.message || "Failed to update topics");
     }
   };
 
@@ -2421,7 +2649,7 @@ export default function App() {
         setNoteGroupChipIds(newIds);
       }
     } catch (error) {
-      setStudyCardError(error.message || "Failed to update topic chips");
+      setStudyCardError(error.message || "Failed to update topics");
     }
   };
 
@@ -2664,6 +2892,64 @@ export default function App() {
     }
   };
 
+  const handleSaveTopic = async () => {
+    if (!selectedTopicId) {
+      return;
+    }
+    const trimmed = topicTitleDraft.trim();
+    if (!trimmed) {
+      setTopicError("Topic name cannot be empty.");
+      return;
+    }
+    setTopicSaving(true);
+    setTopicError("");
+    try {
+      const updated = await updateTopic(selectedTopicId, {
+        label: trimmed,
+        description: topicDescriptionDraft.trim() || null
+      });
+      setTopicChips((prev) =>
+        prev.map((topic) => (topic.id === updated.id ? updated : topic))
+      );
+      setTopicTitleDraft(updated.label || "");
+      setTopicDescriptionDraft(updated.description || "");
+    } catch (error) {
+      setTopicError(error.message || "Failed to update topic");
+    } finally {
+      setTopicSaving(false);
+    }
+  };
+
+  const handleDeleteTopic = async () => {
+    if (!selectedTopicId) {
+      return;
+    }
+    const topicLabel = selectedTopic?.label || "this topic";
+    const confirmed = window.confirm(
+      `Delete "${topicLabel}"? This removes the topic from cards but keeps the cards.`
+    );
+    if (!confirmed) {
+      return;
+    }
+    setSidebarError("");
+    try {
+      await deleteTopic(selectedTopicId);
+      setTopicChips((prev) => prev.filter((topic) => topic.id !== selectedTopicId));
+      setSelectedTopicId("");
+      setSidebarScope("topics");
+      setNoteGroupMode("overview");
+      setReviewSummary(null);
+      setIsChatOpen(false);
+      navigate(
+        selectedSubjectCode && selectedModuleCode
+          ? modulePath(selectedSubjectCode, selectedModuleCode)
+          : "/"
+      );
+    } catch (error) {
+      setSidebarError(error.message || "Failed to delete topic");
+    }
+  };
+
   const handleCreateStudyCard = async () => {
     if (!selectedNoteGroupId || !newStudyCardContent.trim()) {
       return;
@@ -2752,6 +3038,10 @@ export default function App() {
       if (!selectedModuleId) {
         return;
       }
+    } else if (scope === "topic") {
+      if (!selectedTopicId) {
+        return;
+      }
     } else if (!selectedNoteGroupId) {
       return;
     }
@@ -2766,6 +3056,12 @@ export default function App() {
               mode,
               mode === "queue" ? Number(reviewCount) || 10 : undefined
             )
+          : scope === "topic"
+            ? await listTopicReviewQuestionCards(
+                selectedTopicId,
+                mode,
+                mode === "queue" ? Number(reviewCount) || 10 : undefined
+              )
           : await listReviewQuestionCards(
               selectedNoteGroupId,
               mode,
@@ -3271,6 +3567,8 @@ export default function App() {
     setSelectedSubjectId("");
     setSelectedModuleId("");
     setSelectedNoteGroupId("");
+    setSelectedTopicId("");
+    setSidebarScope("note-groups");
     setNoteGroupMode("overview");
     setIsChatOpen(false);
     setIsMetadataOpen(false);
@@ -3281,6 +3579,8 @@ export default function App() {
   const handleBreadcrumbSubject = () => {
     setSelectedModuleId("");
     setSelectedNoteGroupId("");
+    setSelectedTopicId("");
+    setSidebarScope("note-groups");
     setNoteGroupMode("overview");
     setIsChatOpen(false);
     setIsMetadataOpen(false);
@@ -3290,6 +3590,8 @@ export default function App() {
 
   const handleBreadcrumbModule = () => {
     setSelectedNoteGroupId("");
+    setSelectedTopicId("");
+    setSidebarScope("note-groups");
     setNoteGroupMode("overview");
     setIsChatOpen(false);
     setIsMetadataOpen(false);
@@ -3306,8 +3608,10 @@ export default function App() {
     setIsChatOpen(false);
     setIsMetadataOpen(false);
     navigate(
-      selectedSubjectCode && selectedModuleCode && selectedNoteGroupCode
-        ? noteGroupPath(selectedSubjectCode, selectedModuleCode, selectedNoteGroupCode)
+      selectedSubjectCode && selectedModuleCode && selectedTopicCode
+        ? topicPath(selectedSubjectCode, selectedModuleCode, selectedTopicCode)
+        : selectedSubjectCode && selectedModuleCode && selectedNoteGroupCode
+          ? noteGroupPath(selectedSubjectCode, selectedModuleCode, selectedNoteGroupCode)
         : selectedSubjectCode && selectedModuleCode
           ? modulePath(selectedSubjectCode, selectedModuleCode)
           : "/"
@@ -4057,7 +4361,7 @@ export default function App() {
                   onChange={(selected) =>
                     setNewStudyCardChipIds((selected || []).map((opt) => opt.value))
                   }
-                  placeholder="Assign topic chips"
+                  placeholder="Assign topics"
                   isMulti
                   isClearable
                   maxMenuHeight={200}
@@ -4549,7 +4853,7 @@ export default function App() {
               <div>
                 <h2>Edit note group metadata</h2>
                 <p className="muted">
-                  Update the title and adjust topic chips for this note group.
+                  Update the title for this note group.
                 </p>
               </div>
               <button className="button ghost" type="button" onClick={() => setIsMetadataOpen(false)}>
@@ -4577,56 +4881,6 @@ export default function App() {
               </button>
             </div>
             {metadataError ? <p className="error">{metadataError}</p> : null}
-            <div className="divider">Topic chips</div>
-            {topicChips.length === 0 ? (
-              <p className="muted">Create chips to tag and filter note groups.</p>
-            ) : (
-              <Select
-                className="select"
-                classNamePrefix="select"
-                options={chipOptions}
-                value={chipOptions.filter((opt) => noteGroupChipIds.includes(opt.value))}
-                onChange={handleNoteGroupChipSelectChange}
-                placeholder="Search and assign topic chips"
-                isMulti
-                isClearable
-                maxMenuHeight={220}
-                menuPortalTarget={document.body}
-                styles={selectStyles}
-                formatOptionLabel={(opt) => (
-                  <div style={{ display: "flex", flexDirection: "column" }}>
-                    <span>{opt.label}</span>
-                    {opt.description ? (
-                      <span style={{ fontSize: "0.75em", color: "#888" }}>{opt.description}</span>
-                    ) : null}
-                  </div>
-                )}
-              />
-            )}
-            <div className="form-inline">
-              <input
-                type="text"
-                value={moduleChipLabel}
-                onChange={(event) => setModuleChipLabel(event.target.value)}
-                placeholder="New topic chip"
-                disabled={!selectedModuleId}
-              />
-              <input
-                type="text"
-                value={moduleChipDescription}
-                onChange={(event) => setModuleChipDescription(event.target.value)}
-                placeholder="Chip description (optional)"
-                disabled={!selectedModuleId}
-              />
-              <button
-                className="button ghost"
-                type="button"
-                onClick={handleCreateModuleChip}
-                disabled={!selectedModuleId || !moduleChipLabel.trim()}
-              >
-                Add chip
-              </button>
-            </div>
           </div>
         </div>
       ) : null}
@@ -4661,64 +4915,121 @@ export default function App() {
             </div>
           </div>
           <div className="sidebar-section note-groups">
-            <h3>Note groups</h3>
-            <div className="note-group-search">
-              <input
-                type="text"
-                value={noteGroupSearch}
-                onChange={(event) => setNoteGroupSearch(event.target.value)}
-                placeholder="Search note groups"
-              />
-            </div>
-            <div className="note-group-list">
-              {filteredNoteGroupOptions.length === 0 ? (
-                <p className="muted">
-                  {noteGroupSearch.trim()
-                    ? "No note groups match."
-                    : "No note groups yet."}
-                </p>
-              ) : (
-                filteredNoteGroupOptions.map((option) => {
-                  const statusMeta = getNoteGroupStatusMeta(option.status);
-                  const statsEntry = moduleNoteGroupStatsById.get(option.value);
-                  const dueCount = statsEntry?.dueCount;
-                  const dueLabel = Number.isInteger(dueCount) ? String(dueCount) : "...";
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      className={`note-group-item ${
-                        option.value === selectedNoteGroupId ? "active" : ""
-                      }`}
-                      onClick={() => handleSelectNoteGroup(option)}
-                    >
-                      <span className="note-group-info">
-                        <span className="note-group-title">{option.label}</span>
-                        <span className="note-group-date">
-                          {formatCreatedAt(option.createdAt)}
-                        </span>
-                      </span>
-                      <span className="note-group-meta">
-                        <span className="note-group-badge">{dueLabel}</span>
-                        {statusMeta ? (
-                          <span className={`pill ${statusMeta.className}`}>{statusMeta.label}</span>
-                        ) : null}
-                      </span>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-            <div className="form-block">
+            <div className="sidebar-tabs">
               <button
-                className={`button ghost ${noteGroupMode === "auto" ? "active" : ""}`}
+                className={sidebarScope === "note-groups" ? "active" : ""}
                 type="button"
-                onClick={handleStartAutoNoteGroup}
-                disabled={!selectedModuleId}
+                onClick={() => setSidebarScope("note-groups")}
               >
-                Create note group
+                Note groups
+              </button>
+              <button
+                className={sidebarScope === "topics" ? "active" : ""}
+                type="button"
+                onClick={() => setSidebarScope("topics")}
+              >
+                Topics
               </button>
             </div>
+            {sidebarScope === "topics" ? (
+              <>
+                <div className="note-group-search">
+                  <input
+                    type="text"
+                    value={topicSearch}
+                    onChange={(event) => setTopicSearch(event.target.value)}
+                    placeholder="Search topics"
+                  />
+                </div>
+                <div className="note-group-list">
+                  {filteredTopicOptions.length === 0 ? (
+                    <p className="muted">
+                      {topicSearch.trim() ? "No topics match." : "No topics yet."}
+                    </p>
+                  ) : (
+                    filteredTopicOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`note-group-item ${
+                          option.value === selectedTopicId ? "active" : ""
+                        }`}
+                        onClick={() => handleSelectTopic(option)}
+                      >
+                        <span className="note-group-info">
+                          <span className="note-group-title">{option.label}</span>
+                          {option.description ? (
+                            <span className="note-group-date">{option.description}</span>
+                          ) : null}
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="note-group-search">
+                  <input
+                    type="text"
+                    value={noteGroupSearch}
+                    onChange={(event) => setNoteGroupSearch(event.target.value)}
+                    placeholder="Search note groups"
+                  />
+                </div>
+                <div className="note-group-list">
+                  {filteredNoteGroupOptions.length === 0 ? (
+                    <p className="muted">
+                      {noteGroupSearch.trim()
+                        ? "No note groups match."
+                        : "No note groups yet."}
+                    </p>
+                  ) : (
+                    filteredNoteGroupOptions.map((option) => {
+                      const statusMeta = getNoteGroupStatusMeta(option.status);
+                      const statsEntry = moduleNoteGroupStatsById.get(option.value);
+                      const dueCount = statsEntry?.dueCount;
+                      const dueLabel = Number.isInteger(dueCount) ? String(dueCount) : "...";
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          className={`note-group-item ${
+                            option.value === selectedNoteGroupId ? "active" : ""
+                          }`}
+                          onClick={() => handleSelectNoteGroup(option)}
+                        >
+                          <span className="note-group-info">
+                            <span className="note-group-title">{option.label}</span>
+                            <span className="note-group-date">
+                              {formatCreatedAt(option.createdAt)}
+                            </span>
+                          </span>
+                          <span className="note-group-meta">
+                            <span className="note-group-badge">{dueLabel}</span>
+                            {statusMeta ? (
+                              <span className={`pill ${statusMeta.className}`}>
+                                {statusMeta.label}
+                              </span>
+                            ) : null}
+                          </span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+                <div className="form-block">
+                  <button
+                    className={`button ghost ${noteGroupMode === "auto" ? "active" : ""}`}
+                    type="button"
+                    onClick={handleStartAutoNoteGroup}
+                    disabled={!selectedModuleId}
+                  >
+                    Create note group
+                  </button>
+                </div>
+              </>
+            )}
           </div>
           {sidebarError ? <p className="error">{sidebarError}</p> : null}
         </aside>
@@ -4754,6 +5065,11 @@ export default function App() {
                   <span>/</span>
                   <span className="current">Create note group</span>
                 </>
+              ) : selectedTopic ? (
+                <>
+                  <span>/</span>
+                  <span className="current">{selectedTopic.label || "Topic"}</span>
+                </>
               ) : selectedNoteGroup ? (
                 <>
                   <span>/</span>
@@ -4764,6 +5080,8 @@ export default function App() {
             <p className="subhead">
               {noteGroupMode === "auto"
                 ? "Paste raw text and we will create a note group and questions in the background."
+                : selectedTopicId
+                  ? "Review study and question cards for this topic."
                 : selectedNoteGroupId
                   ? "Manage your note group, review questions, and chat with your study cards."
                   : selectedModuleId
@@ -4859,7 +5177,7 @@ export default function App() {
               </section>
             ) : isRestoringRoute ? (
               <section className="panel">
-                <h2>Restoring page</h2>
+                <h2>Fetching page</h2>
                 <p className="muted">Loading the subject and module for this URL.</p>
               </section>
             ) : !selectedModuleId ? (
@@ -4953,7 +5271,7 @@ export default function App() {
                 <section className="panel" id="create-note-group">
                   <h2>Create note group</h2>
                   <p className="muted">
-                    Paste raw text and we will select a title, attach topic chips, generate study
+                    Paste raw text and we will select a title, attach topics, generate study
                     cards, and generate question cards in the background.
                   </p>
                   <div className="field">
@@ -5015,7 +5333,7 @@ export default function App() {
               </>
             ) : (
               <>
-                {!selectedNoteGroupId ? (
+                {!selectedNoteGroupId && !selectedTopicId ? (
                   <>
                     <section className="panel" id="module-overview">
                       <h2>{selectedModule?.title || "Module overview"}</h2>
@@ -5037,7 +5355,7 @@ export default function App() {
                               options={chipOptions}
                               value={chipFilterValue}
                               onChange={handleChipFilterSelect}
-                              placeholder="Search topic chips"
+                              placeholder="Search topics"
                               isMulti
                               isClearable
                               isDisabled={!selectedModuleId || chipOptions.length === 0}
@@ -5204,7 +5522,7 @@ export default function App() {
                       <section className="panel" id="module-note-groups">
                         <h2>Note groups in this module</h2>
                         {chipFilterIds.length ? (
-                          <p className="muted">Filtered by selected topic chips.</p>
+                          <p className="muted">Filtered by selected topics.</p>
                         ) : null}
                         {canReorderNoteGroups ? (
                           <p className="muted">
@@ -5215,7 +5533,7 @@ export default function App() {
                         {moduleNoteGroupsForDisplay.length === 0 ? (
                           <p className="muted">
                             {chipFilterIds.length
-                              ? "No note groups match the selected topic chips."
+                              ? "No note groups match the selected topics."
                               : "No note groups yet."}
                           </p>
                         ) : (
@@ -5353,17 +5671,25 @@ export default function App() {
                   <>
                     {!isStudyPage && !isQuestionPage ? (
                       <>
-                        <section className="panel" id="note-group-overview">
+                        <section
+                          className="panel"
+                          id={isTopicScope ? "topic-overview" : "note-group-overview"}
+                        >
                         <div className="panel-title">
-                          <h2>{selectedNoteGroup?.title || "Untitled note group"}</h2>
-                          {noteGroupStatusMeta ? (
+                          <h2>{activeStudyScopeTitle}</h2>
+                          {!isTopicScope && noteGroupStatusMeta ? (
                             <span className={`pill ${noteGroupStatusMeta.className}`}>
                               {noteGroupStatusMeta.label}
                             </span>
                           ) : null}
                         </div>
-                        <p className="muted">Snapshot of your current note group.</p>
-                        <div className="filter-row">
+                        <p className="muted">
+                          {isTopicScope
+                            ? "Snapshot of study and question cards for this topic."
+                            : "Snapshot of your current note group."}
+                        </p>
+                        {!isTopicScope ? (
+                          <div className="filter-row">
                           <div className="filter-label">
                             <span>Filter note groups</span>
                             {chipFilterIds.length ? (
@@ -5377,7 +5703,7 @@ export default function App() {
                               options={chipOptions}
                               value={chipFilterValue}
                               onChange={handleChipFilterSelect}
-                              placeholder="Search topic chips"
+                              placeholder="Search topics"
                               isMulti
                               isClearable
                               isDisabled={!selectedModuleId || chipOptions.length === 0}
@@ -5402,7 +5728,8 @@ export default function App() {
                               Reset
                             </button>
                           </div>
-                        </div>
+                          </div>
+                        ) : null}
                         <div className="stats-grid">
                           <div className="stat-card">
                             <p className="label">Study cards</p>
@@ -5427,12 +5754,19 @@ export default function App() {
                             type="button"
                             onClick={() =>
                               navigate(
-                                noteGroupPath(
-                                  selectedSubjectCode,
-                                  selectedModuleCode,
-                                  selectedNoteGroupCode,
-                                  "study-cards"
-                                )
+                                isTopicScope
+                                  ? topicPath(
+                                      selectedSubjectCode,
+                                      selectedModuleCode,
+                                      selectedTopicCode,
+                                      "study-cards"
+                                    )
+                                  : noteGroupPath(
+                                      selectedSubjectCode,
+                                      selectedModuleCode,
+                                      selectedNoteGroupCode,
+                                      "study-cards"
+                                    )
                               )
                             }
                           >
@@ -5443,12 +5777,19 @@ export default function App() {
                             type="button"
                             onClick={() =>
                               navigate(
-                                noteGroupPath(
-                                  selectedSubjectCode,
-                                  selectedModuleCode,
-                                  selectedNoteGroupCode,
-                                  "question-cards"
-                                )
+                                isTopicScope
+                                  ? topicPath(
+                                      selectedSubjectCode,
+                                      selectedModuleCode,
+                                      selectedTopicCode,
+                                      "question-cards"
+                                    )
+                                  : noteGroupPath(
+                                      selectedSubjectCode,
+                                      selectedModuleCode,
+                                      selectedNoteGroupCode,
+                                      "question-cards"
+                                    )
                               )
                             }
                           >
@@ -5458,7 +5799,7 @@ export default function App() {
                             className="button ghost"
                             type="button"
                             onClick={() => setIsReadingOpen(true)}
-                            disabled={!readingAvailable}
+                            disabled={isTopicScope || !readingAvailable}
                           >
                             Read clean text
                           </button>
@@ -5466,7 +5807,7 @@ export default function App() {
                           className="button ghost"
                           type="button"
                           onClick={openMetadataModal}
-                          disabled={!selectedNoteGroupId || isReviewOverlayVisible}
+                          disabled={!selectedNoteGroupId || isTopicScope || isReviewOverlayVisible}
                         >
                           Edit metadata
                         </button>
@@ -5479,14 +5820,50 @@ export default function App() {
                             Open chat
                           </button>
                           <button
-                            className="button ghost danger"
-                            type="button"
-                            onClick={handleDeleteNoteGroup}
-                            disabled={!selectedNoteGroupId || isReviewOverlayVisible}
+                          className="button ghost danger"
+                          type="button"
+                          onClick={handleDeleteNoteGroup}
+                            disabled={!selectedNoteGroupId || isTopicScope || isReviewOverlayVisible}
                           >
                             Delete note group
                           </button>
                         </div>
+                        {isTopicScope ? (
+                          <div className="form-block">
+                            <h3>Topic management</h3>
+                            <input
+                              type="text"
+                              value={topicTitleDraft}
+                              onChange={(event) => setTopicTitleDraft(event.target.value)}
+                              placeholder="Topic name"
+                            />
+                            <input
+                              type="text"
+                              value={topicDescriptionDraft}
+                              onChange={(event) => setTopicDescriptionDraft(event.target.value)}
+                              placeholder="Description (optional)"
+                            />
+                            <div className="button-row">
+                              <button
+                                className="button primary"
+                                type="button"
+                                onClick={handleSaveTopic}
+                                disabled={topicSaving || !topicTitleDraft.trim()}
+                              >
+                                {topicSaving ? "Saving..." : "Rename topic"}
+                              </button>
+                              <button
+                                className="button ghost danger"
+                                type="button"
+                                onClick={handleDeleteTopic}
+                                disabled={topicSaving || isReviewOverlayVisible}
+                              >
+                                Delete topic
+                              </button>
+                            </div>
+                            {topicError ? <p className="error">{topicError}</p> : null}
+                          </div>
+                        ) : null}
                         </section>
                         <section className="panel shortcuts-panel" id="note-group-shortcuts">
                           <div className="shortcuts-header">
@@ -5497,8 +5874,8 @@ export default function App() {
                             <button
                               className="shortcut-card"
                               type="button"
-                              onClick={() => startReview("due")}
-                              disabled={!selectedNoteGroupId || isReviewing}
+                              onClick={() => startReview("due", isTopicScope ? "topic" : "note-group")}
+                              disabled={(!selectedNoteGroupId && !selectedTopicId) || isReviewing}
                             >
                               <span className="label">Review due</span>
                               <span className="value">{noteGroupStats.dueCount}</span>
@@ -5516,7 +5893,11 @@ export default function App() {
                           </button>
                           <div>
                             <h2>Study cards</h2>
-                            <p className="muted">Manage study cards for this note group.</p>
+                            <p className="muted">
+                              {isTopicScope
+                                ? "Read study cards for this topic."
+                                : "Manage study cards for this note group."}
+                            </p>
                           </div>
                         </section>
                         <section className="results">
@@ -5527,7 +5908,7 @@ export default function App() {
                                 className="button primary"
                                 type="button"
                                 onClick={openStudyCreateModal}
-                                disabled={!selectedNoteGroupId}
+                                disabled={!canEditCurrentCards}
                               >
                                 Create study card
                               </button>
@@ -5616,7 +5997,8 @@ export default function App() {
                                         </span>
                                       ))}
                                     </div>
-                                    <div className="button-row">
+                                    {canEditCurrentCards ? (
+                                      <div className="button-row">
                                       <button
                                         className="button ghost"
                                         type="button"
@@ -5631,7 +6013,8 @@ export default function App() {
                                       >
                                         Delete
                                       </button>
-                                    </div>
+                                      </div>
+                                    ) : null}
                                   </>
                                 )}
                               </article>
@@ -5650,7 +6033,11 @@ export default function App() {
                           </button>
                           <div>
                             <h2>Question cards</h2>
-                            <p className="muted">Review, generate, and edit question cards.</p>
+                            <p className="muted">
+                              {isTopicScope
+                                ? "Review question cards for this topic."
+                                : "Review, generate, and edit question cards."}
+                            </p>
                           </div>
                         </section>
                         <section className="panel" id="question-review">
@@ -5671,24 +6058,24 @@ export default function App() {
                             <button
                               className="button primary"
                               type="button"
-                              onClick={() => startReview("due")}
-                              disabled={!selectedNoteGroupId || isReviewing}
+                              onClick={() => startReview("due", isTopicScope ? "topic" : "note-group")}
+                              disabled={(!selectedNoteGroupId && !selectedTopicId) || isReviewing}
                             >
                               Review due
                             </button>
                             <button
                               className="button primary"
                               type="button"
-                              onClick={() => startReview("queue")}
-                              disabled={!selectedNoteGroupId || isReviewing}
+                              onClick={() => startReview("queue", isTopicScope ? "topic" : "note-group")}
+                              disabled={(!selectedNoteGroupId && !selectedTopicId) || isReviewing}
                             >
                               Review next
                             </button>
                             <button
                               className="button ghost"
                               type="button"
-                              onClick={() => startReview("all")}
-                              disabled={!selectedNoteGroupId || isReviewing}
+                              onClick={() => startReview("all", isTopicScope ? "topic" : "note-group")}
+                              disabled={(!selectedNoteGroupId && !selectedTopicId) || isReviewing}
                             >
                               Review all
                             </button>
@@ -5907,7 +6294,8 @@ export default function App() {
                                         })}
                                       </ul>
                                       <p className="refs">Refs: {card.study_card_refs.join(", ")}</p>
-                                      <div className="button-row">
+                                      {canEditCurrentCards ? (
+                                        <div className="button-row">
                                         <button
                                           className="button ghost"
                                           type="button"
@@ -5928,7 +6316,8 @@ export default function App() {
                                         >
                                           Delete
                                         </button>
-                                      </div>
+                                        </div>
+                                      ) : null}
                                     </>
                                   )}
                                 </article>
@@ -5943,7 +6332,9 @@ export default function App() {
                                 className="button primary"
                                 type="button"
                                 onClick={handleGenerateQuestions}
-                                disabled={studyCards.length === 0 || isGeneratingQuestions}
+                                disabled={
+                                  isTopicScope || studyCards.length === 0 || isGeneratingQuestions
+                                }
                               >
                                 {isGeneratingQuestions ? "Generating..." : "Generate questions"}
                               </button>
@@ -5951,7 +6342,7 @@ export default function App() {
                                 className="button ghost"
                                 type="button"
                                 onClick={openQuestionCreateModal}
-                                disabled={!selectedNoteGroupId}
+                                disabled={!canEditCurrentCards}
                               >
                                 Create question card
                               </button>

@@ -9,12 +9,15 @@ from app.models import (
     NoteGroupShortCode,
     Subject,
     SubjectShortCode,
+    TopicChip,
+    TopicChipShortCode,
 )
 
 SHORT_CODE_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
 SUBJECT_SHORT_CODE_LENGTH = 5
 MODULE_SHORT_CODE_LENGTH = 6
 NOTE_GROUP_SHORT_CODE_LENGTH = 7
+TOPIC_CHIP_SHORT_CODE_LENGTH = 7
 COLLISION_ATTEMPTS_BEFORE_LENGTHEN = 20
 
 
@@ -95,6 +98,17 @@ def ensure_note_group_short_code(db: Session, note_group: NoteGroup) -> str:
     )
 
 
+def ensure_topic_chip_short_code(db: Session, topic_chip: TopicChip) -> str:
+    return _ensure_short_code(
+        db,
+        topic_chip,
+        "short_code_record",
+        TopicChipShortCode,
+        "topic_chip_id",
+        TOPIC_CHIP_SHORT_CODE_LENGTH,
+    )
+
+
 def ensure_subject_short_codes(db: Session, subjects: list[Subject]) -> None:
     for subject in subjects:
         ensure_subject_short_code(db, subject)
@@ -108,3 +122,8 @@ def ensure_module_short_codes(db: Session, modules: list[Module]) -> None:
 def ensure_note_group_short_codes(db: Session, note_groups: list[NoteGroup]) -> None:
     for note_group in note_groups:
         ensure_note_group_short_code(db, note_group)
+
+
+def ensure_topic_chip_short_codes(db: Session, topic_chips: list[TopicChip]) -> None:
+    for topic_chip in topic_chips:
+        ensure_topic_chip_short_code(db, topic_chip)

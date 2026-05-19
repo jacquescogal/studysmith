@@ -35,6 +35,7 @@ from app.models import (
     Subject,
     SubjectShortCode,
     TopicChip,
+    TopicChipShortCode,
     note_group_topic_chips,
     study_card_topic_chips,
 )
@@ -45,6 +46,8 @@ from app.short_codes import (
     ensure_note_group_short_codes,
     ensure_subject_short_code,
     ensure_subject_short_codes,
+    ensure_topic_chip_short_code,
+    ensure_topic_chip_short_codes,
 )
 from app.fsrs_utils import initialize_question_card, review_question_card
 from app.openai_client import (
@@ -479,6 +482,17 @@ def _get_note_group_short_code_record(
     return record
 
 
+def _get_topic_short_code_record(db: Session, topic_code: str) -> TopicChipShortCode:
+    record = (
+        db.query(TopicChipShortCode)
+        .filter(TopicChipShortCode.short_code == topic_code)
+        .first()
+    )
+    if not record:
+        _not_found_route()
+    return record
+
+
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
@@ -539,6 +553,35 @@ def resolve_note_group_app_route(
         "module_short_code": module_record.short_code,
         "note_group_id": note_group_record.note_group_id,
         "note_group_short_code": note_group_record.short_code,
+    }
+
+
+@app.get(
+    "/routes/app/subject/{subject_code}/module/{module_code}/topics/{topic_code}",
+    response_model=AppRouteContext,
+)
+def resolve_topic_app_route(
+    subject_code: str,
+    module_code: str,
+    topic_code: str,
+    db: Session = Depends(get_db),
+):
+    subject_record = _get_subject_short_code_record(db, subject_code)
+    module_record = _get_module_short_code_record(db, module_code)
+    module = db.get(Module, module_record.module_id)
+    if not module or module.subject_id != subject_record.subject_id:
+        _not_found_route()
+    topic_record = _get_topic_short_code_record(db, topic_code)
+    topic = db.get(TopicChip, topic_record.topic_chip_id)
+    if not topic or topic.module_id != module_record.module_id:
+        _not_found_route()
+    return {
+        "subject_id": subject_record.subject_id,
+        "subject_short_code": subject_record.short_code,
+        "module_id": module_record.module_id,
+        "module_short_code": module_record.short_code,
+        "topic_id": topic_record.topic_chip_id,
+        "topic_short_code": topic_record.short_code,
     }
 
 
@@ -1144,12 +1187,15 @@ def list_topic_chips(module_id: str, db: Session = Depends(get_db)):
     module = db.get(Module, module_id)
     if not module:
         raise HTTPException(status_code=404, detail="Module not found")
-    return (
+    topics = (
         db.query(TopicChip)
         .filter(TopicChip.module_id == module_id)
         .order_by(TopicChip.label.asc())
         .all()
     )
+    ensure_topic_chip_short_codes(db, topics)
+    db.commit()
+    return topics
 
 
 @app.post("/modules/{module_id}/topic-chips", response_model=TopicChipOut)
@@ -1167,7 +1213,178 @@ def create_topic_chip(
     db.add(chip)
     db.commit()
     db.refresh(chip)
+    ensure_topic_chip_short_code(db, chip)
+    db.commit()
     return chip
+
+
+@app.get("/topics/{topic_id}", response_model=TopicChipOut)
+def get_topic(topic_id: str, db: Session = Depends(get_db)):
+    topic = db.get(TopicChip, topic_id)
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    ensure_topic_chip_short_code(db, topic)
+    db.commit()
+    return topic
+
+
+@app.put("/topics/{topic_id}", response_model=TopicChipOut)
+def update_topic(topic_id: str, payload: TopicChipCreate, db: Session = Depends(get_db)):
+    topic = db.get(TopicChip, topic_id)
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    label = payload.label.strip()
+    if not label:
+        raise HTTPException(status_code=400, detail="Label cannot be empty")
+    _validate_chip_label(label)
+    topic.label = label
+    topic.description = payload.description
+    db.commit()
+    db.refresh(topic)
+    ensure_topic_chip_short_code(db, topic)
+    db.commit()
+    return topic
+
+
+@app.delete("/topics/{topic_id}")
+def delete_topic(topic_id: str, db: Session = Depends(get_db)):
+    topic = db.get(TopicChip, topic_id)
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+
+    db.execute(
+        study_card_topic_chips.delete().where(
+            study_card_topic_chips.c.chip_id == topic_id
+        )
+    )
+    db.execute(
+        note_group_topic_chips.delete().where(
+            note_group_topic_chips.c.chip_id == topic_id
+        )
+    )
+    db.query(TopicChipShortCode).filter(
+        TopicChipShortCode.topic_chip_id == topic_id
+    ).delete(synchronize_session=False)
+    db.delete(topic)
+    db.commit()
+    return {"deleted": True}
+
+
+def _topic_allowed_study_ids(db: Session, topic: TopicChip) -> list[str]:
+    rows = (
+        db.query(StudyCard.id)
+        .join(NoteGroup, StudyCard.note_group_id == NoteGroup.id)
+        .join(
+            study_card_topic_chips,
+            StudyCard.id == study_card_topic_chips.c.study_card_id,
+        )
+        .filter(
+            NoteGroup.module_id == topic.module_id,
+            study_card_topic_chips.c.chip_id == topic.id,
+        )
+        .order_by(StudyCard.created_at.asc())
+        .distinct()
+        .all()
+    )
+    return [row[0] for row in rows]
+
+
+def _topic_question_cards(db: Session, topic: TopicChip) -> list[QuestionCard]:
+    allowed_study_ids = set(_topic_allowed_study_ids(db, topic))
+    if not allowed_study_ids:
+        return []
+    cards = (
+        db.query(QuestionCard)
+        .join(NoteGroup, QuestionCard.note_group_id == NoteGroup.id)
+        .filter(NoteGroup.module_id == topic.module_id)
+        .order_by(QuestionCard.due_at.asc())
+        .all()
+    )
+    return [
+        card
+        for card in cards
+        if any(ref in allowed_study_ids for ref in _question_card_refs(card))
+    ]
+
+
+@app.get("/topics/{topic_id}/study-cards", response_model=StudyCardList)
+def list_topic_study_cards(topic_id: str, db: Session = Depends(get_db)):
+    topic = db.get(TopicChip, topic_id)
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    cards = (
+        db.query(StudyCard)
+        .join(NoteGroup, StudyCard.note_group_id == NoteGroup.id)
+        .join(
+            study_card_topic_chips,
+            StudyCard.id == study_card_topic_chips.c.study_card_id,
+        )
+        .filter(
+            NoteGroup.module_id == topic.module_id,
+            study_card_topic_chips.c.chip_id == topic_id,
+        )
+        .order_by(StudyCard.created_at.asc())
+        .distinct()
+        .all()
+    )
+    return {"study_cards": cards}
+
+
+@app.get("/topics/{topic_id}/question-cards", response_model=QuestionCardList)
+def list_topic_question_cards(topic_id: str, db: Session = Depends(get_db)):
+    topic = db.get(TopicChip, topic_id)
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    return {
+        "question_cards": [
+            _serialize_question_card(card) for card in _topic_question_cards(db, topic)
+        ]
+    }
+
+
+@app.get(
+    "/topics/{topic_id}/question-cards/timeline",
+    response_model=QuestionTimelineResponse,
+)
+def get_topic_question_timeline(topic_id: str, db: Session = Depends(get_db)):
+    topic = db.get(TopicChip, topic_id)
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    cards = _topic_question_cards(db, topic)
+    timeline = _build_question_timeline(cards, datetime.now(timezone.utc))
+    return {
+        "timeline": timeline,
+        "question_count": len(cards),
+        "stale_count": sum(1 for card in cards if card.stale),
+    }
+
+
+@app.get("/topics/{topic_id}/question-cards/review", response_model=QuestionCardList)
+def list_topic_review_question_cards(
+    topic_id: str,
+    mode: str = Query(default="due"),
+    limit: int = Query(default=10, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    topic = db.get(TopicChip, topic_id)
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    now = datetime.now(timezone.utc)
+    due_cutoff = now + timedelta(hours=6)
+    cards = _topic_question_cards(db, topic)
+    if mode == "due":
+        cards = [
+            card
+            for card in cards
+            if card.due_at is None or _normalize_due_at(card.due_at) <= due_cutoff
+        ]
+    elif mode == "queue":
+        cards = cards[:limit]
+    elif mode == "all":
+        pass
+    else:
+        raise HTTPException(status_code=400, detail="Invalid review mode")
+    return {"question_cards": [_serialize_question_card(card) for card in cards]}
 
 
 @app.post("/note-groups/{note_group_id}/topic-chips", response_model=list[TopicChipOut])

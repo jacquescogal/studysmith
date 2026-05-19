@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db import Base
-from app.models import Module, NoteGroup, Subject
+from app.models import Module, NoteGroup, Subject, TopicChip
 
 
 SHORT_CODE_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -25,7 +25,7 @@ class ShortCodeRoutesTests(unittest.TestCase):
         Base.metadata.create_all(bind=self.engine)
 
     def test_short_codes_are_created_and_exposed_on_list_apis(self):
-        from app.main import list_note_groups, list_subject_modules, list_subjects
+        from app.main import list_note_groups, list_subject_modules, list_subjects, list_topic_chips
 
         db = self.SessionLocal()
         try:
@@ -37,12 +37,14 @@ class ShortCodeRoutesTests(unittest.TestCase):
                 title="Note group",
                 raw_text="Raw text",
             )
-            db.add_all([subject, module, note_group])
+            topic = TopicChip(id="topic-1", module_id=module.id, label="Topic")
+            db.add_all([subject, module, note_group, topic])
             db.commit()
 
             subjects = list_subjects(db=db)
             modules = list_subject_modules("subject-1", db=db)
             note_groups = list_note_groups("module-1", chip_ids=None, db=db)
+            topics = list_topic_chips("module-1", db=db)
 
             self.assertEqual(len(subjects[0].short_code), 5)
             self.assertRegex(subjects[0].short_code, SHORT_CODE_RE)
@@ -50,6 +52,8 @@ class ShortCodeRoutesTests(unittest.TestCase):
             self.assertRegex(modules[0].short_code, SHORT_CODE_RE)
             self.assertEqual(len(note_groups[0].short_code), 7)
             self.assertRegex(note_groups[0].short_code, SHORT_CODE_RE)
+            self.assertEqual(len(topics[0].short_code), 7)
+            self.assertRegex(topics[0].short_code, SHORT_CODE_RE)
         finally:
             db.close()
 
@@ -80,8 +84,13 @@ class ShortCodeRoutesTests(unittest.TestCase):
         self.assertEqual(code, "AAAAAB")
 
     def test_route_resolver_validates_nested_hierarchy(self):
-        from app.main import resolve_note_group_app_route
-        from app.models import ModuleShortCode, NoteGroupShortCode, SubjectShortCode
+        from app.main import resolve_note_group_app_route, resolve_topic_app_route
+        from app.models import (
+            ModuleShortCode,
+            NoteGroupShortCode,
+            SubjectShortCode,
+            TopicChipShortCode,
+        )
 
         db = self.SessionLocal()
         try:
@@ -95,6 +104,7 @@ class ShortCodeRoutesTests(unittest.TestCase):
                 title="Note group",
                 raw_text="Raw text",
             )
+            topic = TopicChip(id="topic-1", module_id=module.id, label="Topic")
             db.add_all(
                 [
                     subject,
@@ -102,11 +112,13 @@ class ShortCodeRoutesTests(unittest.TestCase):
                     module,
                     other_module,
                     note_group,
+                    topic,
                     SubjectShortCode(subject_id=subject.id, short_code="Sub_1"),
                     SubjectShortCode(subject_id=other_subject.id, short_code="Sub_2"),
                     ModuleShortCode(module_id=module.id, short_code="Mod_01"),
                     ModuleShortCode(module_id=other_module.id, short_code="Mod_02"),
                     NoteGroupShortCode(note_group_id=note_group.id, short_code="Group_1"),
+                    TopicChipShortCode(topic_chip_id=topic.id, short_code="Topic_1"),
                 ]
             )
             db.commit()
@@ -124,6 +136,19 @@ class ShortCodeRoutesTests(unittest.TestCase):
                     note_group_code="Group_1",
                     db=db,
                 )
+            topic_ok = resolve_topic_app_route(
+                subject_code="Sub_1",
+                module_code="Mod_01",
+                topic_code="Topic_1",
+                db=db,
+            )
+            with self.assertRaises(HTTPException) as bad_topic:
+                resolve_topic_app_route(
+                    subject_code="Sub_2",
+                    module_code="Mod_01",
+                    topic_code="Topic_1",
+                    db=db,
+                )
         finally:
             db.close()
 
@@ -139,6 +164,18 @@ class ShortCodeRoutesTests(unittest.TestCase):
             },
         )
         self.assertEqual(bad.exception.status_code, 404)
+        self.assertEqual(
+            topic_ok,
+            {
+                "subject_id": "subject-1",
+                "subject_short_code": "Sub_1",
+                "module_id": "module-1",
+                "module_short_code": "Mod_01",
+                "topic_id": "topic-1",
+                "topic_short_code": "Topic_1",
+            },
+        )
+        self.assertEqual(bad_topic.exception.status_code, 404)
 
 
 if __name__ == "__main__":

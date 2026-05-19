@@ -46,6 +46,12 @@ export function resolveAppNoteGroupRoute(subjectCode, moduleCode, noteGroupCode)
   );
 }
 
+export function resolveAppTopicRoute(subjectCode, moduleCode, topicCode) {
+  return request(
+    `/routes/app/subject/${subjectCode}/module/${moduleCode}/topics/${topicCode}`
+  );
+}
+
 export function createSubject(payload) {
   return request("/subjects", {
     method: "POST",
@@ -158,6 +164,23 @@ export function createTopicChip(moduleId, payload) {
   });
 }
 
+export function getTopic(topicId) {
+  return request(`/topics/${topicId}`);
+}
+
+export function updateTopic(topicId, payload) {
+  return request(`/topics/${topicId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function deleteTopic(topicId) {
+  return request(`/topics/${topicId}`, {
+    method: "DELETE"
+  });
+}
+
 export function attachTopicChips(noteGroupId, payload) {
   return request(`/note-groups/${noteGroupId}/topic-chips`, {
     method: "POST",
@@ -206,6 +229,10 @@ export function listStudyCards(noteGroupId) {
   return request(`/note-groups/${noteGroupId}/study-cards`);
 }
 
+export function listTopicStudyCards(topicId) {
+  return request(`/topics/${topicId}/study-cards`);
+}
+
 export function getStudyCard(studyCardId) {
   return request(`/study-cards/${studyCardId}`);
 }
@@ -248,6 +275,10 @@ export function listQuestionCards(noteGroupId) {
   return request(`/note-groups/${noteGroupId}/question-cards`);
 }
 
+export function listTopicQuestionCards(topicId) {
+  return request(`/topics/${topicId}/question-cards`);
+}
+
 export function getNoteGroupQuestionTimeline(noteGroupId, chipIds = []) {
   const params = new URLSearchParams();
   if (chipIds.length) {
@@ -266,6 +297,10 @@ export function getModuleQuestionTimeline(moduleId, chipIds = []) {
   return request(`/modules/${moduleId}/question-cards/timeline${suffix}`);
 }
 
+export function getTopicQuestionTimeline(topicId) {
+  return request(`/topics/${topicId}/question-cards/timeline`);
+}
+
 export function listReviewQuestionCards(noteGroupId, mode, limit) {
   const params = new URLSearchParams({ mode });
   if (limit) {
@@ -280,6 +315,14 @@ export function listModuleReviewQuestionCards(moduleId, mode, limit) {
     params.set("limit", String(limit));
   }
   return request(`/modules/${moduleId}/question-cards/review?${params.toString()}`);
+}
+
+export function listTopicReviewQuestionCards(topicId, mode, limit) {
+  const params = new URLSearchParams({ mode });
+  if (limit) {
+    params.set("limit", String(limit));
+  }
+  return request(`/topics/${topicId}/question-cards/review?${params.toString()}`);
 }
 
 export function createQuestionCard(noteGroupId, payload) {
