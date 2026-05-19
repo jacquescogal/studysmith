@@ -218,6 +218,27 @@ class NoteGroupProgressResponse(BaseModel):
     needs_attention: List[NeedsAttentionQuestionOut]
 
 
+class QuestionCardPerformanceRowOut(BaseModel):
+    id: str
+    prompt: str
+    mastery: Optional[float] = None
+    mastery_tier: str
+    success_rate: Optional[float] = None
+    reviews: int
+    lapses: int
+    median_response_time_ms: Optional[int] = None
+    last_reviewed_at: Optional[datetime] = None
+    due_at: Optional[datetime] = None
+    difficulty: Optional[float] = None
+    stability: Optional[float] = None
+    stale: bool
+    attention: bool
+
+
+class QuestionCardPerformanceResponse(BaseModel):
+    rows: List[QuestionCardPerformanceRowOut]
+
+
 class ModuleOverviewStatsOut(BaseModel):
     study_count: int
     question_count: int
