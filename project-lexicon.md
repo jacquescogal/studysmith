@@ -23,8 +23,8 @@ Subject
 ```
 
 `Subject`, `Module`, and `Note Group` are hierarchy levels. `Study Card` and
-`Question Card` are content artifacts under a note group. `Topic Chip` is a
-module-owned tag, not another hierarchy level.
+`Question Card` are content artifacts under a note group. `Topic` is a
+module-owned concept scope, not another source hierarchy level.
 
 ## Learning Hierarchy
 
@@ -38,7 +38,7 @@ Examples: a certification exam, a course, a textbook, or a major knowledge area.
 ### Module
 
 A scoped learning unit within a subject. A module contains note groups and owns
-the reusable topic chip pool for those note groups and their study cards.
+the reusable topic pool for those note groups and their study cards.
 
 A module is the primary review and retrieval boundary. Tutor chat searches study
 cards within a module by default, and module-level review can span multiple note
@@ -58,8 +58,8 @@ its parent module.
 ### Raw Text
 
 The actual study material pasted or supplied by the user. Raw text is the input
-for cleaning, title suggestion, topic chip suggestion, study card generation,
-and question card generation.
+for cleaning, title suggestion, topic suggestion, study card generation, and
+question card generation.
 
 Raw text should not be treated as an identifier. Use `Unique ID` for duplicate
 detection and note group provenance labels.
@@ -119,14 +119,22 @@ truth.
 
 ## Classification
 
-### Topic Chip
+### Topic
 
-A reusable concept tag owned by a module. Topic chips attach to note groups and
-individual study cards.
+A reusable concept scope owned by a module. Topics attach to individual study
+cards and may also be associated with note groups as generation metadata.
 
-Topic chips are used to filter note groups, study cards, question cards, review
-sessions, and retrieval. They are not hierarchy levels and should remain broad,
-reusable labels rather than highly specific source titles.
+Topics are used to browse, filter, review, and retrieve study cards and question
+cards across a module. A Topic page is scoped by study cards tagged with that
+Topic, regardless of the note group that owns each study card.
+
+Topic pages are read/review scopes for cards. Users can rename or delete the
+Topic from the Topic page. Deleting a Topic deletes the topic row and removes
+note-group and study-card associations, but does not delete study cards or
+question cards.
+
+The backend may still use the legacy `TopicChip` model and `topic_chips` table
+names. User-facing UI must say `Topic` or `Topics`, not `Topic Chip`.
 
 ## Generation Workflows
 
@@ -134,7 +142,7 @@ reusable labels rather than highly specific source titles.
 
 The canonical note group generation path. The user supplies or generates a
 unique ID, supplies raw text, then the system chooses a title, attaches or
-creates topic chips, generates study cards, and generates question cards in the
+creates topics, generates study cards, and generates question cards in the
 background.
 
 The user-facing action should be `Create note group`; `Auto Workflow` names the
@@ -207,7 +215,7 @@ an authoritative proficiency score.
 
 The scope limit used when retrieving study card context for tutor chat. The
 module is the default retrieval boundary. Retrieval can optionally narrow to a
-specific note group and/or selected topic chips.
+specific note group and/or selected topics.
 
 ### Tutor Chat
 
@@ -239,8 +247,8 @@ references.
 
 ### Short Code
 
-A compact, URL-safe route alias for a subject, module, or note group. Short
-codes use the `[a-zA-Z0-9_-]` character set and are case-sensitive.
+A compact, URL-safe route alias for a subject, module, note group, or topic.
+Short codes use the `[a-zA-Z0-9_-]` character set and are case-sensitive.
 
 Short codes are URL plumbing only. They are not the internal ID, not a
 user-facing label, and not a replacement for the UUID primary keys used by
@@ -254,7 +262,7 @@ in one response.
 
 Module overview is an API and UI aggregation boundary. It does not create a new
 domain hierarchy level and should not replace `Module`, `Note Group`, `Study
-Card`, `Question Card`, or `Topic Chip` as model terms.
+Card`, `Question Card`, or `Topic` as model terms.
 
 ### Job
 
@@ -292,8 +300,8 @@ This is an infrastructure term, not product vocabulary.
 - Use `Subject`, `Module`, and `Note Group` only for hierarchy levels.
 - Use `Study Card` for atomic knowledge and retrieval truth.
 - Use `Question Card` for assessment and spaced repetition.
-- Use `Topic Chip` for reusable module-owned tags; do not call chips categories,
-  folders, groups, or modules.
+- Use `Topic` for reusable module-owned concept scopes in user-facing language.
+  `TopicChip` is a legacy implementation name only.
 - Use `Unique ID` for note group identifiers and duplicate detection; use `Raw
   Text` for pasted material.
 - Use `Cleaned Text` for source-preserving markdown and `Formatted Text` for

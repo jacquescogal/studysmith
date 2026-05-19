@@ -23,15 +23,22 @@ class PageRoutesTests(unittest.TestCase):
             "/app/subject/${subjectCode}/module/${moduleCode}/note-groups/${noteGroupCode}",
             content,
         )
+        self.assertIn(
+            "/app/subject/${subjectCode}/module/${moduleCode}/topics/${topicCode}",
+            content,
+        )
         self.assertIn("overview|study-cards|question-cards", content)
         self.assertIn("routeSubjectCode", content)
         self.assertIn("routeModuleCode", content)
         self.assertIn("routeNoteGroupCode", content)
+        self.assertIn("routeTopicCode", content)
         self.assertIn("resolveAppNoteGroupRoute", content)
+        self.assertIn("resolveAppTopicRoute", content)
         self.assertIn("/routes/app/subject/${subjectCode}", api_content)
         self.assertIn("subject.short_code", content)
         self.assertIn("module.short_code", content)
         self.assertIn("noteGroup?.short_code", content)
+        self.assertIn("topic.short_code", content)
         self.assertNotIn("/app/subjects/", content)
         self.assertNotIn("/app/modules/", content)
         self.assertNotIn("/app/note-groups/", content)
@@ -97,8 +104,11 @@ class PageRoutesTests(unittest.TestCase):
         self.assertIn("restoreNoteGroupRoute", content)
         self.assertIn("resolveAppNoteGroupRoute", content)
         self.assertIn("routeNoteGroupRestoredFromList", content)
+        self.assertIn("routeTopicRestoredFromList", content)
         self.assertIn("group.id === routeNoteGroupId", content)
-        self.assertIn("Restoring page", content)
+        self.assertIn("topic.id === routeTopicId", content)
+        self.assertIn("Fetching page", content)
+        self.assertNotIn("Restoring page", content)
         self.assertIn("!isRestoringRoute && !selectedSubjectId", content)
 
     def test_note_group_refresh_uses_route_resolver(self):
@@ -112,8 +122,50 @@ class PageRoutesTests(unittest.TestCase):
         )
         app_content = app_source.read_text(encoding="utf-8")
         self.assertIn("resolveAppNoteGroupRoute(routeSubjectCode", app_content)
+        self.assertIn("resolveAppTopicRoute(routeSubjectCode", app_content)
         self.assertIn("setSelectedNoteGroupId(context.note_group_id)", app_content)
+        self.assertIn("setSelectedTopicId(context.topic_id)", app_content)
         self.assertIn("|routes", vite_config.read_text(encoding="utf-8"))
+        self.assertIn("|topics", vite_config.read_text(encoding="utf-8"))
+
+    def test_panel_navigation_keeps_resolved_route_context(self):
+        app_source = Path(__file__).parents[2] / "frontend" / "src" / "App.jsx"
+        content = app_source.read_text(encoding="utf-8")
+
+        self.assertNotIn("}, [location.pathname]);", content)
+        self.assertIn(
+            "}, [routeSubjectCode, routeModuleCode, routeNoteGroupCode, routeTopicCode, routeCreateNoteGroup]);",
+            content,
+        )
+
+    def test_frontend_presents_topics_as_first_class_sidebar_scope(self):
+        app_source = Path(__file__).parents[2] / "frontend" / "src" / "App.jsx"
+        api_source = Path(__file__).parents[2] / "frontend" / "src" / "api.js"
+        content = app_source.read_text(encoding="utf-8")
+        api_content = api_source.read_text(encoding="utf-8")
+
+        self.assertIn('sidebarScope, setSidebarScope] = useState("note-groups")', content)
+        self.assertIn("Topics", content)
+        self.assertIn("selectedTopicId", content)
+        self.assertIn("handleSelectTopic", content)
+        self.assertIn("updateTopic", api_content)
+        self.assertIn("deleteTopic", api_content)
+        self.assertIn("listTopicStudyCards", api_content)
+        self.assertIn("listTopicQuestionCards", api_content)
+        self.assertNotIn("adjust topic chips for this note group", content)
+        self.assertNotIn("Search and assign topic chips", content)
+        self.assertNotIn("New topic chip", content)
+
+    def test_sidebar_background_fetch_errors_use_toasts(self):
+        app_source = Path(__file__).parents[2] / "frontend" / "src" / "App.jsx"
+        content = app_source.read_text(encoding="utf-8")
+
+        self.assertIn("showFetchToast", content)
+        self.assertIn('showFetchToast(error, "Failed to load note groups")', content)
+        self.assertIn('showFetchToast(error, "Failed to load topics")', content)
+        self.assertNotIn('setSidebarError(error.message || "Failed to load note groups")', content)
+        self.assertNotIn('setSidebarError(error.message || "Failed to load module due counts")', content)
+        self.assertNotIn(".catch((error) => setSidebarError(error.message));", content)
 
 
 if __name__ == "__main__":

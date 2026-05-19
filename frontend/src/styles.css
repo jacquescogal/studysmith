@@ -111,6 +111,30 @@ body {
   font-size: 1rem;
 }
 
+.sidebar-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.sidebar-tabs button {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.sidebar-tabs button.active {
+  border-color: rgba(209, 96, 61, 0.38);
+  background: #fff4e6;
+  color: var(--ink);
+}
+
 .content {
   flex: 1;
   min-width: 0;

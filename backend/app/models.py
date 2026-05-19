@@ -289,6 +289,12 @@ class TopicChip(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     module = relationship("Module", back_populates="topic_chips")
+    short_code_record = relationship(
+        "TopicChipShortCode",
+        back_populates="topic_chip",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
     note_groups = relationship(
         "NoteGroup",
         secondary=note_group_topic_chips,
@@ -299,6 +305,24 @@ class TopicChip(Base):
         secondary=study_card_topic_chips,
         back_populates="topic_chips",
     )
+
+    @property
+    def short_code(self) -> str | None:
+        return self.short_code_record.short_code if self.short_code_record else None
+
+
+class TopicChipShortCode(Base):
+    __tablename__ = "topic_chip_short_codes"
+
+    topic_chip_id = Column(
+        String,
+        ForeignKey("topic_chips.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    short_code = Column(String, nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    topic_chip = relationship("TopicChip", back_populates="short_code_record")
 
 
 class Job(Base):

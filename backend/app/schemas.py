@@ -115,6 +115,7 @@ class TopicChipCreate(BaseModel):
 
 class TopicChipOut(BaseModel):
     id: str
+    short_code: Optional[str] = None
     module_id: str
     label: str
     description: Optional[str] = None
@@ -202,6 +203,8 @@ class AppRouteContext(BaseModel):
     module_short_code: Optional[str] = None
     note_group_id: Optional[str] = None
     note_group_short_code: Optional[str] = None
+    topic_id: Optional[str] = None
+    topic_short_code: Optional[str] = None
 
 
 class ChatRequest(BaseModel):
