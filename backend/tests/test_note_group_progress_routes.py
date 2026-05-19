@@ -127,6 +127,125 @@ class NoteGroupProgressRoutesTests(unittest.TestCase):
         self.assertEqual(event.next_state, 2)
         self.assertNotEqual(event.previous_difficulty, event.next_difficulty)
 
+    def test_note_group_progress_uses_review_history(self):
+        from app.main import get_note_group_progress
+
+        db = self.seed_review_scope()
+        try:
+            db.add_all(
+                [
+                    QuestionCardReviewEvent(
+                        question_card_id="question-1",
+                        note_group_id="group-1",
+                        module_id="module-1",
+                        correct=True,
+                        response_time_ms=1000,
+                        rating="easy",
+                        previous_due_at=datetime.utcnow(),
+                        next_due_at=datetime.utcnow() + timedelta(days=1),
+                        previous_difficulty=5.0,
+                        next_difficulty=4.5,
+                        previous_stability=2.0,
+                        next_stability=3.0,
+                        previous_state=1,
+                        next_state=2,
+                        previous_reps=0,
+                        next_reps=1,
+                        previous_lapses=0,
+                        next_lapses=0,
+                        answer_option_indices_json="[1]",
+                        correct_option_indices_json="[1]",
+                        reviewed_at=datetime.utcnow() - timedelta(days=1),
+                    ),
+                    QuestionCardReviewEvent(
+                        question_card_id="question-1",
+                        note_group_id="group-1",
+                        module_id="module-1",
+                        correct=False,
+                        response_time_ms=3000,
+                        rating="again",
+                        previous_due_at=datetime.utcnow(),
+                        next_due_at=datetime.utcnow(),
+                        previous_difficulty=4.5,
+                        next_difficulty=5.2,
+                        previous_stability=3.0,
+                        next_stability=1.0,
+                        previous_state=2,
+                        next_state=1,
+                        previous_reps=1,
+                        next_reps=2,
+                        previous_lapses=0,
+                        next_lapses=1,
+                        answer_option_indices_json="[0]",
+                        correct_option_indices_json="[1]",
+                        reviewed_at=datetime.utcnow(),
+                    ),
+                ]
+            )
+            db.commit()
+            data = get_note_group_progress("group-1", range="30d", chip_ids=None, db=db)
+        finally:
+            db.close()
+
+        self.assertEqual(data["summary"]["total_reviews"], 2)
+        self.assertEqual(data["summary"]["success_rate"], 50.0)
+        self.assertEqual(data["summary"]["median_response_time_ms"], 2000)
+        self.assertEqual(data["summary"]["reviewed_card_count"], 1)
+        self.assertEqual(data["mastery_distribution"]["medium"], 1)
+        self.assertEqual(data["activity"][-1]["incorrect"], 1)
+
+    def test_note_group_progress_respects_topic_filter(self):
+        from app.main import get_note_group_progress
+
+        db = self.seed_review_scope()
+        try:
+            other_study = StudyCard(id="study-2", note_group_id="group-1", title="Other", content="Other")
+            other_question = QuestionCard(
+                id="question-2",
+                note_group_id="group-1",
+                type="mcq",
+                prompt="Other prompt",
+                options_json='["A", "B"]',
+                correct_option_indices_json="[0]",
+                study_card_refs_json='["study-2"]',
+                stale=False,
+                due_at=datetime.utcnow(),
+            )
+            db.add_all([other_study, other_question])
+            db.add_all(
+                [
+                    QuestionCardReviewEvent(
+                        question_card_id="question-1",
+                        note_group_id="group-1",
+                        module_id="module-1",
+                        correct=True,
+                        response_time_ms=1000,
+                        rating="easy",
+                        answer_option_indices_json="[1]",
+                        correct_option_indices_json="[1]",
+                        reviewed_at=datetime.utcnow(),
+                    ),
+                    QuestionCardReviewEvent(
+                        question_card_id="question-2",
+                        note_group_id="group-1",
+                        module_id="module-1",
+                        correct=False,
+                        response_time_ms=2000,
+                        rating="again",
+                        answer_option_indices_json="[1]",
+                        correct_option_indices_json="[0]",
+                        reviewed_at=datetime.utcnow(),
+                    ),
+                ]
+            )
+            db.commit()
+            data = get_note_group_progress("group-1", range="30d", chip_ids="topic-1", db=db)
+        finally:
+            db.close()
+
+        self.assertEqual(data["summary"]["total_reviews"], 1)
+        self.assertEqual(data["summary"]["success_rate"], 100.0)
+
 
 if __name__ == "__main__":
     unittest.main()

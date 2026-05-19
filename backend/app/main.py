@@ -51,6 +51,7 @@ from app.short_codes import (
     ensure_topic_chip_short_codes,
 )
 from app.fsrs_utils import initialize_question_card, review_question_card
+from app.progress import build_note_group_progress
 from app.openai_client import (
     embed_texts,
     generate_chat_response,
@@ -74,6 +75,7 @@ from app.schemas import (
     NoteGroupSourceCheckResponse,
     NoteGroupTitleUpdate,
     NoteGroupOrderUpdate,
+    NoteGroupProgressResponse,
     QuestionCardCreate,
     QuestionCardGenerate,
     QuestionCardList,
@@ -1778,6 +1780,20 @@ def get_note_group_question_timeline(
         "question_count": len(cards),
         "stale_count": stale_count,
     }
+
+
+@app.get("/note-groups/{note_group_id}/progress", response_model=NoteGroupProgressResponse)
+def get_note_group_progress(
+    note_group_id: str,
+    range: str = Query(default="30d"),
+    chip_ids: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    note_group = db.get(NoteGroup, note_group_id)
+    if not note_group:
+        raise HTTPException(status_code=404, detail="Note group not found")
+    chip_id_list = _parse_chip_ids(chip_ids)
+    return build_note_group_progress(db, note_group_id, range, chip_id_list)
 
 
 @app.get("/note-groups/{note_group_id}/question-cards/review", response_model=QuestionCardList)
