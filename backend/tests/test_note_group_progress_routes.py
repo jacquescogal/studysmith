@@ -92,6 +92,41 @@ class NoteGroupProgressRoutesTests(unittest.TestCase):
         self.assertEqual(rows[0].question_card_id, "question-1")
         self.assertEqual(rows[0].rating, "easy")
 
+    def test_review_submission_creates_review_history_event(self):
+        from app.main import review_question
+        from app.schemas import QuestionCardReview
+
+        db = self.seed_review_scope()
+        try:
+            result = review_question(
+                "question-1",
+                QuestionCardReview(
+                    correct=True,
+                    response_time_ms=1200,
+                    answer_option_indices=[1],
+                ),
+                db=db,
+            )
+            events = db.query(QuestionCardReviewEvent).all()
+        finally:
+            db.close()
+
+        self.assertEqual(result["id"], "question-1")
+        self.assertEqual(len(events), 1)
+        event = events[0]
+        self.assertEqual(event.question_card_id, "question-1")
+        self.assertEqual(event.note_group_id, "group-1")
+        self.assertEqual(event.module_id, "module-1")
+        self.assertTrue(event.correct)
+        self.assertEqual(event.response_time_ms, 1200)
+        self.assertEqual(event.rating, "easy")
+        self.assertEqual(json.loads(event.answer_option_indices_json), [1])
+        self.assertEqual(json.loads(event.correct_option_indices_json), [1])
+        self.assertEqual(event.previous_reps, 0)
+        self.assertEqual(event.previous_state, 1)
+        self.assertEqual(event.next_state, 2)
+        self.assertNotEqual(event.previous_difficulty, event.next_difficulty)
+
 
 if __name__ == "__main__":
     unittest.main()

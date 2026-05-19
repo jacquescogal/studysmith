@@ -2811,10 +2811,15 @@ export default function App() {
     const correct =
       correctIndices.slice().sort().join(",") === reviewAnswer.slice().sort().join(",");
     const responseTimeMs = reviewStartTime ? Date.now() - reviewStartTime : 0;
+    const answerOptionIndices = reviewAnswer.map((index) => {
+      const choice = card.reviewChoices?.[index];
+      return Number.isInteger(choice?.originalIndex) ? choice.originalIndex : index;
+    });
     try {
       const updated = await reviewQuestionCard(card.id, {
         correct,
-        response_time_ms: responseTimeMs
+        response_time_ms: responseTimeMs,
+        answer_option_indices: answerOptionIndices
       });
       setQuestionCards((prev) =>
         prev.map((item) => (item.id === card.id ? updated : item))

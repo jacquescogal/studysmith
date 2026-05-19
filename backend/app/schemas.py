@@ -312,6 +312,7 @@ class QuestionCardUpdate(BaseModel):
 class QuestionCardReview(BaseModel):
     correct: bool
     response_time_ms: int
+    answer_option_indices: List[int] = []
 
 
 class StudyCardReview(BaseModel):
