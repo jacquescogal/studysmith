@@ -662,16 +662,19 @@ def create_subject(
     db.add(subject)
     try:
         db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Subject title must be unique")
+
+    try:
         grant_owner_access(db, subject, current_user)
-        db.commit()
-        db.refresh(subject)
         ensure_subject_short_code(db, subject)
         db.commit()
         db.refresh(subject)
         return subject
-    except IntegrityError:
+    except Exception:
         db.rollback()
-        raise HTTPException(status_code=409, detail="Subject title must be unique")
+        raise
 
 
 @app.post("/subjects/intent-chat", response_model=IntentChatResponse)

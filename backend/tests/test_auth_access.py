@@ -597,6 +597,101 @@ class SubjectRouteAuthorizationTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_short_code_failure_rolls_back_subject_and_owner_grant(self):
+        from app.main import create_subject
+        from app.models import SubjectAccess, User
+        from app.schemas import SubjectCreate
+
+        db = self.SessionLocal()
+        try:
+            creator = User(
+                id="creator",
+                supabase_user_id="creator-sub",
+                email="creator@example.com",
+                app_role="creator",
+            )
+            db.add(creator)
+            db.commit()
+            with patch("app.main.ensure_subject_short_code", side_effect=RuntimeError("short code failed")):
+                with self.assertRaises(RuntimeError):
+                    create_subject(SubjectCreate(title="Subject", description=""), db=db, current_user=creator)
+
+            self.assertEqual(db.query(Subject).count(), 0)
+            self.assertEqual(db.query(SubjectAccess).count(), 0)
+        finally:
+            db.close()
+
+    def test_duplicate_title_returns_409_for_creator(self):
+        from app.main import create_subject
+        from app.models import User
+        from app.schemas import SubjectCreate
+
+        db = self.SessionLocal()
+        try:
+            creator = User(
+                id="creator",
+                supabase_user_id="creator-sub",
+                email="creator@example.com",
+                app_role="creator",
+            )
+            db.add_all([creator, Subject(title="Subject", owner_user_id="creator")])
+            db.commit()
+
+            with self.assertRaises(HTTPException) as exc:
+                create_subject(SubjectCreate(title="Subject", description=""), db=db, current_user=creator)
+
+            self.assertEqual(exc.exception.status_code, 409)
+            self.assertEqual(exc.exception.detail, "Subject title must be unique")
+        finally:
+            db.close()
+
+    def test_empty_title_returns_400_for_creator(self):
+        from app.main import create_subject
+        from app.models import User
+        from app.schemas import SubjectCreate
+
+        db = self.SessionLocal()
+        try:
+            creator = User(
+                id="creator",
+                supabase_user_id="creator-sub",
+                email="creator@example.com",
+                app_role="creator",
+            )
+            db.add(creator)
+            db.commit()
+
+            with self.assertRaises(HTTPException) as exc:
+                create_subject(SubjectCreate(title="  ", description=""), db=db, current_user=creator)
+
+            self.assertEqual(exc.exception.status_code, 400)
+            self.assertEqual(exc.exception.detail, "Title cannot be empty")
+        finally:
+            db.close()
+
+    def test_admin_create_subject_sets_owner_and_owner_grant(self):
+        from app.main import create_subject
+        from app.models import APP_ROLE_ADMIN, SubjectAccess, User
+        from app.schemas import SubjectCreate
+
+        db = self.SessionLocal()
+        try:
+            admin = User(
+                id="admin",
+                supabase_user_id="admin-sub",
+                email="admin@example.com",
+                app_role=APP_ROLE_ADMIN,
+            )
+            db.add(admin)
+            db.commit()
+            subject = create_subject(SubjectCreate(title="Subject", description=""), db=db, current_user=admin)
+            grant = db.query(SubjectAccess).filter(SubjectAccess.subject_id == subject.id).one()
+            self.assertEqual(subject.owner_user_id, "admin")
+            self.assertEqual(grant.user_id, "admin")
+            self.assertEqual(grant.access_level, "owner")
+        finally:
+            db.close()
+
 
 if __name__ == "__main__":
     unittest.main()
