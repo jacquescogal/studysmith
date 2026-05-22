@@ -208,12 +208,30 @@ def _ensure_subject_intent_columns() -> None:
             conn.commit()
 
 
+def _ensure_subject_access_columns(target_engine=engine) -> None:
+    if target_engine.url.get_backend_name() != "sqlite":
+        return
+    with target_engine.connect() as conn:
+        result = conn.execute(text("PRAGMA table_info(subjects)"))
+        columns = {row[1] for row in result}
+        statements = []
+        if "owner_user_id" not in columns:
+            statements.append("ALTER TABLE subjects ADD COLUMN owner_user_id VARCHAR")
+        if "visibility" not in columns:
+            statements.append("ALTER TABLE subjects ADD COLUMN visibility VARCHAR DEFAULT 'private' NOT NULL")
+        for statement in statements:
+            conn.execute(text(statement))
+        if statements:
+            conn.commit()
+
+
 Base.metadata.create_all(bind=engine)
 _ensure_note_group_source_columns()
 _ensure_module_settings_column()
 _ensure_module_intent_columns()
 _ensure_topic_chip_description_column()
 _ensure_subject_intent_columns()
+_ensure_subject_access_columns()
 
 app = FastAPI(title="Study System API")
 
