@@ -98,6 +98,7 @@ from app.schemas import (
     SubjectIntentChatPayload,
     SubjectOut,
     SubjectUpdate,
+    PublicSubjectOut,
     StudyCardCreate,
     StudyCardOut,
     StudyCardList,
@@ -687,6 +688,8 @@ def approve_public_subject(
     subject = db.get(Subject, subject_id)
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
+    if subject.visibility != SUBJECT_VISIBILITY_PUBLIC_REQUESTED:
+        raise HTTPException(status_code=400, detail="Subject has not requested public visibility")
     subject.visibility = SUBJECT_VISIBILITY_PUBLIC
     ensure_subject_short_code(db, subject)
     db.commit()
@@ -703,6 +706,8 @@ def keep_subject_private(
     subject = db.get(Subject, subject_id)
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
+    if subject.visibility != SUBJECT_VISIBILITY_PUBLIC_REQUESTED:
+        raise HTTPException(status_code=400, detail="Subject has not requested public visibility")
     subject.visibility = SUBJECT_VISIBILITY_PRIVATE
     ensure_subject_short_code(db, subject)
     db.commit()
@@ -718,7 +723,7 @@ def list_subjects(db: Session = Depends(get_db)):
     return subjects
 
 
-@app.get("/public/subjects", response_model=list[SubjectOut])
+@app.get("/public/subjects", response_model=list[PublicSubjectOut])
 def list_public_subjects(db: Session = Depends(get_db)):
     subjects = (
         db.query(Subject)
