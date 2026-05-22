@@ -693,5 +693,34 @@ class SubjectRouteAuthorizationTests(unittest.TestCase):
             db.close()
 
 
+class PublicSubjectRoutesTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
+        Base.metadata.create_all(bind=self.engine)
+
+    def test_public_subjects_only_returns_public_subjects(self):
+        from app.main import list_public_subjects
+        from app.models import SUBJECT_VISIBILITY_PUBLIC
+
+        db = self.SessionLocal()
+        try:
+            db.add_all(
+                [
+                    Subject(id="private", title="Private", visibility="private"),
+                    Subject(id="public", title="Public", visibility=SUBJECT_VISIBILITY_PUBLIC),
+                ]
+            )
+            db.commit()
+            subjects = list_public_subjects(db=db)
+            self.assertEqual([subject.id for subject in subjects], ["public"])
+        finally:
+            db.close()
+
+
 if __name__ == "__main__":
     unittest.main()
