@@ -4,6 +4,19 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
+class UserOut(BaseModel):
+    id: str
+    email: str
+    app_role: str
+
+
+class SubjectAccessOut(BaseModel):
+    id: str
+    subject_id: str
+    user_id: str
+    access_level: str
+
+
 class SubjectCreate(BaseModel):
     title: str
     description: Optional[str] = None
@@ -25,6 +38,8 @@ class SubjectOut(BaseModel):
     description: Optional[str] = None
     goal: Optional[str] = None
     scope: Optional[str] = None
+    owner_user_id: Optional[str] = None
+    visibility: str = "private"
 
     class Config:
         from_attributes = True
