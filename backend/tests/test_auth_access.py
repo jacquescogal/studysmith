@@ -425,6 +425,25 @@ class AdminRoutesTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_listing_public_requests_backfills_missing_short_code(self):
+        from app.main import list_public_subject_requests
+        from app.models import APP_ROLE_ADMIN, SUBJECT_VISIBILITY_PUBLIC_REQUESTED, SubjectShortCode, User
+
+        db = self.SessionLocal()
+        try:
+            admin = User(id="admin", supabase_user_id="admin-sub", email="admin@example.com", app_role=APP_ROLE_ADMIN)
+            subject = Subject(id="subject-1", title="Subject", visibility=SUBJECT_VISIBILITY_PUBLIC_REQUESTED)
+            db.add_all([admin, subject])
+            db.commit()
+
+            subjects = list_public_subject_requests(db=db, current_user=admin)
+
+            self.assertEqual(len(subjects), 1)
+            self.assertIsNotNone(subjects[0].short_code)
+            self.assertIsNotNone(db.query(SubjectShortCode).filter_by(subject_id="subject-1").one_or_none())
+        finally:
+            db.close()
+
     def test_admin_can_approve_public_subject(self):
         from app.main import approve_public_subject
         from app.models import APP_ROLE_ADMIN, SUBJECT_VISIBILITY_PUBLIC, SUBJECT_VISIBILITY_PUBLIC_REQUESTED, User
@@ -440,6 +459,24 @@ class AdminRoutesTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_approving_public_subject_backfills_missing_short_code(self):
+        from app.main import approve_public_subject
+        from app.models import APP_ROLE_ADMIN, SUBJECT_VISIBILITY_PUBLIC_REQUESTED, SubjectShortCode, User
+
+        db = self.SessionLocal()
+        try:
+            admin = User(id="admin", supabase_user_id="admin-sub", email="admin@example.com", app_role=APP_ROLE_ADMIN)
+            subject = Subject(id="subject-1", title="Subject", visibility=SUBJECT_VISIBILITY_PUBLIC_REQUESTED)
+            db.add_all([admin, subject])
+            db.commit()
+
+            updated = approve_public_subject("subject-1", db=db, current_user=admin)
+
+            self.assertIsNotNone(updated.short_code)
+            self.assertIsNotNone(db.query(SubjectShortCode).filter_by(subject_id="subject-1").one_or_none())
+        finally:
+            db.close()
+
     def test_admin_can_keep_subject_private(self):
         from app.main import keep_subject_private
         from app.models import APP_ROLE_ADMIN, SUBJECT_VISIBILITY_PRIVATE, SUBJECT_VISIBILITY_PUBLIC_REQUESTED, User
@@ -452,6 +489,24 @@ class AdminRoutesTests(unittest.TestCase):
             db.commit()
             updated = keep_subject_private("subject-1", db=db, current_user=admin)
             self.assertEqual(updated.visibility, SUBJECT_VISIBILITY_PRIVATE)
+        finally:
+            db.close()
+
+    def test_keeping_subject_private_backfills_missing_short_code(self):
+        from app.main import keep_subject_private
+        from app.models import APP_ROLE_ADMIN, SUBJECT_VISIBILITY_PUBLIC_REQUESTED, SubjectShortCode, User
+
+        db = self.SessionLocal()
+        try:
+            admin = User(id="admin", supabase_user_id="admin-sub", email="admin@example.com", app_role=APP_ROLE_ADMIN)
+            subject = Subject(id="subject-1", title="Subject", visibility=SUBJECT_VISIBILITY_PUBLIC_REQUESTED)
+            db.add_all([admin, subject])
+            db.commit()
+
+            updated = keep_subject_private("subject-1", db=db, current_user=admin)
+
+            self.assertIsNotNone(updated.short_code)
+            self.assertIsNotNone(db.query(SubjectShortCode).filter_by(subject_id="subject-1").one_or_none())
         finally:
             db.close()
 

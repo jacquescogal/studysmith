@@ -667,12 +667,15 @@ def list_public_subject_requests(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    return (
+    subjects = (
         db.query(Subject)
         .filter(Subject.visibility == SUBJECT_VISIBILITY_PUBLIC_REQUESTED)
         .order_by(Subject.updated_at.asc())
         .all()
     )
+    ensure_subject_short_codes(db, subjects)
+    db.commit()
+    return subjects
 
 
 @app.post("/admin/subjects/{subject_id}/approve-public", response_model=SubjectOut)
@@ -685,6 +688,7 @@ def approve_public_subject(
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
     subject.visibility = SUBJECT_VISIBILITY_PUBLIC
+    ensure_subject_short_code(db, subject)
     db.commit()
     db.refresh(subject)
     return subject
@@ -700,6 +704,7 @@ def keep_subject_private(
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
     subject.visibility = SUBJECT_VISIBILITY_PRIVATE
+    ensure_subject_short_code(db, subject)
     db.commit()
     db.refresh(subject)
     return subject
