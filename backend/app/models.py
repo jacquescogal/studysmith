@@ -90,6 +90,12 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    question_card_learning_states = relationship(
+        "QuestionCardLearningState",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    question_card_review_events = relationship("QuestionCardReviewEvent", back_populates="user")
 
 
 class SubjectAccess(Base):
@@ -361,6 +367,38 @@ class QuestionCard(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     note_group = relationship("NoteGroup", back_populates="question_cards")
+    learning_states = relationship(
+        "QuestionCardLearningState",
+        back_populates="question_card",
+        cascade="all, delete-orphan",
+    )
+
+
+class QuestionCardLearningState(Base):
+    __tablename__ = "question_card_learning_states"
+    __table_args__ = (
+        UniqueConstraint("question_card_id", "user_id", name="uq_question_card_learning_state_user"),
+    )
+
+    id = Column(String, primary_key=True, default=_uuid)
+    question_card_id = Column(String, ForeignKey("question_cards.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    disabled = Column(Boolean, nullable=False, default=False)
+    due_at = Column(DateTime, default=datetime.utcnow)
+    last_review_at = Column(DateTime)
+    stability = Column(Float, default=0.0)
+    difficulty = Column(Float, default=0.0)
+    elapsed_days = Column(Integer, default=0)
+    scheduled_days = Column(Integer, default=0)
+    reps = Column(Integer, default=0)
+    lapses = Column(Integer, default=0)
+    state = Column(Integer, default=1)
+    step = Column(Integer)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    question_card = relationship("QuestionCard", back_populates="learning_states")
+    user = relationship("User", back_populates="question_card_learning_states")
 
 
 class QuestionCardReviewEvent(Base):
@@ -368,6 +406,7 @@ class QuestionCardReviewEvent(Base):
 
     id = Column(String, primary_key=True, default=_uuid)
     question_card_id = Column(String, ForeignKey("question_cards.id"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     note_group_id = Column(String, ForeignKey("note_groups.id"), nullable=False, index=True)
     module_id = Column(String, ForeignKey("modules.id"), nullable=False, index=True)
     correct = Column(Boolean, nullable=False)
@@ -390,6 +429,7 @@ class QuestionCardReviewEvent(Base):
     reviewed_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     question_card = relationship("QuestionCard")
+    user = relationship("User", back_populates="question_card_review_events")
     note_group = relationship("NoteGroup")
     module = relationship("Module")
 

@@ -63,6 +63,7 @@ class NoteGroupProgressRoutesTests(unittest.TestCase):
         db = self.seed_review_scope()
         try:
             event = QuestionCardReviewEvent(
+                user_id="user-1",
                 question_card_id="question-1",
                 note_group_id="group-1",
                 module_id="module-1",
@@ -138,6 +139,7 @@ class NoteGroupProgressRoutesTests(unittest.TestCase):
             db.add_all(
                 [
                     QuestionCardReviewEvent(
+                        user_id="user-1",
                         question_card_id="question-1",
                         note_group_id="group-1",
                         module_id="module-1",
@@ -161,6 +163,7 @@ class NoteGroupProgressRoutesTests(unittest.TestCase):
                         reviewed_at=datetime.utcnow() - timedelta(days=1),
                     ),
                     QuestionCardReviewEvent(
+                        user_id="user-1",
                         question_card_id="question-1",
                         note_group_id="group-1",
                         module_id="module-1",
@@ -224,6 +227,7 @@ class NoteGroupProgressRoutesTests(unittest.TestCase):
             db.add_all(
                 [
                     QuestionCardReviewEvent(
+                        user_id="user-1",
                         question_card_id="question-1",
                         note_group_id="group-1",
                         module_id="module-1",
@@ -235,6 +239,7 @@ class NoteGroupProgressRoutesTests(unittest.TestCase):
                         reviewed_at=datetime.utcnow(),
                     ),
                     QuestionCardReviewEvent(
+                        user_id="user-1",
                         question_card_id="question-2",
                         note_group_id="group-1",
                         module_id="module-1",
@@ -283,6 +288,7 @@ class NoteGroupProgressRoutesTests(unittest.TestCase):
             db.add_all(
                 [
                     QuestionCardReviewEvent(
+                        user_id="user-1",
                         question_card_id="question-1",
                         note_group_id="group-1",
                         module_id="module-1",
@@ -294,6 +300,7 @@ class NoteGroupProgressRoutesTests(unittest.TestCase):
                         reviewed_at=datetime.utcnow(),
                     ),
                     QuestionCardReviewEvent(
+                        user_id="user-1",
                         question_card_id="question-hard",
                         note_group_id="group-1",
                         module_id="module-1",
@@ -364,6 +371,7 @@ class NoteGroupProgressRoutesTests(unittest.TestCase):
             db.add_all(
                 [
                     QuestionCardReviewEvent(
+                        user_id="user-1",
                         question_card_id="question-1",
                         note_group_id="group-1",
                         module_id="module-1",
@@ -375,6 +383,7 @@ class NoteGroupProgressRoutesTests(unittest.TestCase):
                         reviewed_at=datetime.utcnow(),
                     ),
                     QuestionCardReviewEvent(
+                        user_id="user-1",
                         question_card_id="question-1",
                         note_group_id="group-1",
                         module_id="module-1",

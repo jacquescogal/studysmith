@@ -31,6 +31,7 @@ from app.access import (
     require_study_card_edit,
     require_study_card_read,
     require_subject_edit,
+    require_subject_owner,
     require_subject_read,
     require_subject_study,
     require_topic_edit,
@@ -56,11 +57,15 @@ from app.models import (
     NoteGroup,
     NoteGroupShortCode,
     QuestionCard,
+    QuestionCardLearningState,
     QuestionCardReviewEvent,
     StudyCard,
     StudyCardSourceRange,
     Subject,
+    SubjectAccess,
     SubjectShortCode,
+    SUBJECT_ACCESS_LEVELS,
+    SUBJECT_ACCESS_OWNER,
     SUBJECT_VISIBILITY_PRIVATE,
     SUBJECT_VISIBILITY_PUBLIC,
     SUBJECT_VISIBILITY_PUBLIC_REQUESTED,
@@ -115,6 +120,8 @@ from app.schemas import (
     QuestionCardReview,
     QuestionCardUpdate,
     QuestionTimelineResponse,
+    SubjectAccessGrantUpdate,
+    SubjectAccessOut,
     SubjectCreate,
     SubjectIntentChatPayload,
     SubjectOut,
@@ -258,6 +265,15 @@ def _ensure_subject_access_columns(target_engine=engine) -> None:
             conn.commit()
 
 
+def _ensure_pgvector_extension(target_engine=engine) -> None:
+    if target_engine.url.get_backend_name() != "postgresql":
+        return
+    with target_engine.connect() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        conn.commit()
+
+
+_ensure_pgvector_extension()
 Base.metadata.create_all(bind=engine)
 _ensure_note_group_source_columns()
 _ensure_module_settings_column()
@@ -283,13 +299,17 @@ def _start_auto_worker() -> None:
     resume_auto_jobs()
 
 
-def _serialize_question_card(card: QuestionCard) -> dict:
+def _serialize_question_card(
+    card: QuestionCard,
+    learning_state: QuestionCardLearningState | None = None,
+) -> dict:
     try:
         option_explanations = json.loads(card.option_explanations_json or "[]")
         if not isinstance(option_explanations, list):
             option_explanations = []
     except json.JSONDecodeError:
         option_explanations = []
+    state = learning_state or card
     return {
         "id": card.id,
         "note_group_id": card.note_group_id,
@@ -300,17 +320,51 @@ def _serialize_question_card(card: QuestionCard) -> dict:
         "option_explanations": option_explanations,
         "study_card_refs": json.loads(card.study_card_refs_json),
         "stale": card.stale,
-        "due_at": card.due_at,
-        "last_review_at": card.last_review_at,
-        "stability": card.stability,
-        "difficulty": card.difficulty,
-        "elapsed_days": card.elapsed_days,
-        "scheduled_days": card.scheduled_days,
-        "reps": card.reps,
-        "lapses": card.lapses,
-        "state": card.state,
-        "step": card.step,
+        "due_at": state.due_at,
+        "last_review_at": state.last_review_at,
+        "stability": state.stability,
+        "difficulty": state.difficulty,
+        "elapsed_days": state.elapsed_days,
+        "scheduled_days": state.scheduled_days,
+        "reps": state.reps,
+        "lapses": state.lapses,
+        "state": state.state,
+        "step": state.step,
     }
+
+
+def _get_or_create_question_card_learning_state(
+    db: Session,
+    card: QuestionCard,
+    user: User,
+) -> QuestionCardLearningState:
+    learning_state = (
+        db.query(QuestionCardLearningState)
+        .filter(
+            QuestionCardLearningState.question_card_id == card.id,
+            QuestionCardLearningState.user_id == user.id,
+        )
+        .one_or_none()
+    )
+    if learning_state:
+        return learning_state
+    learning_state = QuestionCardLearningState(
+        question_card_id=card.id,
+        user_id=user.id,
+        due_at=card.due_at,
+        last_review_at=card.last_review_at,
+        stability=card.stability,
+        difficulty=card.difficulty,
+        elapsed_days=card.elapsed_days,
+        scheduled_days=card.scheduled_days,
+        reps=card.reps,
+        lapses=card.lapses,
+        state=card.state,
+        step=card.step,
+    )
+    db.add(learning_state)
+    db.flush()
+    return learning_state
 
 
 def _normalize_due_at(value: Optional[datetime]) -> Optional[datetime]:
@@ -836,6 +890,106 @@ def subject_intent_chat(
         "goal": result.get("goal"),
         "scope": result.get("scope"),
     }
+
+
+@app.post("/subjects/{subject_id}/request-public", response_model=SubjectOut)
+def request_subject_public(
+    subject_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    subject = db.get(Subject, subject_id)
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    require_subject_owner(current_user, subject)
+    if subject.visibility == SUBJECT_VISIBILITY_PUBLIC:
+        raise HTTPException(status_code=400, detail="Subject is already public")
+    subject.visibility = SUBJECT_VISIBILITY_PUBLIC_REQUESTED
+    ensure_subject_short_code(db, subject)
+    db.commit()
+    db.refresh(subject)
+    return subject
+
+
+@app.get("/subjects/{subject_id}/access", response_model=list[SubjectAccessOut])
+def list_subject_access(
+    subject_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    subject = db.get(Subject, subject_id)
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    require_subject_owner(current_user, subject)
+    return (
+        db.query(SubjectAccess)
+        .filter(SubjectAccess.subject_id == subject_id)
+        .order_by(SubjectAccess.created_at.asc())
+        .all()
+    )
+
+
+@app.put("/subjects/{subject_id}/access/{user_id}", response_model=SubjectAccessOut)
+def upsert_subject_access(
+    subject_id: str,
+    user_id: str,
+    payload: SubjectAccessGrantUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    if payload.access_level not in SUBJECT_ACCESS_LEVELS:
+        raise HTTPException(status_code=400, detail="Invalid subject access level")
+    subject = db.get(Subject, subject_id)
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    require_subject_owner(current_user, subject)
+    target_user = db.get(User, user_id)
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    grant = (
+        db.query(SubjectAccess)
+        .filter(SubjectAccess.subject_id == subject_id, SubjectAccess.user_id == user_id)
+        .one_or_none()
+    )
+    if grant:
+        grant.access_level = payload.access_level
+    else:
+        grant = SubjectAccess(
+            subject_id=subject_id,
+            user_id=user_id,
+            access_level=payload.access_level,
+        )
+        db.add(grant)
+    if payload.access_level == SUBJECT_ACCESS_OWNER and subject.owner_user_id is None:
+        subject.owner_user_id = user_id
+    db.commit()
+    db.refresh(grant)
+    return grant
+
+
+@app.delete("/subjects/{subject_id}/access/{user_id}")
+def delete_subject_access(
+    subject_id: str,
+    user_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    subject = db.get(Subject, subject_id)
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    require_subject_owner(current_user, subject)
+    if subject.owner_user_id == user_id:
+        raise HTTPException(status_code=400, detail="Cannot revoke the subject owner")
+    grant = (
+        db.query(SubjectAccess)
+        .filter(SubjectAccess.subject_id == subject_id, SubjectAccess.user_id == user_id)
+        .one_or_none()
+    )
+    if not grant:
+        raise HTTPException(status_code=404, detail="Subject access grant not found")
+    db.delete(grant)
+    db.commit()
+    return {"deleted": True}
 
 
 @app.get("/subjects/{subject_id}", response_model=SubjectOut)
@@ -1849,6 +2003,7 @@ def get_note_group_card_table(
             reviewed="all",
             attention=False,
             chip_ids=None,
+            user_id=current_user.id,
         )["rows"]
     }
 
@@ -2132,7 +2287,7 @@ def get_note_group_progress(
 ):
     require_note_group_read(db, current_user, note_group_id)
     chip_id_list = _parse_chip_ids(chip_ids)
-    return build_note_group_progress(db, note_group_id, range, chip_id_list)
+    return build_note_group_progress(db, note_group_id, range, chip_id_list, current_user.id)
 
 
 @app.get(
@@ -2165,6 +2320,7 @@ def get_note_group_question_card_performance(
         reviewed,
         attention,
         chip_id_list,
+        current_user.id,
     )
 
 
@@ -2348,42 +2504,44 @@ def review_question(
     else:
         rating = Rating.Again
 
-    previous_due_at = card.due_at
-    previous_difficulty = card.difficulty
-    previous_stability = card.stability
-    previous_state = card.state
-    previous_reps = card.reps
-    previous_lapses = card.lapses
+    learning_state = _get_or_create_question_card_learning_state(db, card, current_user)
+    previous_due_at = learning_state.due_at
+    previous_difficulty = learning_state.difficulty
+    previous_stability = learning_state.stability
+    previous_state = learning_state.state
+    previous_reps = learning_state.reps
+    previous_lapses = learning_state.lapses
 
     now = datetime.now(timezone.utc)
-    review_question_card(card, rating, now, review_duration_ms=payload.response_time_ms)
+    review_question_card(learning_state, rating, now, review_duration_ms=payload.response_time_ms)
     event = QuestionCardReviewEvent(
         question_card_id=card.id,
+        user_id=current_user.id,
         note_group_id=card.note_group_id,
         module_id=card.note_group.module_id,
         correct=payload.correct,
         response_time_ms=payload.response_time_ms,
         rating=rating.name.lower(),
         previous_due_at=previous_due_at,
-        next_due_at=card.due_at,
+        next_due_at=learning_state.due_at,
         previous_difficulty=previous_difficulty,
-        next_difficulty=card.difficulty,
+        next_difficulty=learning_state.difficulty,
         previous_stability=previous_stability,
-        next_stability=card.stability,
+        next_stability=learning_state.stability,
         previous_state=previous_state,
-        next_state=card.state,
+        next_state=learning_state.state,
         previous_reps=previous_reps,
-        next_reps=card.reps,
+        next_reps=learning_state.reps,
         previous_lapses=previous_lapses,
-        next_lapses=card.lapses,
+        next_lapses=learning_state.lapses,
         answer_option_indices_json=json.dumps(payload.answer_option_indices),
         correct_option_indices_json=json.dumps(correct_indices),
         reviewed_at=now,
     )
     db.add(event)
     db.commit()
-    db.refresh(card)
-    return _serialize_question_card(card)
+    db.refresh(learning_state)
+    return _serialize_question_card(card, learning_state)
 
 
 @app.put("/question-cards/{question_card_id}", response_model=QuestionCardOut)

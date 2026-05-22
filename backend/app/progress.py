@@ -80,6 +80,7 @@ def build_note_group_progress(
     note_group_id: str,
     range_value: str = "30d",
     chip_ids: Optional[list[str]] = None,
+    user_id: Optional[str] = None,
     now: Optional[datetime] = None,
 ) -> dict:
     current = now or datetime.now(timezone.utc)
@@ -91,6 +92,8 @@ def build_note_group_progress(
     query = db.query(QuestionCardReviewEvent).filter(
         QuestionCardReviewEvent.note_group_id == note_group_id
     )
+    if user_id is not None:
+        query = query.filter(QuestionCardReviewEvent.user_id == user_id)
     if start is not None:
         query = query.filter(QuestionCardReviewEvent.reviewed_at >= start)
     events = [event for event in query.all() if event.question_card_id in card_ids]
@@ -202,6 +205,7 @@ def build_question_card_performance(
     reviewed: str = "all",
     attention: bool = False,
     chip_ids: Optional[list[str]] = None,
+    user_id: Optional[str] = None,
     now: Optional[datetime] = None,
 ) -> dict:
     current = now or datetime.now(timezone.utc)
@@ -213,6 +217,8 @@ def build_question_card_performance(
     event_query = db.query(QuestionCardReviewEvent).filter(
         QuestionCardReviewEvent.note_group_id == note_group_id
     )
+    if user_id is not None:
+        event_query = event_query.filter(QuestionCardReviewEvent.user_id == user_id)
     if start is not None:
         event_query = event_query.filter(QuestionCardReviewEvent.reviewed_at >= start)
     events_by_card = defaultdict(list)

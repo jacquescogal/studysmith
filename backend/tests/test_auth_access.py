@@ -863,6 +863,89 @@ class SubjectRouteAuthorizationTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_subject_owner_can_request_public_review(self):
+        from app.main import request_subject_public
+        from app.models import SUBJECT_VISIBILITY_PUBLIC_REQUESTED, User
+
+        db = self.SessionLocal()
+        try:
+            creator = User(id="creator", supabase_user_id="creator-sub", email="creator@example.com", app_role="creator")
+            subject = Subject(id="subject-1", title="Subject", owner_user_id=creator.id, visibility="private")
+            db.add_all([creator, subject])
+            db.commit()
+
+            result = request_subject_public("subject-1", db=db, current_user=creator)
+
+            self.assertEqual(result.visibility, SUBJECT_VISIBILITY_PUBLIC_REQUESTED)
+        finally:
+            db.close()
+
+    def test_subject_owner_can_grant_and_revoke_subject_access(self):
+        from app.main import delete_subject_access, upsert_subject_access
+        from app.models import SubjectAccess, User
+        from app.schemas import SubjectAccessGrantUpdate
+
+        db = self.SessionLocal()
+        try:
+            owner = User(id="owner", supabase_user_id="owner-sub", email="owner@example.com", app_role="creator")
+            reader = User(id="reader", supabase_user_id="reader-sub", email="reader@example.com", app_role="reader")
+            subject = Subject(id="subject-1", title="Subject", owner_user_id=owner.id, visibility="private")
+            db.add_all([owner, reader, subject])
+            db.commit()
+
+            grant = upsert_subject_access(
+                "subject-1",
+                "reader",
+                SubjectAccessGrantUpdate(access_level="read"),
+                db=db,
+                current_user=owner,
+            )
+            self.assertEqual(grant.user_id, reader.id)
+            self.assertEqual(grant.access_level, "read")
+
+            updated = upsert_subject_access(
+                "subject-1",
+                "reader",
+                SubjectAccessGrantUpdate(access_level="edit"),
+                db=db,
+                current_user=owner,
+            )
+            self.assertEqual(updated.access_level, "edit")
+
+            result = delete_subject_access("subject-1", "reader", db=db, current_user=owner)
+            self.assertEqual(result, {"deleted": True})
+            self.assertEqual(db.query(SubjectAccess).count(), 0)
+        finally:
+            db.close()
+
+    def test_edit_grant_cannot_manage_subject_access(self):
+        from app.main import upsert_subject_access
+        from app.models import SubjectAccess, User
+        from app.schemas import SubjectAccessGrantUpdate
+
+        db = self.SessionLocal()
+        try:
+            owner = User(id="owner", supabase_user_id="owner-sub", email="owner@example.com", app_role="creator")
+            editor = User(id="editor", supabase_user_id="editor-sub", email="editor@example.com", app_role="reader")
+            reader = User(id="reader", supabase_user_id="reader-sub", email="reader@example.com", app_role="reader")
+            subject = Subject(id="subject-1", title="Subject", owner_user_id=owner.id, visibility="private")
+            grant = SubjectAccess(id="editor-grant", subject_id=subject.id, user_id=editor.id, access_level="edit")
+            db.add_all([owner, editor, reader, subject, grant])
+            db.commit()
+
+            with self.assertRaises(HTTPException) as exc:
+                upsert_subject_access(
+                    "subject-1",
+                    "reader",
+                    SubjectAccessGrantUpdate(access_level="read"),
+                    db=db,
+                    current_user=editor,
+                )
+
+            self.assertEqual(exc.exception.status_code, 403)
+        finally:
+            db.close()
+
 
 class PublicSubjectRoutesTests(unittest.TestCase):
     def setUp(self):
@@ -1201,6 +1284,39 @@ class RouteAccessEnforcementTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as exc:
                 chat(ChatRequest(module_id="module-1", message="Hi"), db=db, current_user=outsider)
             self.assertEqual(exc.exception.status_code, 404)
+        finally:
+            db.close()
+
+    def test_reader_review_uses_personal_learning_state_without_mutating_shared_question_card(self):
+        from app.main import review_question
+        from app.models import QuestionCard, QuestionCardReviewEvent
+        from app.schemas import QuestionCardReview
+
+        db = self.SessionLocal()
+        try:
+            _, reader, _, _ = self._seed_private_course(db)
+            card = db.get(QuestionCard, "question-card-1")
+            original_due_at = card.due_at
+            original_reps = card.reps
+            original_difficulty = card.difficulty
+
+            result = review_question(
+                "question-card-1",
+                QuestionCardReview(correct=True, response_time_ms=1, answer_option_indices=[0]),
+                db=db,
+                current_user=reader,
+            )
+
+            db.refresh(card)
+            event = db.query(QuestionCardReviewEvent).one()
+            self.assertEqual(event.user_id, reader.id)
+            self.assertEqual(card.due_at, original_due_at)
+            self.assertEqual(card.reps, original_reps)
+            self.assertEqual(card.difficulty, original_difficulty)
+            self.assertEqual(result["id"], card.id)
+            self.assertEqual(result["due_at"], event.next_due_at)
+            self.assertIsNotNone(result["last_review_at"])
+            self.assertNotEqual(event.next_due_at, original_due_at)
         finally:
             db.close()
 
