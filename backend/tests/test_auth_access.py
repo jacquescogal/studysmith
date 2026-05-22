@@ -204,5 +204,57 @@ class AccessModelTests(unittest.TestCase):
             db.close()
 
 
+class AuthResolutionTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
+        Base.metadata.create_all(bind=self.engine)
+
+    def test_profile_is_created_as_admin_when_email_matches_admin_env(self):
+        from app.auth import get_or_create_user_from_claims
+        from app.models import APP_ROLE_ADMIN
+
+        db = self.SessionLocal()
+        try:
+            user = get_or_create_user_from_claims(
+                db,
+                {"sub": "supabase-admin", "email": "Admin@Example.com"},
+                admin_emails={"admin@example.com"},
+            )
+            db.commit()
+            self.assertEqual(user.app_role, APP_ROLE_ADMIN)
+            self.assertEqual(user.email, "admin@example.com")
+        finally:
+            db.close()
+
+    def test_existing_user_role_is_not_downgraded_on_login(self):
+        from app.auth import get_or_create_user_from_claims
+        from app.models import APP_ROLE_CREATOR, User
+
+        db = self.SessionLocal()
+        try:
+            db.add(
+                User(
+                    id="user-1",
+                    supabase_user_id="supabase-creator",
+                    email="creator@example.com",
+                    app_role=APP_ROLE_CREATOR,
+                )
+            )
+            db.commit()
+            user = get_or_create_user_from_claims(
+                db,
+                {"sub": "supabase-creator", "email": "creator@example.com"},
+                admin_emails=set(),
+            )
+            self.assertEqual(user.app_role, APP_ROLE_CREATOR)
+        finally:
+            db.close()
+
+
 if __name__ == "__main__":
     unittest.main()
