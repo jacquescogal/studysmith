@@ -361,5 +361,55 @@ class AuthResolutionTests(unittest.TestCase):
         self.assertEqual(exc.exception.detail, "Admin access required")
 
 
+class SubjectAccessTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
+        Base.metadata.create_all(bind=self.engine)
+
+    def test_public_subject_can_be_read_without_user(self):
+        from app.access import can_read_subject
+        from app.models import SUBJECT_VISIBILITY_PUBLIC
+
+        subject = Subject(id="subject-1", title="Public", visibility=SUBJECT_VISIBILITY_PUBLIC)
+        self.assertTrue(can_read_subject(None, subject))
+
+    def test_private_subject_requires_grant_or_owner(self):
+        from app.access import can_edit_subject, can_read_subject
+        from app.models import SubjectAccess, User
+
+        db = self.SessionLocal()
+        try:
+            owner = User(id="owner", supabase_user_id="owner-sub", email="owner@example.com", app_role="creator")
+            reader = User(id="reader", supabase_user_id="reader-sub", email="reader@example.com", app_role="reader")
+            editor = User(id="editor", supabase_user_id="editor-sub", email="editor@example.com", app_role="reader")
+            outsider = User(id="outsider", supabase_user_id="out-sub", email="out@example.com", app_role="reader")
+            subject = Subject(id="subject-1", title="Private", owner_user_id="owner", visibility="private")
+            db.add_all(
+                [
+                    owner,
+                    reader,
+                    editor,
+                    outsider,
+                    subject,
+                    SubjectAccess(id="grant-read", subject_id="subject-1", user_id="reader", access_level="read"),
+                    SubjectAccess(id="grant-edit", subject_id="subject-1", user_id="editor", access_level="edit"),
+                ]
+            )
+            db.commit()
+            stored = db.get(Subject, "subject-1")
+            self.assertTrue(can_read_subject(owner, stored))
+            self.assertTrue(can_read_subject(reader, stored))
+            self.assertTrue(can_edit_subject(editor, stored))
+            self.assertFalse(can_edit_subject(reader, stored))
+            self.assertFalse(can_read_subject(outsider, stored))
+        finally:
+            db.close()
+
+
 if __name__ == "__main__":
     unittest.main()
