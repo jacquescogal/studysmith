@@ -6,11 +6,24 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models import QuestionCard, QuestionCardReviewEvent, StudyCard, study_card_topic_chips
+from app.models import (
+    QuestionCard,
+    QuestionCardLearningState,
+    QuestionCardReviewEvent,
+    StudyCard,
+    study_card_topic_chips,
+)
 
 
 def mastery_score(card: QuestionCard) -> Optional[float]:
     difficulty = card.difficulty
+    if difficulty is None or difficulty <= 0:
+        return None
+    return max(0.0, min(10.0, 10.0 - float(difficulty)))
+
+
+def mastery_score_for_state(card: QuestionCard, state: QuestionCardLearningState | None) -> Optional[float]:
+    difficulty = state.difficulty if state else card.difficulty
     if difficulty is None or difficulty <= 0:
         return None
     return max(0.0, min(10.0, 10.0 - float(difficulty)))
@@ -75,6 +88,24 @@ def filter_cards_by_studies(
     return [card for card in cards if any(ref in allowed_ids for ref in question_refs(card))]
 
 
+def learning_state_by_card_id(
+    db: Session,
+    cards: list[QuestionCard],
+    user_id: Optional[str],
+) -> dict[str, QuestionCardLearningState]:
+    if user_id is None or not cards:
+        return {}
+    states = (
+        db.query(QuestionCardLearningState)
+        .filter(
+            QuestionCardLearningState.user_id == user_id,
+            QuestionCardLearningState.question_card_id.in_([card.id for card in cards]),
+        )
+        .all()
+    )
+    return {state.question_card_id: state for state in states}
+
+
 def build_note_group_progress(
     db: Session,
     note_group_id: str,
@@ -88,6 +119,7 @@ def build_note_group_progress(
     allowed_ids = allowed_study_ids(db, note_group_id, chip_ids or [])
     cards = db.query(QuestionCard).filter(QuestionCard.note_group_id == note_group_id).all()
     cards = filter_cards_by_studies(cards, allowed_ids)
+    state_by_card_id = learning_state_by_card_id(db, cards, user_id)
     card_ids = {card.id for card in cards}
     query = db.query(QuestionCardReviewEvent).filter(
         QuestionCardReviewEvent.note_group_id == note_group_id
@@ -102,9 +134,19 @@ def build_note_group_progress(
     correct_count = sum(1 for event in events if event.correct)
     response_times = [event.response_time_ms for event in events]
     reviewed_card_ids = {event.question_card_id for event in events}
-    mastery_scores = [score for score in (mastery_score(card) for card in cards) if score is not None]
+    mastery_scores = [
+        score
+        for score in (
+            mastery_score_for_state(card, state_by_card_id.get(card.id))
+            for card in cards
+        )
+        if score is not None
+    ]
     high_mastery_count = sum(1 for score in mastery_scores if mastery_tier(score) == "high")
-    distribution = Counter(mastery_tier(mastery_score(card)) for card in cards)
+    distribution = Counter(
+        mastery_tier(mastery_score_for_state(card, state_by_card_id.get(card.id)))
+        for card in cards
+    )
 
     buckets = defaultdict(list)
     for event in events:
@@ -113,7 +155,17 @@ def build_note_group_progress(
 
     average_mastery = round(sum(mastery_scores) / len(mastery_scores), 1) if mastery_scores else None
     average_difficulty = (
-        round(sum(card.difficulty or 0 for card in cards) / len(cards), 2) if cards else None
+        round(
+            sum(
+                (state_by_card_id.get(card.id).difficulty if state_by_card_id.get(card.id) else card.difficulty)
+                or 0
+                for card in cards
+            )
+            / len(cards),
+            2,
+        )
+        if cards
+        else None
     )
     trend = []
     for key in sorted(buckets):
@@ -140,15 +192,18 @@ def build_note_group_progress(
 
     needs_attention = []
     for card in cards:
+        state = state_by_card_id.get(card.id)
         card_events = reviews_by_card[card.id]
         card_reviews = len(card_events)
         card_correct = sum(1 for event in card_events if event.correct)
         card_success = round((card_correct / card_reviews) * 100, 1) if card_reviews else None
-        card_mastery = mastery_score(card)
+        card_mastery = mastery_score_for_state(card, state)
+        lapses = state.lapses if state else card.lapses
+        difficulty = state.difficulty if state else card.difficulty
         reason = ""
         if card.stale:
             reason = "stale"
-        elif card.lapses and card.lapses >= 2:
+        elif lapses and lapses >= 2:
             reason = "repeated lapses"
         elif card_success is not None and card_success < 60:
             reason = "low success"
@@ -162,8 +217,8 @@ def build_note_group_progress(
                     "mastery": round(card_mastery, 1) if card_mastery is not None else None,
                     "success_rate": card_success,
                     "reviews": card_reviews,
-                    "lapses": card.lapses or 0,
-                    "difficulty": card.difficulty,
+                    "lapses": lapses or 0,
+                    "difficulty": difficulty,
                     "stale": bool(card.stale),
                     "reason": reason,
                 }
@@ -213,6 +268,7 @@ def build_question_card_performance(
     allowed_ids = allowed_study_ids(db, note_group_id, chip_ids or [])
     cards = db.query(QuestionCard).filter(QuestionCard.note_group_id == note_group_id).all()
     cards = filter_cards_by_studies(cards, allowed_ids)
+    state_by_card_id = learning_state_by_card_id(db, cards, user_id)
     card_ids = {card.id for card in cards}
     event_query = db.query(QuestionCardReviewEvent).filter(
         QuestionCardReviewEvent.note_group_id == note_group_id
@@ -228,16 +284,21 @@ def build_question_card_performance(
 
     rows = []
     for card in cards:
+        state = state_by_card_id.get(card.id)
         events = events_by_card[card.id]
         review_count = len(events)
         correct_count = sum(1 for event in events if event.correct)
         response_times = [event.response_time_ms for event in events]
-        score = mastery_score(card)
+        score = mastery_score_for_state(card, state)
         tier = mastery_tier(score)
         success_rate = round((correct_count / review_count) * 100, 1) if review_count else None
+        lapses = state.lapses if state else card.lapses
+        due_at = state.due_at if state else card.due_at
+        difficulty = state.difficulty if state else card.difficulty
+        stability = state.stability if state else card.stability
         is_attention = bool(
             card.stale
-            or (card.lapses and card.lapses >= 2)
+            or (lapses and lapses >= 2)
             or (success_rate is not None and success_rate < 60)
             or tier == "low"
         )
@@ -249,15 +310,15 @@ def build_question_card_performance(
                 "mastery_tier": tier,
                 "success_rate": success_rate,
                 "reviews": review_count,
-                "lapses": card.lapses or 0,
+                "lapses": lapses or 0,
                 "median_response_time_ms": int(median(response_times)) if response_times else None,
                 "last_reviewed_at": max(
                     (event.reviewed_at for event in events if event.reviewed_at),
                     default=None,
                 ),
-                "due_at": card.due_at,
-                "difficulty": card.difficulty,
-                "stability": card.stability,
+                "due_at": due_at,
+                "difficulty": difficulty,
+                "stability": stability,
                 "stale": bool(card.stale),
                 "attention": is_attention,
             }

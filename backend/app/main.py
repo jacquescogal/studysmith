@@ -367,6 +367,69 @@ def _get_or_create_question_card_learning_state(
     return learning_state
 
 
+def _question_card_learning_state_map(
+    db: Session,
+    cards: list[QuestionCard],
+    user: User,
+) -> dict[str, QuestionCardLearningState]:
+    card_ids = [card.id for card in cards]
+    if not card_ids:
+        return {}
+    states = (
+        db.query(QuestionCardLearningState)
+        .filter(
+            QuestionCardLearningState.question_card_id.in_(card_ids),
+            QuestionCardLearningState.user_id == user.id,
+        )
+        .all()
+    )
+    return {state.question_card_id: state for state in states}
+
+
+def _question_card_due_at(
+    card: QuestionCard,
+    state_by_card_id: dict[str, QuestionCardLearningState],
+) -> Optional[datetime]:
+    state = state_by_card_id.get(card.id)
+    return state.due_at if state else card.due_at
+
+
+def _serialize_question_cards_for_user(
+    cards: list[QuestionCard],
+    state_by_card_id: dict[str, QuestionCardLearningState],
+) -> list[dict]:
+    return [
+        _serialize_question_card(card, state_by_card_id.get(card.id))
+        for card in cards
+    ]
+
+
+def _review_cards_for_mode(
+    cards: list[QuestionCard],
+    mode: str,
+    limit: int,
+    state_by_card_id: dict[str, QuestionCardLearningState],
+    now: datetime,
+) -> list[QuestionCard]:
+    due_cutoff = now + timedelta(hours=6)
+    ordered = sorted(
+        cards,
+        key=lambda card: (_question_card_due_at(card, state_by_card_id) is None, _question_card_due_at(card, state_by_card_id) or now),
+    )
+    if mode == "due":
+        return [
+            card
+            for card in ordered
+            if _question_card_due_at(card, state_by_card_id) is None
+            or _normalize_due_at(_question_card_due_at(card, state_by_card_id)) <= due_cutoff
+        ][:limit]
+    if mode == "queue":
+        return ordered[:limit]
+    if mode == "all":
+        return ordered
+    raise HTTPException(status_code=400, detail="Invalid review mode")
+
+
 def _normalize_due_at(value: Optional[datetime]) -> Optional[datetime]:
     if value is None:
         return None
@@ -391,11 +454,16 @@ def _question_card_refs(card: QuestionCard) -> list[str]:
     return [ref for ref in refs if isinstance(ref, str)]
 
 
-def _build_question_timeline(cards: list[QuestionCard], now: datetime) -> dict:
+def _build_question_timeline(
+    cards: list[QuestionCard],
+    now: datetime,
+    state_by_card_id: Optional[dict[str, QuestionCardLearningState]] = None,
+) -> dict:
+    state_by_card_id = state_by_card_id or {}
     due_cutoff = now + timedelta(hours=6)
     timeline = {"due": 0, "week": 0, "month": 0, "six_months": 0, "long_term": 0}
     for card in cards:
-        due_at = _normalize_due_at(card.due_at)
+        due_at = _normalize_due_at(_question_card_due_at(card, state_by_card_id))
         if due_at is None or due_at <= due_cutoff:
             timeline["due"] += 1
             continue
@@ -1163,7 +1231,11 @@ def list_modules(
 
 
 @app.post("/modules", response_model=ModuleOut)
-def create_module(payload: ModuleCreate, db: Session = Depends(get_db)):
+def create_module(
+    payload: ModuleCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
     raise HTTPException(
         status_code=400, detail="Use /subjects/{subject_id}/modules instead"
     )
@@ -1344,6 +1416,7 @@ def get_module_overview(
     study_count_by_group: Counter[str] = Counter()
     cards_by_group: defaultdict[str, list[QuestionCard]] = defaultdict(list)
     filtered_cards: list[QuestionCard] = []
+    state_by_card_id: dict[str, QuestionCardLearningState] = {}
 
     if note_group_ids:
         chip_id_list = _parse_chip_ids(chip_ids)
@@ -1376,6 +1449,7 @@ def get_module_overview(
                 if any(ref in allowed_study_ids for ref in _question_card_refs(card))
             ]
         filtered_cards = question_cards
+        state_by_card_id = _question_card_learning_state_map(db, filtered_cards, current_user)
         for card in filtered_cards:
             cards_by_group[card.note_group_id].append(card)
 
@@ -1388,7 +1462,7 @@ def get_module_overview(
     }
     for group in note_groups:
         group_cards = cards_by_group[group.id]
-        timeline = _build_question_timeline(group_cards, now)
+        timeline = _build_question_timeline(group_cards, now, state_by_card_id)
         stale_count = sum(1 for card in group_cards if card.stale)
         stats = {
             "id": group.id,
@@ -1409,7 +1483,7 @@ def get_module_overview(
         "note_groups": note_groups,
         "note_group_stats": note_group_stats,
         "module_stats": module_stats,
-        "module_timeline": _build_question_timeline(filtered_cards, now),
+        "module_timeline": _build_question_timeline(filtered_cards, now, state_by_card_id),
     }
 
 
@@ -1727,11 +1801,9 @@ def list_topic_question_cards(
     current_user: User = Depends(require_user),
 ):
     topic = require_topic_read(db, current_user, topic_id)
-    return {
-        "question_cards": [
-            _serialize_question_card(card) for card in _topic_question_cards(db, topic)
-        ]
-    }
+    cards = _topic_question_cards(db, topic)
+    state_by_card_id = _question_card_learning_state_map(db, cards, current_user)
+    return {"question_cards": _serialize_question_cards_for_user(cards, state_by_card_id)}
 
 
 @app.get(
@@ -1745,7 +1817,8 @@ def get_topic_question_timeline(
 ):
     topic = require_topic_read(db, current_user, topic_id)
     cards = _topic_question_cards(db, topic)
-    timeline = _build_question_timeline(cards, datetime.now(timezone.utc))
+    state_by_card_id = _question_card_learning_state_map(db, cards, current_user)
+    timeline = _build_question_timeline(cards, datetime.now(timezone.utc), state_by_card_id)
     return {
         "timeline": timeline,
         "question_count": len(cards),
@@ -1763,21 +1836,10 @@ def list_topic_review_question_cards(
 ):
     topic = require_topic_study(db, current_user, topic_id)
     now = datetime.now(timezone.utc)
-    due_cutoff = now + timedelta(hours=6)
     cards = _topic_question_cards(db, topic)
-    if mode == "due":
-        cards = [
-            card
-            for card in cards
-            if card.due_at is None or _normalize_due_at(card.due_at) <= due_cutoff
-        ]
-    elif mode == "queue":
-        cards = cards[:limit]
-    elif mode == "all":
-        pass
-    else:
-        raise HTTPException(status_code=400, detail="Invalid review mode")
-    return {"question_cards": [_serialize_question_card(card) for card in cards]}
+    state_by_card_id = _question_card_learning_state_map(db, cards, current_user)
+    cards = _review_cards_for_mode(cards, mode, limit, state_by_card_id, now)
+    return {"question_cards": _serialize_question_cards_for_user(cards, state_by_card_id)}
 
 
 @app.post("/note-groups/{note_group_id}/topic-chips", response_model=list[TopicChipOut])
@@ -2224,7 +2286,8 @@ def list_question_cards(
         .order_by(QuestionCard.created_at.asc())
         .all()
     )
-    return {"question_cards": [_serialize_question_card(card) for card in cards]}
+    state_by_card_id = _question_card_learning_state_map(db, cards, current_user)
+    return {"question_cards": _serialize_question_cards_for_user(cards, state_by_card_id)}
 
 
 @app.get(
@@ -2268,7 +2331,8 @@ def get_note_group_question_timeline(
             for card in cards
             if any(ref in allowed_study_ids for ref in _question_card_refs(card))
         ]
-    timeline = _build_question_timeline(cards, now)
+    state_by_card_id = _question_card_learning_state_map(db, cards, current_user)
+    timeline = _build_question_timeline(cards, now, state_by_card_id)
     stale_count = sum(1 for card in cards if card.stale)
     return {
         "timeline": timeline,
@@ -2334,22 +2398,15 @@ def list_review_question_cards(
 ):
     require_note_group_study(db, current_user, note_group_id)
     now = datetime.now(timezone.utc)
-    due_cutoff = now + timedelta(hours=6)
-    query = db.query(QuestionCard).filter(QuestionCard.note_group_id == note_group_id)
-    if mode == "due":
-        query = query.filter(or_(QuestionCard.due_at <= due_cutoff, QuestionCard.due_at.is_(None)))
-    elif mode == "queue":
-        pass
-    elif mode == "all":
-        pass
-    else:
-        raise HTTPException(status_code=400, detail="Invalid review mode")
-
-    query = query.order_by(QuestionCard.due_at.asc())
-    if mode == "queue":
-        query = query.limit(limit)
-    cards = query.all()
-    return {"question_cards": [_serialize_question_card(card) for card in cards]}
+    cards = (
+        db.query(QuestionCard)
+        .filter(QuestionCard.note_group_id == note_group_id)
+        .order_by(QuestionCard.due_at.asc())
+        .all()
+    )
+    state_by_card_id = _question_card_learning_state_map(db, cards, current_user)
+    cards = _review_cards_for_mode(cards, mode, limit, state_by_card_id, now)
+    return {"question_cards": _serialize_question_cards_for_user(cards, state_by_card_id)}
 
 
 @app.get(
@@ -2395,7 +2452,8 @@ def get_module_question_timeline(
             for card in cards
             if any(ref in allowed_study_ids for ref in _question_card_refs(card))
         ]
-    timeline = _build_question_timeline(cards, now)
+    state_by_card_id = _question_card_learning_state_map(db, cards, current_user)
+    timeline = _build_question_timeline(cards, now, state_by_card_id)
     stale_count = sum(1 for card in cards if card.stale)
     return {
         "timeline": timeline,
@@ -2414,26 +2472,16 @@ def list_module_review_question_cards(
 ):
     require_module_study(db, current_user, module_id)
     now = datetime.now(timezone.utc)
-    due_cutoff = now + timedelta(hours=6)
-    query = (
+    cards = (
         db.query(QuestionCard)
         .join(NoteGroup, QuestionCard.note_group_id == NoteGroup.id)
         .filter(NoteGroup.module_id == module_id)
+        .order_by(QuestionCard.due_at.asc())
+        .all()
     )
-    if mode == "due":
-        query = query.filter(or_(QuestionCard.due_at <= due_cutoff, QuestionCard.due_at.is_(None)))
-    elif mode == "queue":
-        pass
-    elif mode == "all":
-        pass
-    else:
-        raise HTTPException(status_code=400, detail="Invalid review mode")
-
-    query = query.order_by(QuestionCard.due_at.asc())
-    if mode == "queue":
-        query = query.limit(limit)
-    cards = query.all()
-    return {"question_cards": [_serialize_question_card(card) for card in cards]}
+    state_by_card_id = _question_card_learning_state_map(db, cards, current_user)
+    cards = _review_cards_for_mode(cards, mode, limit, state_by_card_id, now)
+    return {"question_cards": _serialize_question_cards_for_user(cards, state_by_card_id)}
 
 
 @app.post("/note-groups/{note_group_id}/question-cards", response_model=QuestionCardOut)

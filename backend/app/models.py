@@ -406,7 +406,7 @@ class QuestionCardReviewEvent(Base):
 
     id = Column(String, primary_key=True, default=_uuid)
     question_card_id = Column(String, ForeignKey("question_cards.id"), nullable=False, index=True)
-    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     note_group_id = Column(String, ForeignKey("note_groups.id"), nullable=False, index=True)
     module_id = Column(String, ForeignKey("modules.id"), nullable=False, index=True)
     correct = Column(Boolean, nullable=False)
