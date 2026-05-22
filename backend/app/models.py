@@ -12,6 +12,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -21,6 +22,25 @@ DEFAULT_MODULE_SETTINGS = {
     "auto_question_count": 30,
     "additional_generation_instructions": "",
 }
+
+APP_ROLE_READER = "reader"
+APP_ROLE_CREATOR = "creator"
+APP_ROLE_ADMIN = "admin"
+APP_ROLES = {APP_ROLE_READER, APP_ROLE_CREATOR, APP_ROLE_ADMIN}
+
+SUBJECT_VISIBILITY_PRIVATE = "private"
+SUBJECT_VISIBILITY_PUBLIC_REQUESTED = "public_requested"
+SUBJECT_VISIBILITY_PUBLIC = "public"
+SUBJECT_VISIBILITIES = {
+    SUBJECT_VISIBILITY_PRIVATE,
+    SUBJECT_VISIBILITY_PUBLIC_REQUESTED,
+    SUBJECT_VISIBILITY_PUBLIC,
+}
+
+SUBJECT_ACCESS_READ = "read"
+SUBJECT_ACCESS_EDIT = "edit"
+SUBJECT_ACCESS_OWNER = "owner"
+SUBJECT_ACCESS_LEVELS = {SUBJECT_ACCESS_READ, SUBJECT_ACCESS_EDIT, SUBJECT_ACCESS_OWNER}
 
 
 def _uuid() -> str:
@@ -42,6 +62,39 @@ study_card_topic_chips = Table(
 )
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    supabase_user_id = Column(String, nullable=False, unique=True, index=True)
+    email = Column(String, nullable=False, unique=True, index=True)
+    app_role = Column(String, nullable=False, default=APP_ROLE_READER)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    owned_subjects = relationship("Subject", back_populates="owner")
+    subject_access_grants = relationship(
+        "SubjectAccess",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
+
+class SubjectAccess(Base):
+    __tablename__ = "subject_access"
+    __table_args__ = (UniqueConstraint("subject_id", "user_id", name="uq_subject_access_user"),)
+
+    id = Column(String, primary_key=True, default=_uuid)
+    subject_id = Column(String, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    access_level = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    subject = relationship("Subject", back_populates="access_grants")
+    user = relationship("User", back_populates="subject_access_grants")
+
+
 class Subject(Base):
     __tablename__ = "subjects"
 
@@ -50,9 +103,17 @@ class Subject(Base):
     description = Column(Text)
     goal = Column(Text, nullable=True)
     scope = Column(Text, nullable=True)
+    owner_user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
+    visibility = Column(String, nullable=False, default=SUBJECT_VISIBILITY_PRIVATE, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    owner = relationship("User", back_populates="owned_subjects")
+    access_grants = relationship(
+        "SubjectAccess",
+        back_populates="subject",
+        cascade="all, delete-orphan",
+    )
     modules = relationship("Module", back_populates="subject")
     short_code_record = relationship(
         "SubjectShortCode",
