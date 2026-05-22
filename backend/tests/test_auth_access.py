@@ -372,11 +372,55 @@ class SubjectAccessTests(unittest.TestCase):
         Base.metadata.create_all(bind=self.engine)
 
     def test_public_subject_can_be_read_without_user(self):
-        from app.access import can_read_subject
+        from app.access import can_edit_subject, can_read_subject
         from app.models import SUBJECT_VISIBILITY_PUBLIC
 
         subject = Subject(id="subject-1", title="Public", visibility=SUBJECT_VISIBILITY_PUBLIC)
         self.assertTrue(can_read_subject(None, subject))
+        self.assertFalse(can_edit_subject(None, subject))
+
+    def test_signed_in_user_can_study_public_subject(self):
+        from app.access import can_study_subject
+        from app.models import SUBJECT_VISIBILITY_PUBLIC, User
+
+        user = User(id="reader", supabase_user_id="reader-sub", email="reader@example.com", app_role="reader")
+        subject = Subject(id="subject-1", title="Public", visibility=SUBJECT_VISIBILITY_PUBLIC)
+        self.assertTrue(can_study_subject(user, subject))
+
+    def test_anonymous_user_cannot_study_public_subject(self):
+        from app.access import require_subject_study
+        from app.models import SUBJECT_VISIBILITY_PUBLIC
+
+        subject = Subject(id="subject-1", title="Public", visibility=SUBJECT_VISIBILITY_PUBLIC)
+
+        with self.assertRaises(HTTPException) as exc:
+            require_subject_study(None, subject)
+
+        self.assertEqual(exc.exception.status_code, 401)
+        self.assertEqual(exc.exception.detail, "Authentication required to study")
+
+    def test_authenticated_outsider_cannot_study_private_subject(self):
+        from app.access import require_subject_study
+        from app.models import User
+
+        outsider = User(id="outsider", supabase_user_id="out-sub", email="out@example.com", app_role="reader")
+        subject = Subject(id="subject-1", title="Private", owner_user_id="owner", visibility="private")
+
+        with self.assertRaises(HTTPException) as exc:
+            require_subject_study(outsider, subject)
+
+        self.assertEqual(exc.exception.status_code, 403)
+        self.assertEqual(exc.exception.detail, "Subject access required to study")
+
+    def test_admin_has_effective_read_and_edit_access_to_private_subject(self):
+        from app.access import can_edit_subject, can_read_subject
+        from app.models import APP_ROLE_ADMIN, User
+
+        admin = User(id="admin", supabase_user_id="admin-sub", email="admin@example.com", app_role=APP_ROLE_ADMIN)
+        subject = Subject(id="subject-1", title="Private", owner_user_id="owner", visibility="private")
+
+        self.assertTrue(can_read_subject(admin, subject))
+        self.assertTrue(can_edit_subject(admin, subject))
 
     def test_private_subject_requires_grant_or_owner(self):
         from app.access import can_edit_subject, can_read_subject
@@ -407,6 +451,81 @@ class SubjectAccessTests(unittest.TestCase):
             self.assertTrue(can_edit_subject(editor, stored))
             self.assertFalse(can_edit_subject(reader, stored))
             self.assertFalse(can_read_subject(outsider, stored))
+        finally:
+            db.close()
+
+    def test_require_subject_read_returns_404_for_inaccessible_private_subject(self):
+        from app.access import require_subject_read
+        from app.models import User
+
+        outsider = User(id="outsider", supabase_user_id="out-sub", email="out@example.com", app_role="reader")
+        subject = Subject(id="subject-1", title="Private", owner_user_id="owner", visibility="private")
+
+        with self.assertRaises(HTTPException) as exc:
+            require_subject_read(outsider, subject)
+
+        self.assertEqual(exc.exception.status_code, 404)
+        self.assertEqual(exc.exception.detail, "Subject not found")
+
+    def test_require_subject_edit_returns_403_for_read_only_user(self):
+        from app.access import require_subject_edit
+        from app.models import SubjectAccess, User
+
+        reader = User(id="reader", supabase_user_id="reader-sub", email="reader@example.com", app_role="reader")
+        subject = Subject(id="subject-1", title="Private", visibility="private")
+        subject.access_grants = [
+            SubjectAccess(id="grant-read", subject_id="subject-1", user_id="reader", access_level="read")
+        ]
+
+        with self.assertRaises(HTTPException) as exc:
+            require_subject_edit(reader, subject)
+
+        self.assertEqual(exc.exception.status_code, 403)
+        self.assertEqual(exc.exception.detail, "Edit access required")
+
+    def test_grant_owner_access_creates_owner_grant(self):
+        from app.access import grant_owner_access
+        from app.models import SubjectAccess, User
+
+        db = self.SessionLocal()
+        try:
+            user = User(id="user-1", supabase_user_id="user-sub", email="user@example.com", app_role="creator")
+            subject = Subject(id="subject-1", title="Private", visibility="private")
+            db.add_all([user, subject])
+            grant = grant_owner_access(db, subject, user)
+            db.commit()
+
+            stored_grant = db.get(SubjectAccess, grant.id)
+            stored_subject = db.get(Subject, "subject-1")
+            self.assertIsNotNone(stored_grant)
+            self.assertEqual(stored_grant.subject_id, "subject-1")
+            self.assertEqual(stored_grant.user_id, "user-1")
+            self.assertEqual(stored_grant.access_level, "owner")
+            self.assertIsNone(stored_subject.owner_user_id)
+        finally:
+            db.close()
+
+    def test_grant_owner_access_updates_existing_read_grant_to_owner(self):
+        from app.access import grant_owner_access
+        from app.models import SubjectAccess, User
+
+        db = self.SessionLocal()
+        try:
+            user = User(id="user-1", supabase_user_id="user-sub", email="user@example.com", app_role="reader")
+            subject = Subject(id="subject-1", title="Private", visibility="private")
+            existing = SubjectAccess(id="grant-read", subject_id="subject-1", user_id="user-1", access_level="read")
+            db.add_all([user, subject, existing])
+            db.commit()
+
+            grant = grant_owner_access(db, subject, user)
+            db.commit()
+
+            stored_grants = db.query(SubjectAccess).filter(SubjectAccess.subject_id == "subject-1").all()
+            stored_subject = db.get(Subject, "subject-1")
+            self.assertEqual(grant.id, "grant-read")
+            self.assertEqual(len(stored_grants), 1)
+            self.assertEqual(stored_grants[0].access_level, "owner")
+            self.assertIsNone(stored_subject.owner_user_id)
         finally:
             db.close()
 
