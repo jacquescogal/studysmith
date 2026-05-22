@@ -13,6 +13,11 @@ def _get_env(name: str, default: str) -> str:
     return value if value else default
 
 
+def _get_csv_set(name: str) -> set[str]:
+    value = os.getenv(name, "")
+    return {item.strip().lower() for item in value.split(",") if item.strip()}
+
+
 def _resolve_path(path_value: str) -> str:
     path = Path(path_value)
     if path.is_absolute():
@@ -27,6 +32,11 @@ class Settings:
     openai_embedding_model = _get_env("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
     database_url = _get_env("DATABASE_URL", "sqlite:///./study.db")
     chroma_path = _resolve_path(_get_env("CHROMA_PATH", "./chroma"))
+    supabase_url = _get_env("SUPABASE_URL", "")
+    supabase_jwks_url = _get_env("SUPABASE_JWKS_URL", "")
+    supabase_jwt_issuer = _get_env("SUPABASE_JWT_ISSUER", "")
+    supabase_jwt_audience = _get_env("SUPABASE_JWT_AUDIENCE", "authenticated")
+    admin_emails = _get_csv_set("ADMIN_EMAILS")
 
 
 settings = Settings()
