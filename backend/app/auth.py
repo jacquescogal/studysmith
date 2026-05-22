@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import get_db
-from app.models import APP_ROLE_ADMIN, APP_ROLE_READER, User
+from app.models import APP_ROLE_ADMIN, APP_ROLE_CREATOR, APP_ROLE_READER, User
 
 
 @dataclass(frozen=True)
@@ -128,4 +128,10 @@ def require_user(auth: AuthContext = Depends(get_auth_context)) -> User:
 def require_admin(user: User = Depends(require_user)) -> User:
     if user.app_role != APP_ROLE_ADMIN:
         raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+def require_creator(user: User = Depends(require_user)) -> User:
+    if user.app_role not in {APP_ROLE_CREATOR, APP_ROLE_ADMIN}:
+        raise HTTPException(status_code=403, detail="Creator access required")
     return user

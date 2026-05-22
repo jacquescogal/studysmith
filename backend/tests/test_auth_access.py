@@ -548,5 +548,55 @@ class SubjectAccessTests(unittest.TestCase):
             db.close()
 
 
+class SubjectRouteAuthorizationTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
+        Base.metadata.create_all(bind=self.engine)
+
+    def test_reader_cannot_create_subject(self):
+        from app.main import create_subject
+        from app.models import User
+        from app.schemas import SubjectCreate
+
+        db = self.SessionLocal()
+        try:
+            reader = User(id="reader", supabase_user_id="reader-sub", email="reader@example.com", app_role="reader")
+            db.add(reader)
+            db.commit()
+            with self.assertRaises(Exception) as raised:
+                create_subject(SubjectCreate(title="Subject", description=""), db=db, current_user=reader)
+        finally:
+            db.close()
+
+        self.assertEqual(getattr(raised.exception, "status_code", None), 403)
+
+    def test_creator_create_subject_sets_owner_and_owner_grant(self):
+        from app.main import create_subject
+        from app.models import SubjectAccess, User
+        from app.schemas import SubjectCreate
+
+        db = self.SessionLocal()
+        try:
+            creator = User(
+                id="creator",
+                supabase_user_id="creator-sub",
+                email="creator@example.com",
+                app_role="creator",
+            )
+            db.add(creator)
+            db.commit()
+            subject = create_subject(SubjectCreate(title="Subject", description=""), db=db, current_user=creator)
+            grant = db.query(SubjectAccess).filter(SubjectAccess.subject_id == subject.id).one()
+            self.assertEqual(subject.owner_user_id, "creator")
+            self.assertEqual(grant.access_level, "owner")
+        finally:
+            db.close()
+
+
 if __name__ == "__main__":
     unittest.main()
