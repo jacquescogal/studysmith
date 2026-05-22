@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import jwt
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
@@ -919,6 +920,315 @@ class PublicSubjectRoutesTests(unittest.TestCase):
             self.assertIn("created_at", payload)
             self.assertIn("updated_at", payload)
             self.assertNotIn("owner_user_id", payload)
+        finally:
+            db.close()
+
+
+class RouteAccessEnforcementTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
+        Base.metadata.create_all(bind=self.engine)
+
+    def _seed_private_course(self, db):
+        from app.models import (
+            Job,
+            Module,
+            NoteGroup,
+            QuestionCard,
+            StudyCard,
+            SubjectAccess,
+            User,
+        )
+
+        owner = User(id="owner", supabase_user_id="owner-sub", email="owner@example.com", app_role="creator")
+        reader = User(id="reader", supabase_user_id="reader-sub", email="reader@example.com", app_role="reader")
+        editor = User(id="editor", supabase_user_id="editor-sub", email="editor@example.com", app_role="reader")
+        outsider = User(
+            id="outsider",
+            supabase_user_id="outsider-sub",
+            email="outsider@example.com",
+            app_role="reader",
+        )
+        private_subject = Subject(
+            id="private-subject",
+            title="Private Subject",
+            owner_user_id="owner",
+            visibility="private",
+        )
+        public_subject = Subject(id="public-subject", title="Public Subject", visibility="public")
+        outsider_subject = Subject(
+            id="outsider-subject",
+            title="Outsider Subject",
+            owner_user_id="outsider",
+            visibility="private",
+        )
+        module = Module(id="module-1", subject_id="private-subject", title="Private Module")
+        public_module = Module(id="public-module", subject_id="public-subject", title="Public Module")
+        outsider_module = Module(id="outsider-module", subject_id="outsider-subject", title="Outsider Module")
+        note_group = NoteGroup(
+            id="note-group-1",
+            module_id="module-1",
+            title="Note Group",
+            raw_text="raw",
+            source="same-source",
+            source_normalized="same-source",
+        )
+        inaccessible_duplicate = NoteGroup(
+            id="note-group-secret",
+            module_id="outsider-module",
+            title="Secret Duplicate",
+            raw_text="raw",
+            source="same-source",
+            source_normalized="same-source",
+        )
+        study_card = StudyCard(id="study-card-1", note_group_id="note-group-1", title="Study", content="Content")
+        question_card = QuestionCard(
+            id="question-card-1",
+            note_group_id="note-group-1",
+            type="mcq",
+            prompt="Prompt?",
+            options_json='["A", "B"]',
+            correct_option_indices_json="[0]",
+            option_explanations_json="[]",
+            study_card_refs_json='["study-card-1"]',
+            stale=False,
+        )
+        job = Job(id="job-1", type="note_group_auto_generation", status="queued", note_group_id="note-group-1")
+        db.add_all(
+            [
+                owner,
+                reader,
+                editor,
+                outsider,
+                private_subject,
+                public_subject,
+                outsider_subject,
+                module,
+                public_module,
+                outsider_module,
+                note_group,
+                inaccessible_duplicate,
+                study_card,
+                question_card,
+                job,
+                SubjectAccess(
+                    id="reader-grant",
+                    subject_id="private-subject",
+                    user_id="reader",
+                    access_level="read",
+                ),
+                SubjectAccess(
+                    id="editor-grant",
+                    subject_id="private-subject",
+                    user_id="editor",
+                    access_level="edit",
+                ),
+            ]
+        )
+        db.commit()
+        return owner, reader, editor, outsider
+
+    def _client(self, db):
+        from app.db import get_db
+        from app.main import app
+
+        def override_db():
+            yield db
+
+        app.dependency_overrides[get_db] = override_db
+        self.addCleanup(app.dependency_overrides.clear)
+        return TestClient(app)
+
+    def test_private_subject_read_requires_owner_or_grant(self):
+        from app.main import get_subject
+
+        db = self.SessionLocal()
+        try:
+            owner, reader, _, outsider = self._seed_private_course(db)
+            client = self._client(db)
+
+            self.assertEqual(client.get("/subjects/private-subject").status_code, 401)
+            with self.assertRaises(HTTPException) as exc:
+                get_subject("private-subject", db=db, current_user=outsider)
+            self.assertEqual(exc.exception.status_code, 404)
+
+            self.assertEqual(get_subject("private-subject", db=db, current_user=owner).id, "private-subject")
+            self.assertEqual(get_subject("private-subject", db=db, current_user=reader).id, "private-subject")
+        finally:
+            db.close()
+
+    def test_list_subjects_returns_only_readable_subjects(self):
+        from app.main import list_subjects
+
+        db = self.SessionLocal()
+        try:
+            _, reader, _, _ = self._seed_private_course(db)
+
+            subjects = list_subjects(db=db, current_user=reader)
+
+            self.assertEqual({subject.id for subject in subjects}, {"private-subject", "public-subject"})
+        finally:
+            db.close()
+
+    def test_subject_modules_require_read_and_module_creation_requires_edit(self):
+        from app.main import create_subject_module, list_subject_modules
+        from app.schemas import ModuleCreate
+
+        db = self.SessionLocal()
+        try:
+            _, reader, editor, outsider = self._seed_private_course(db)
+            client = self._client(db)
+
+            self.assertEqual(client.get("/subjects/private-subject/modules").status_code, 401)
+            with self.assertRaises(HTTPException) as exc:
+                list_subject_modules("private-subject", db=db, current_user=outsider)
+            self.assertEqual(exc.exception.status_code, 404)
+
+            self.assertEqual([module.id for module in list_subject_modules("private-subject", db=db, current_user=reader)], ["module-1"])
+            with self.assertRaises(HTTPException) as exc:
+                create_subject_module(
+                    "private-subject",
+                    ModuleCreate(title="Reader Module"),
+                    db=db,
+                    current_user=reader,
+                )
+            self.assertEqual(exc.exception.status_code, 403)
+
+            module = create_subject_module(
+                "private-subject",
+                ModuleCreate(title="Editor Module"),
+                db=db,
+                current_user=editor,
+            )
+            self.assertEqual(module.subject_id, "private-subject")
+        finally:
+            db.close()
+
+    def test_private_module_note_group_and_study_card_reads_require_access(self):
+        from app.main import get_module, get_note_group, get_study_card
+
+        db = self.SessionLocal()
+        try:
+            _, reader, _, outsider = self._seed_private_course(db)
+            client = self._client(db)
+
+            self.assertEqual(client.get("/modules/module-1").status_code, 401)
+            for route_call, item_id in (
+                (get_module, "module-1"),
+                (get_note_group, "note-group-1"),
+                (get_study_card, "study-card-1"),
+            ):
+                with self.assertRaises(HTTPException) as exc:
+                    route_call(item_id, db=db, current_user=outsider)
+                self.assertEqual(exc.exception.status_code, 404)
+                self.assertEqual(route_call(item_id, db=db, current_user=reader).id, item_id)
+        finally:
+            db.close()
+
+    def test_reader_cannot_mutate_subject_module_note_group_or_cards_but_editor_can(self):
+        from app.main import (
+            update_module,
+            update_note_group_title,
+            update_question_card,
+            update_study_card,
+            update_subject,
+        )
+        from app.schemas import ModuleUpdate, NoteGroupTitleUpdate, QuestionCardUpdate, StudyCardUpdate, SubjectUpdate
+
+        db = self.SessionLocal()
+        try:
+            _, reader, editor, _ = self._seed_private_course(db)
+            attempts = (
+                (update_subject, ("private-subject", SubjectUpdate(description="reader"), db, reader)),
+                (update_module, ("module-1", ModuleUpdate(description="reader"), db, reader)),
+                (update_note_group_title, ("note-group-1", NoteGroupTitleUpdate(title="Reader"), db, reader)),
+                (update_study_card, ("study-card-1", StudyCardUpdate(title="Reader"), db, reader)),
+                (update_question_card, ("question-card-1", QuestionCardUpdate(prompt="Reader?"), db, reader)),
+            )
+            for route_call, args in attempts:
+                with self.assertRaises(HTTPException) as exc:
+                    route_call(args[0], args[1], db=args[2], current_user=args[3])
+                self.assertEqual(exc.exception.status_code, 403)
+
+            with patch("app.main._upsert_study_card_embedding"):
+                self.assertEqual(
+                    update_study_card(
+                        "study-card-1",
+                        StudyCardUpdate(title="Editor"),
+                        db=db,
+                        current_user=editor,
+                    ).title,
+                    "Editor",
+                )
+        finally:
+            db.close()
+
+    def test_review_question_and_chat_require_signed_in_read_access(self):
+        from app.main import chat, review_question
+        from app.schemas import ChatRequest, QuestionCardReview
+
+        db = self.SessionLocal()
+        try:
+            _, reader, _, outsider = self._seed_private_course(db)
+            client = self._client(db)
+
+            self.assertEqual(client.post("/question-cards/question-card-1/review", json={"correct": True, "response_time_ms": 1, "answer_option_indices": [0]}).status_code, 401)
+            with self.assertRaises(HTTPException) as exc:
+                review_question(
+                    "question-card-1",
+                    QuestionCardReview(correct=True, response_time_ms=1, answer_option_indices=[0]),
+                    db=db,
+                    current_user=outsider,
+                )
+            self.assertEqual(exc.exception.status_code, 403)
+
+            with patch("app.main.get_collection") as collection, patch("app.main.embed_texts", return_value=[[0.1]]), patch(
+                "app.main.generate_chat_response",
+                return_value={"answer": "ok", "used_ref_ids": ["study-card-1"]},
+            ):
+                collection.return_value.query.return_value = {
+                    "ids": [["study-card-1"]],
+                    "documents": [["Content"]],
+                }
+                result = chat(ChatRequest(module_id="module-1", message="Hi"), db=db, current_user=reader)
+            self.assertEqual(result["answer"], "ok")
+
+            with self.assertRaises(HTTPException) as exc:
+                chat(ChatRequest(module_id="module-1", message="Hi"), db=db, current_user=outsider)
+            self.assertEqual(exc.exception.status_code, 404)
+        finally:
+            db.close()
+
+    def test_global_jobs_list_is_not_anonymous(self):
+        db = self.SessionLocal()
+        try:
+            self._seed_private_course(db)
+            client = self._client(db)
+
+            self.assertEqual(client.get("/jobs").status_code, 401)
+        finally:
+            db.close()
+
+    def test_source_check_filters_inaccessible_duplicate_metadata(self):
+        from app.main import check_note_group_source
+        from app.schemas import NoteGroupSourceCheckRequest
+
+        db = self.SessionLocal()
+        try:
+            _, reader, _, _ = self._seed_private_course(db)
+
+            result = check_note_group_source(
+                NoteGroupSourceCheckRequest(source="same-source"),
+                db=db,
+                current_user=reader,
+            )
+
+            self.assertEqual([duplicate["id"] for duplicate in result["duplicates"]], ["note-group-1"])
         finally:
             db.close()
 

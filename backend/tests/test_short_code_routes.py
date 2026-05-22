@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db import Base
-from app.models import Module, NoteGroup, Subject, TopicChip
+from app.models import Module, NoteGroup, Subject, TopicChip, User
 
 
 SHORT_CODE_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -29,7 +29,8 @@ class ShortCodeRoutesTests(unittest.TestCase):
 
         db = self.SessionLocal()
         try:
-            subject = Subject(id="subject-1", title="Subject")
+            user = User(id="user-1", supabase_user_id="user-sub", email="user@example.com", app_role="creator")
+            subject = Subject(id="subject-1", title="Subject", owner_user_id=user.id)
             module = Module(id="module-1", subject_id=subject.id, title="Module")
             note_group = NoteGroup(
                 id="note-group-1",
@@ -38,13 +39,13 @@ class ShortCodeRoutesTests(unittest.TestCase):
                 raw_text="Raw text",
             )
             topic = TopicChip(id="topic-1", module_id=module.id, label="Topic")
-            db.add_all([subject, module, note_group, topic])
+            db.add_all([user, subject, module, note_group, topic])
             db.commit()
 
-            subjects = list_subjects(db=db)
-            modules = list_subject_modules("subject-1", db=db)
-            note_groups = list_note_groups("module-1", chip_ids=None, db=db)
-            topics = list_topic_chips("module-1", db=db)
+            subjects = list_subjects(db=db, current_user=user)
+            modules = list_subject_modules("subject-1", db=db, current_user=user)
+            note_groups = list_note_groups("module-1", chip_ids=None, db=db, current_user=user)
+            topics = list_topic_chips("module-1", db=db, current_user=user)
 
             self.assertEqual(len(subjects[0].short_code), 5)
             self.assertRegex(subjects[0].short_code, SHORT_CODE_RE)
@@ -94,8 +95,9 @@ class ShortCodeRoutesTests(unittest.TestCase):
 
         db = self.SessionLocal()
         try:
-            subject = Subject(id="subject-1", title="Subject")
-            other_subject = Subject(id="subject-2", title="Other Subject")
+            user = User(id="user-1", supabase_user_id="user-sub", email="user@example.com", app_role="creator")
+            subject = Subject(id="subject-1", title="Subject", owner_user_id=user.id)
+            other_subject = Subject(id="subject-2", title="Other Subject", owner_user_id=user.id)
             module = Module(id="module-1", subject_id=subject.id, title="Module")
             other_module = Module(id="module-2", subject_id=other_subject.id, title="Other Module")
             note_group = NoteGroup(
@@ -107,6 +109,7 @@ class ShortCodeRoutesTests(unittest.TestCase):
             topic = TopicChip(id="topic-1", module_id=module.id, label="Topic")
             db.add_all(
                 [
+                    user,
                     subject,
                     other_subject,
                     module,
@@ -128,6 +131,7 @@ class ShortCodeRoutesTests(unittest.TestCase):
                 module_code="Mod_01",
                 note_group_code="Group_1",
                 db=db,
+                current_user=user,
             )
             with self.assertRaises(HTTPException) as bad:
                 resolve_note_group_app_route(
@@ -135,12 +139,14 @@ class ShortCodeRoutesTests(unittest.TestCase):
                     module_code="Mod_01",
                     note_group_code="Group_1",
                     db=db,
+                    current_user=user,
                 )
             topic_ok = resolve_topic_app_route(
                 subject_code="Sub_1",
                 module_code="Mod_01",
                 topic_code="Topic_1",
                 db=db,
+                current_user=user,
             )
             with self.assertRaises(HTTPException) as bad_topic:
                 resolve_topic_app_route(
@@ -148,6 +154,7 @@ class ShortCodeRoutesTests(unittest.TestCase):
                     module_code="Mod_01",
                     topic_code="Topic_1",
                     db=db,
+                    current_user=user,
                 )
         finally:
             db.close()

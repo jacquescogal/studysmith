@@ -6,7 +6,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db import Base
-from app.models import Module, NoteGroup, Subject
+from app.models import Module, NoteGroup, Subject, User
 
 
 class PageRoutesTests(unittest.TestCase):
@@ -268,7 +268,8 @@ class PageRoutesTests(unittest.TestCase):
 
         db = TestingSessionLocal()
         try:
-            subject = Subject(id="subject-1", title="Subject")
+            user = User(id="user-1", supabase_user_id="user-sub", email="user@example.com", app_role="creator")
+            subject = Subject(id="subject-1", title="Subject", owner_user_id=user.id)
             module = Module(id="module-1", subject_id=subject.id, title="Module")
             note_group = NoteGroup(
                 id="note-group-1",
@@ -276,10 +277,10 @@ class PageRoutesTests(unittest.TestCase):
                 title="Note group",
                 raw_text="Raw text",
             )
-            db.add_all([subject, module, note_group])
+            db.add_all([user, subject, module, note_group])
             db.commit()
 
-            result = get_note_group("note-group-1", db=db)
+            result = get_note_group("note-group-1", db=db, current_user=user)
             self.assertEqual(result.subject_id, "subject-1")
         finally:
             db.close()

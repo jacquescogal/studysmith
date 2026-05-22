@@ -6,7 +6,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db import Base
-from app.models import Module, NoteGroup, QuestionCard, StudyCard, Subject, TopicChip
+from app.models import Module, NoteGroup, QuestionCard, StudyCard, Subject, TopicChip, User
 
 
 class TopicScopeRoutesTests(unittest.TestCase):
@@ -21,7 +21,8 @@ class TopicScopeRoutesTests(unittest.TestCase):
 
     def seed_topic_scope(self):
         db = self.SessionLocal()
-        subject = Subject(id="subject-1", title="Subject")
+        user = User(id="user-1", supabase_user_id="user-sub", email="user@example.com", app_role="creator")
+        subject = Subject(id="subject-1", title="Subject", owner_user_id=user.id)
         module = Module(id="module-1", subject_id=subject.id, title="Module")
         topic = TopicChip(id="topic-1", module_id=module.id, label="Caching")
         other_topic = TopicChip(id="topic-2", module_id=module.id, label="Queues")
@@ -68,6 +69,7 @@ class TopicScopeRoutesTests(unittest.TestCase):
         )
         db.add_all(
             [
+                user,
                 subject,
                 module,
                 topic,
@@ -94,9 +96,10 @@ class TopicScopeRoutesTests(unittest.TestCase):
 
         db = self.seed_topic_scope()
         try:
-            study_response = list_topic_study_cards("topic-1", db=db)
-            question_response = list_topic_question_cards("topic-1", db=db)
-            timeline_response = get_topic_question_timeline("topic-1", db=db)
+            user = db.get(User, "user-1")
+            study_response = list_topic_study_cards("topic-1", db=db, current_user=user)
+            question_response = list_topic_question_cards("topic-1", db=db, current_user=user)
+            timeline_response = get_topic_question_timeline("topic-1", db=db, current_user=user)
         finally:
             db.close()
 
@@ -123,7 +126,7 @@ class TopicScopeRoutesTests(unittest.TestCase):
             note_group.topic_chips.append(topic)
             db.commit()
 
-            result = delete_topic("topic-1", db=db)
+            result = delete_topic("topic-1", db=db, current_user=db.get(User, "user-1"))
             remaining_study_ids = {row[0] for row in db.query(StudyCard.id).all()}
             remaining_question_ids = {row[0] for row in db.query(QuestionCard.id).all()}
             study_links = db.execute(study_card_topic_chips.select()).all()

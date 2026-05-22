@@ -15,8 +15,29 @@ from sqlalchemy import case, func, or_, text
 
 from app.db import Base, engine, get_db
 from sqlalchemy.exc import IntegrityError
-from app.access import grant_owner_access
-from app.auth import require_admin, require_creator
+from app.access import (
+    grant_owner_access,
+    readable_subject_filter,
+    require_job_edit,
+    require_job_read,
+    require_module_edit,
+    require_module_read,
+    require_module_study,
+    require_note_group_edit,
+    require_note_group_read,
+    require_note_group_study,
+    require_question_card_edit,
+    require_question_card_study,
+    require_study_card_edit,
+    require_study_card_read,
+    require_subject_edit,
+    require_subject_read,
+    require_subject_study,
+    require_topic_edit,
+    require_topic_read,
+    require_topic_study,
+)
+from app.auth import require_admin, require_creator, require_user
 from app.chroma import get_collection
 from app.auto_queue import enqueue_auto_job, remove_auto_job, resume_auto_jobs, start_auto_worker
 from app.jobs import (
@@ -534,8 +555,13 @@ def health_check():
 
 
 @app.get("/routes/app/subject/{subject_code}", response_model=AppRouteContext)
-def resolve_subject_app_route(subject_code: str, db: Session = Depends(get_db)):
+def resolve_subject_app_route(
+    subject_code: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
     subject_record = _get_subject_short_code_record(db, subject_code)
+    require_subject_read(current_user, subject_record.subject)
     return {
         "subject_id": subject_record.subject_id,
         "subject_short_code": subject_record.short_code,
@@ -547,9 +573,13 @@ def resolve_subject_app_route(subject_code: str, db: Session = Depends(get_db)):
     response_model=AppRouteContext,
 )
 def resolve_module_app_route(
-    subject_code: str, module_code: str, db: Session = Depends(get_db)
+    subject_code: str,
+    module_code: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
     subject_record = _get_subject_short_code_record(db, subject_code)
+    require_subject_read(current_user, subject_record.subject)
     module_record = _get_module_short_code_record(db, module_code)
     module = db.get(Module, module_record.module_id)
     if not module or module.subject_id != subject_record.subject_id:
@@ -571,8 +601,10 @@ def resolve_note_group_app_route(
     module_code: str,
     note_group_code: str,
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
     subject_record = _get_subject_short_code_record(db, subject_code)
+    require_subject_read(current_user, subject_record.subject)
     module_record = _get_module_short_code_record(db, module_code)
     module = db.get(Module, module_record.module_id)
     if not module or module.subject_id != subject_record.subject_id:
@@ -600,8 +632,10 @@ def resolve_topic_app_route(
     module_code: str,
     topic_code: str,
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
     subject_record = _get_subject_short_code_record(db, subject_code)
+    require_subject_read(current_user, subject_record.subject)
     module_record = _get_module_short_code_record(db, module_code)
     module = db.get(Module, module_record.module_id)
     if not module or module.subject_id != subject_record.subject_id:
@@ -621,7 +655,10 @@ def resolve_topic_app_route(
 
 
 @app.post("/modules/intent-chat", response_model=IntentChatResponse)
-def module_intent_chat(payload: IntentChatRequest):
+def module_intent_chat(
+    payload: IntentChatRequest,
+    current_user: User = Depends(require_creator),
+):
     result = generate_module_intent_response(
         message=payload.message,
         history=[item.dict() for item in (payload.history or [])],
@@ -716,8 +753,16 @@ def keep_subject_private(
 
 
 @app.get("/subjects", response_model=list[SubjectOut])
-def list_subjects(db: Session = Depends(get_db)):
-    subjects = db.query(Subject).order_by(Subject.created_at.desc()).all()
+def list_subjects(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    subjects = (
+        db.query(Subject)
+        .filter(readable_subject_filter(current_user))
+        .order_by(Subject.created_at.desc())
+        .all()
+    )
     ensure_subject_short_codes(db, subjects)
     db.commit()
     return subjects
@@ -773,7 +818,10 @@ def create_subject(
 
 
 @app.post("/subjects/intent-chat", response_model=IntentChatResponse)
-def subject_intent_chat(payload: SubjectIntentChatPayload):
+def subject_intent_chat(
+    payload: SubjectIntentChatPayload,
+    current_user: User = Depends(require_creator),
+):
     history = [item.model_dump() for item in (payload.history or [])]
     result = generate_subject_intent_response(
         payload.message,
@@ -791,20 +839,31 @@ def subject_intent_chat(payload: SubjectIntentChatPayload):
 
 
 @app.get("/subjects/{subject_id}", response_model=SubjectOut)
-def get_subject(subject_id: str, db: Session = Depends(get_db)):
+def get_subject(
+    subject_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
     subject = db.get(Subject, subject_id)
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
+    require_subject_read(current_user, subject)
     ensure_subject_short_code(db, subject)
     db.commit()
     return subject
 
 
 @app.put("/subjects/{subject_id}", response_model=SubjectOut)
-def update_subject(subject_id: str, payload: SubjectUpdate, db: Session = Depends(get_db)):
+def update_subject(
+    subject_id: str,
+    payload: SubjectUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
     subject = db.get(Subject, subject_id)
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
+    require_subject_edit(current_user, subject)
     if (
         payload.title is None
         and payload.description is None
@@ -836,10 +895,15 @@ def update_subject(subject_id: str, payload: SubjectUpdate, db: Session = Depend
 
 
 @app.delete("/subjects/{subject_id}")
-def delete_subject(subject_id: str, db: Session = Depends(get_db)):
+def delete_subject(
+    subject_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
     subject = db.get(Subject, subject_id)
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
+    require_subject_edit(current_user, subject)
 
     module_rows = db.query(Module.id).filter(Module.subject_id == subject_id).all()
     module_ids = [row[0] for row in module_rows]
@@ -873,10 +937,15 @@ def delete_subject(subject_id: str, db: Session = Depends(get_db)):
 
 
 @app.get("/subjects/{subject_id}/modules", response_model=list[ModuleOut])
-def list_subject_modules(subject_id: str, db: Session = Depends(get_db)):
+def list_subject_modules(
+    subject_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
     subject = db.get(Subject, subject_id)
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
+    require_subject_read(current_user, subject)
     modules = (
         db.query(Module)
         .filter(Module.subject_id == subject_id)
@@ -890,11 +959,15 @@ def list_subject_modules(subject_id: str, db: Session = Depends(get_db)):
 
 @app.post("/subjects/{subject_id}/modules", response_model=ModuleOut)
 def create_subject_module(
-    subject_id: str, payload: ModuleCreate, db: Session = Depends(get_db)
+    subject_id: str,
+    payload: ModuleCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
     subject = db.get(Subject, subject_id)
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
+    require_subject_edit(current_user, subject)
     title = payload.title.strip()
     if not title:
         raise HTTPException(status_code=400, detail="Title cannot be empty")
@@ -919,8 +992,17 @@ def create_subject_module(
 
 
 @app.get("/modules", response_model=list[ModuleOut])
-def list_modules(db: Session = Depends(get_db)):
-    modules = db.query(Module).order_by(Module.created_at.desc()).all()
+def list_modules(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    modules = (
+        db.query(Module)
+        .join(Subject, Module.subject_id == Subject.id)
+        .filter(readable_subject_filter(current_user))
+        .order_by(Module.created_at.desc())
+        .all()
+    )
     ensure_module_short_codes(db, modules)
     db.commit()
     return modules
@@ -934,20 +1016,25 @@ def create_module(payload: ModuleCreate, db: Session = Depends(get_db)):
 
 
 @app.get("/modules/{module_id}", response_model=ModuleOut)
-def get_module(module_id: str, db: Session = Depends(get_db)):
-    module = db.get(Module, module_id)
-    if not module:
-        raise HTTPException(status_code=404, detail="Module not found")
+def get_module(
+    module_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    module = require_module_read(db, current_user, module_id)
     ensure_module_short_code(db, module)
     db.commit()
     return module
 
 
 @app.put("/modules/{module_id}", response_model=ModuleOut)
-def update_module(module_id: str, payload: ModuleUpdate, db: Session = Depends(get_db)):
-    module = db.get(Module, module_id)
-    if not module:
-        raise HTTPException(status_code=404, detail="Module not found")
+def update_module(
+    module_id: str,
+    payload: ModuleUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    module = require_module_edit(db, current_user, module_id)
     if (
         payload.title is None
         and payload.description is None
@@ -1015,10 +1102,12 @@ def update_module(module_id: str, payload: ModuleUpdate, db: Session = Depends(g
 
 
 @app.delete("/modules/{module_id}")
-def delete_module(module_id: str, db: Session = Depends(get_db)):
-    module = db.get(Module, module_id)
-    if not module:
-        raise HTTPException(status_code=404, detail="Module not found")
+def delete_module(
+    module_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    module = require_module_edit(db, current_user, module_id)
 
     note_group_rows = db.query(NoteGroup.id).filter(NoteGroup.module_id == module_id).all()
     note_group_ids = [row[0] for row in note_group_rows]
@@ -1045,10 +1134,9 @@ def list_note_groups(
     module_id: str,
     chip_ids: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
-    module = db.get(Module, module_id)
-    if not module:
-        raise HTTPException(status_code=404, detail="Module not found")
+    require_module_read(db, current_user, module_id)
 
     query = db.query(NoteGroup).filter(NoteGroup.module_id == module_id)
     if chip_ids:
@@ -1079,10 +1167,9 @@ def get_module_overview(
     module_id: str,
     chip_ids: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
-    module = db.get(Module, module_id)
-    if not module:
-        raise HTTPException(status_code=404, detail="Module not found")
+    require_module_read(db, current_user, module_id)
 
     sort_nulls_last = case((NoteGroup.sort_order.is_(None), 1), else_=0)
     note_groups = (
@@ -1176,13 +1263,17 @@ def get_module_overview(
 def check_note_group_source(
     payload: NoteGroupSourceCheckRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
     normalized = _normalize_source_text(payload.source or "")
     if not normalized:
         raise HTTPException(status_code=400, detail="Unique ID cannot be empty")
     matches = (
         db.query(NoteGroup)
+        .join(Module, NoteGroup.module_id == Module.id)
+        .join(Subject, Module.subject_id == Subject.id)
         .filter(NoteGroup.source_normalized == normalized)
+        .filter(readable_subject_filter(current_user))
         .order_by(NoteGroup.created_at.asc())
         .all()
     )
@@ -1205,10 +1296,9 @@ def update_note_group_order(
     module_id: str,
     payload: NoteGroupOrderUpdate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
-    module = db.get(Module, module_id)
-    if not module:
-        raise HTTPException(status_code=404, detail="Module not found")
+    require_module_edit(db, current_user, module_id)
     note_group_ids = [value for value in payload.note_group_ids if value]
     if not note_group_ids:
         raise HTTPException(status_code=400, detail="Note group ids cannot be empty")
@@ -1232,10 +1322,9 @@ def update_note_group_order(
 def auto_create_note_group(
     payload: NoteGroupAutoRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
-    module = db.get(Module, payload.module_id)
-    if not module:
-        raise HTTPException(status_code=404, detail="Module not found")
+    require_module_edit(db, current_user, payload.module_id)
     raw_text = payload.raw_text.strip()
     if not raw_text:
         raise HTTPException(status_code=400, detail="Raw text cannot be empty")
@@ -1302,10 +1391,9 @@ def update_note_group_title(
     note_group_id: str,
     payload: NoteGroupTitleUpdate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
-    note_group = db.get(NoteGroup, note_group_id)
-    if not note_group:
-        raise HTTPException(status_code=404, detail="Note group not found")
+    note_group = require_note_group_edit(db, current_user, note_group_id)
     title = payload.title.strip()
     if not title:
         raise HTTPException(status_code=400, detail="Title cannot be empty")
@@ -1319,10 +1407,12 @@ def update_note_group_title(
 
 
 @app.get("/modules/{module_id}/topic-chips", response_model=list[TopicChipOut])
-def list_topic_chips(module_id: str, db: Session = Depends(get_db)):
-    module = db.get(Module, module_id)
-    if not module:
-        raise HTTPException(status_code=404, detail="Module not found")
+def list_topic_chips(
+    module_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    require_module_read(db, current_user, module_id)
     topics = (
         db.query(TopicChip)
         .filter(TopicChip.module_id == module_id)
@@ -1336,11 +1426,12 @@ def list_topic_chips(module_id: str, db: Session = Depends(get_db)):
 
 @app.post("/modules/{module_id}/topic-chips", response_model=TopicChipOut)
 def create_topic_chip(
-    module_id: str, payload: TopicChipCreate, db: Session = Depends(get_db)
+    module_id: str,
+    payload: TopicChipCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
-    module = db.get(Module, module_id)
-    if not module:
-        raise HTTPException(status_code=404, detail="Module not found")
+    require_module_edit(db, current_user, module_id)
     label = payload.label.strip()
     if not label:
         raise HTTPException(status_code=400, detail="Label cannot be empty")
@@ -1355,20 +1446,25 @@ def create_topic_chip(
 
 
 @app.get("/topics/{topic_id}", response_model=TopicChipOut)
-def get_topic(topic_id: str, db: Session = Depends(get_db)):
-    topic = db.get(TopicChip, topic_id)
-    if not topic:
-        raise HTTPException(status_code=404, detail="Topic not found")
+def get_topic(
+    topic_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    topic = require_topic_read(db, current_user, topic_id)
     ensure_topic_chip_short_code(db, topic)
     db.commit()
     return topic
 
 
 @app.put("/topics/{topic_id}", response_model=TopicChipOut)
-def update_topic(topic_id: str, payload: TopicChipCreate, db: Session = Depends(get_db)):
-    topic = db.get(TopicChip, topic_id)
-    if not topic:
-        raise HTTPException(status_code=404, detail="Topic not found")
+def update_topic(
+    topic_id: str,
+    payload: TopicChipCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    topic = require_topic_edit(db, current_user, topic_id)
     label = payload.label.strip()
     if not label:
         raise HTTPException(status_code=400, detail="Label cannot be empty")
@@ -1383,10 +1479,12 @@ def update_topic(topic_id: str, payload: TopicChipCreate, db: Session = Depends(
 
 
 @app.delete("/topics/{topic_id}")
-def delete_topic(topic_id: str, db: Session = Depends(get_db)):
-    topic = db.get(TopicChip, topic_id)
-    if not topic:
-        raise HTTPException(status_code=404, detail="Topic not found")
+def delete_topic(
+    topic_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    topic = require_topic_edit(db, current_user, topic_id)
 
     db.execute(
         study_card_topic_chips.delete().where(
@@ -1444,10 +1542,12 @@ def _topic_question_cards(db: Session, topic: TopicChip) -> list[QuestionCard]:
 
 
 @app.get("/topics/{topic_id}/study-cards", response_model=StudyCardList)
-def list_topic_study_cards(topic_id: str, db: Session = Depends(get_db)):
-    topic = db.get(TopicChip, topic_id)
-    if not topic:
-        raise HTTPException(status_code=404, detail="Topic not found")
+def list_topic_study_cards(
+    topic_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    topic = require_topic_read(db, current_user, topic_id)
     cards = (
         db.query(StudyCard)
         .join(NoteGroup, StudyCard.note_group_id == NoteGroup.id)
@@ -1467,10 +1567,12 @@ def list_topic_study_cards(topic_id: str, db: Session = Depends(get_db)):
 
 
 @app.get("/topics/{topic_id}/question-cards", response_model=QuestionCardList)
-def list_topic_question_cards(topic_id: str, db: Session = Depends(get_db)):
-    topic = db.get(TopicChip, topic_id)
-    if not topic:
-        raise HTTPException(status_code=404, detail="Topic not found")
+def list_topic_question_cards(
+    topic_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    topic = require_topic_read(db, current_user, topic_id)
     return {
         "question_cards": [
             _serialize_question_card(card) for card in _topic_question_cards(db, topic)
@@ -1482,10 +1584,12 @@ def list_topic_question_cards(topic_id: str, db: Session = Depends(get_db)):
     "/topics/{topic_id}/question-cards/timeline",
     response_model=QuestionTimelineResponse,
 )
-def get_topic_question_timeline(topic_id: str, db: Session = Depends(get_db)):
-    topic = db.get(TopicChip, topic_id)
-    if not topic:
-        raise HTTPException(status_code=404, detail="Topic not found")
+def get_topic_question_timeline(
+    topic_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    topic = require_topic_read(db, current_user, topic_id)
     cards = _topic_question_cards(db, topic)
     timeline = _build_question_timeline(cards, datetime.now(timezone.utc))
     return {
@@ -1501,10 +1605,9 @@ def list_topic_review_question_cards(
     mode: str = Query(default="due"),
     limit: int = Query(default=10, ge=1, le=200),
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
-    topic = db.get(TopicChip, topic_id)
-    if not topic:
-        raise HTTPException(status_code=404, detail="Topic not found")
+    topic = require_topic_study(db, current_user, topic_id)
     now = datetime.now(timezone.utc)
     due_cutoff = now + timedelta(hours=6)
     cards = _topic_question_cards(db, topic)
@@ -1525,11 +1628,12 @@ def list_topic_review_question_cards(
 
 @app.post("/note-groups/{note_group_id}/topic-chips", response_model=list[TopicChipOut])
 def attach_topic_chips(
-    note_group_id: str, payload: TopicChipAttach, db: Session = Depends(get_db)
+    note_group_id: str,
+    payload: TopicChipAttach,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
-    note_group = db.get(NoteGroup, note_group_id)
-    if not note_group:
-        raise HTTPException(status_code=404, detail="Note group not found")
+    note_group = require_note_group_edit(db, current_user, note_group_id)
     if not payload.chip_ids:
         return note_group.topic_chips
 
@@ -1551,10 +1655,13 @@ def attach_topic_chips(
     "/note-groups/{note_group_id}/topic-chips/{chip_id}",
     response_model=list[TopicChipOut],
 )
-def detach_topic_chip(note_group_id: str, chip_id: str, db: Session = Depends(get_db)):
-    note_group = db.get(NoteGroup, note_group_id)
-    if not note_group:
-        raise HTTPException(status_code=404, detail="Note group not found")
+def detach_topic_chip(
+    note_group_id: str,
+    chip_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    note_group = require_note_group_edit(db, current_user, note_group_id)
     chip = db.get(TopicChip, chip_id)
     if not chip:
         raise HTTPException(status_code=404, detail="Topic chip not found")
@@ -1565,7 +1672,11 @@ def detach_topic_chip(note_group_id: str, chip_id: str, db: Session = Depends(ge
 
 
 @app.get("/note-groups/{note_group_id}", response_model=NoteGroupOut)
-def get_note_group(note_group_id: str, db: Session = Depends(get_db)):
+def get_note_group(
+    note_group_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
     note_group = (
         db.query(NoteGroup)
         .options(joinedload(NoteGroup.module))
@@ -1574,16 +1685,19 @@ def get_note_group(note_group_id: str, db: Session = Depends(get_db)):
     )
     if not note_group:
         raise HTTPException(status_code=404, detail="Note group not found")
+    require_subject_read(current_user, note_group.module.subject)
     ensure_note_group_short_code(db, note_group)
     db.commit()
     return note_group
 
 
 @app.delete("/note-groups/{note_group_id}")
-def delete_note_group(note_group_id: str, db: Session = Depends(get_db)):
-    note_group = db.get(NoteGroup, note_group_id)
-    if not note_group:
-        raise HTTPException(status_code=404, detail="Note group not found")
+def delete_note_group(
+    note_group_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    note_group = require_note_group_edit(db, current_user, note_group_id)
 
     study_card_ids = _delete_note_groups(db, [note_group_id])
     db.commit()
@@ -1596,10 +1710,12 @@ def delete_note_group(note_group_id: str, db: Session = Depends(get_db)):
 
 
 @app.get("/jobs/{job_id}", response_model=JobOut)
-def get_job(job_id: str, db: Session = Depends(get_db)):
-    job = db.get(Job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+def get_job(
+    job_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    job = require_job_read(db, current_user, job_id)
     return job
 
 
@@ -1609,6 +1725,7 @@ def list_jobs(
     status: Optional[str] = Query(default=None),
     module_id: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
 ):
     query = db.query(Job)
     if module_id:
@@ -1625,10 +1742,12 @@ def list_jobs(
 
 
 @app.post("/jobs/{job_id}/cancel", response_model=JobOut)
-def cancel_job(job_id: str, db: Session = Depends(get_db)):
-    job = db.get(Job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+def cancel_job(
+    job_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    job = require_job_edit(db, current_user, job_id)
     if job.type != JOB_TYPE_NOTE_GROUP_AUTO_GENERATION:
         raise HTTPException(status_code=400, detail="Only auto jobs can be cancelled")
     if job.status in {"completed", "failed", "cancelled"}:
@@ -1647,10 +1766,12 @@ def cancel_job(job_id: str, db: Session = Depends(get_db)):
 
 
 @app.post("/jobs/{job_id}/retry", response_model=JobOut)
-def retry_job(job_id: str, db: Session = Depends(get_db)):
-    job = db.get(Job, job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+def retry_job(
+    job_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    job = require_job_edit(db, current_user, job_id)
     if job.type != JOB_TYPE_NOTE_GROUP_AUTO_GENERATION:
         raise HTTPException(status_code=400, detail="Only auto jobs can be retried")
     if job.status not in {"failed", "cancelled"}:
@@ -1680,7 +1801,12 @@ def retry_job(job_id: str, db: Session = Depends(get_db)):
 
 
 @app.get("/note-groups/{note_group_id}/study-cards", response_model=StudyCardList)
-def list_study_cards(note_group_id: str, db: Session = Depends(get_db)):
+def list_study_cards(
+    note_group_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    require_note_group_read(db, current_user, note_group_id)
     cards = (
         db.query(StudyCard)
         .filter(StudyCard.note_group_id == note_group_id)
@@ -1691,10 +1817,12 @@ def list_study_cards(note_group_id: str, db: Session = Depends(get_db)):
 
 
 @app.get("/note-groups/{note_group_id}/card-table", response_model=NoteGroupCardTableResponse)
-def get_note_group_card_table(note_group_id: str, db: Session = Depends(get_db)):
-    note_group = db.get(NoteGroup, note_group_id)
-    if not note_group:
-        raise HTTPException(status_code=404, detail="Note group not found")
+def get_note_group_card_table(
+    note_group_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    require_note_group_read(db, current_user, note_group_id)
 
     study_cards = (
         db.query(StudyCard)
@@ -1762,20 +1890,23 @@ def get_note_group_card_table(note_group_id: str, db: Session = Depends(get_db))
 
 
 @app.get("/study-cards/{study_card_id}", response_model=StudyCardOut)
-def get_study_card(study_card_id: str, db: Session = Depends(get_db)):
-    card = db.get(StudyCard, study_card_id)
-    if not card:
-        raise HTTPException(status_code=404, detail="Study card not found")
+def get_study_card(
+    study_card_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    card = require_study_card_read(db, current_user, study_card_id)
     return card
 
 
 @app.post("/note-groups/{note_group_id}/study-cards", response_model=StudyCardOut)
 def create_study_card(
-    note_group_id: str, payload: StudyCardCreate, db: Session = Depends(get_db)
+    note_group_id: str,
+    payload: StudyCardCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
-    note_group = db.get(NoteGroup, note_group_id)
-    if not note_group:
-        raise HTTPException(status_code=404, detail="Note group not found")
+    note_group = require_note_group_edit(db, current_user, note_group_id)
     if not payload.content.strip():
         raise HTTPException(status_code=400, detail="Content cannot be empty")
 
@@ -1808,11 +1939,12 @@ def create_study_card(
 
 @app.put("/study-cards/{study_card_id}", response_model=StudyCardOut)
 def update_study_card(
-    study_card_id: str, payload: StudyCardUpdate, db: Session = Depends(get_db)
+    study_card_id: str,
+    payload: StudyCardUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
-    card = db.get(StudyCard, study_card_id)
-    if not card:
-        raise HTTPException(status_code=404, detail="Study card not found")
+    card = require_study_card_edit(db, current_user, study_card_id)
     note_group = card.note_group
     if payload.title is not None:
         card.title = payload.title
@@ -1843,10 +1975,12 @@ def update_study_card(
 
 
 @app.delete("/study-cards/{study_card_id}")
-def delete_study_card(study_card_id: str, db: Session = Depends(get_db)):
-    card = db.get(StudyCard, study_card_id)
-    if not card:
-        raise HTTPException(status_code=404, detail="Study card not found")
+def delete_study_card(
+    study_card_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    card = require_study_card_edit(db, current_user, study_card_id)
     note_group_id = card.note_group_id
     card_id = card.id
     db.delete(card)
@@ -1865,10 +1999,9 @@ def review_study_cards(
     note_group_id: str,
     payload: StudyCardReview,
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
-    note_group = db.get(NoteGroup, note_group_id)
-    if not note_group:
-        raise HTTPException(status_code=404, detail="Note group not found")
+    require_note_group_edit(db, current_user, note_group_id)
 
     if not payload.irrelevant_ids:
         return {"deleted": 0}
@@ -1904,10 +2037,9 @@ def generate_question_cards(
     payload: QuestionCardGenerate,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
-    note_group = db.get(NoteGroup, note_group_id)
-    if not note_group:
-        raise HTTPException(status_code=404, detail="Note group not found")
+    require_note_group_edit(db, current_user, note_group_id)
 
     job = Job(type=JOB_TYPE_NOTE_GROUP_QUESTION_GENERATION, note_group_id=note_group_id)
     db.add(job)
@@ -1925,7 +2057,12 @@ def generate_question_cards(
 
 
 @app.get("/note-groups/{note_group_id}/question-cards", response_model=QuestionCardList)
-def list_question_cards(note_group_id: str, db: Session = Depends(get_db)):
+def list_question_cards(
+    note_group_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    require_note_group_read(db, current_user, note_group_id)
     cards = (
         db.query(QuestionCard)
         .filter(QuestionCard.note_group_id == note_group_id)
@@ -1943,10 +2080,9 @@ def get_note_group_question_timeline(
     note_group_id: str,
     chip_ids: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
-    note_group = db.get(NoteGroup, note_group_id)
-    if not note_group:
-        raise HTTPException(status_code=404, detail="Note group not found")
+    require_note_group_read(db, current_user, note_group_id)
     now = datetime.now(timezone.utc)
     chip_id_list = _parse_chip_ids(chip_ids)
     allowed_study_ids: Optional[set[str]] = None
@@ -1992,10 +2128,9 @@ def get_note_group_progress(
     range: str = Query(default="30d"),
     chip_ids: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
-    note_group = db.get(NoteGroup, note_group_id)
-    if not note_group:
-        raise HTTPException(status_code=404, detail="Note group not found")
+    require_note_group_read(db, current_user, note_group_id)
     chip_id_list = _parse_chip_ids(chip_ids)
     return build_note_group_progress(db, note_group_id, range, chip_id_list)
 
@@ -2015,10 +2150,9 @@ def get_note_group_question_card_performance(
     attention: bool = Query(default=False),
     chip_ids: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
-    note_group = db.get(NoteGroup, note_group_id)
-    if not note_group:
-        raise HTTPException(status_code=404, detail="Note group not found")
+    require_note_group_read(db, current_user, note_group_id)
     chip_id_list = _parse_chip_ids(chip_ids)
     return build_question_card_performance(
         db,
@@ -2040,10 +2174,9 @@ def list_review_question_cards(
     mode: str = Query(default="due"),
     limit: int = Query(default=10, ge=1, le=200),
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
-    note_group = db.get(NoteGroup, note_group_id)
-    if not note_group:
-        raise HTTPException(status_code=404, detail="Note group not found")
+    require_note_group_study(db, current_user, note_group_id)
     now = datetime.now(timezone.utc)
     due_cutoff = now + timedelta(hours=6)
     query = db.query(QuestionCard).filter(QuestionCard.note_group_id == note_group_id)
@@ -2071,10 +2204,9 @@ def get_module_question_timeline(
     module_id: str,
     chip_ids: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
-    module = db.get(Module, module_id)
-    if not module:
-        raise HTTPException(status_code=404, detail="Module not found")
+    require_module_read(db, current_user, module_id)
     now = datetime.now(timezone.utc)
     chip_id_list = _parse_chip_ids(chip_ids)
     allowed_study_ids: Optional[set[str]] = None
@@ -2122,10 +2254,9 @@ def list_module_review_question_cards(
     mode: str = Query(default="due"),
     limit: int = Query(default=10, ge=1, le=200),
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
-    module = db.get(Module, module_id)
-    if not module:
-        raise HTTPException(status_code=404, detail="Module not found")
+    require_module_study(db, current_user, module_id)
     now = datetime.now(timezone.utc)
     due_cutoff = now + timedelta(hours=6)
     query = (
@@ -2151,11 +2282,12 @@ def list_module_review_question_cards(
 
 @app.post("/note-groups/{note_group_id}/question-cards", response_model=QuestionCardOut)
 def create_question_card(
-    note_group_id: str, payload: QuestionCardCreate, db: Session = Depends(get_db)
+    note_group_id: str,
+    payload: QuestionCardCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
-    note_group = db.get(NoteGroup, note_group_id)
-    if not note_group:
-        raise HTTPException(status_code=404, detail="Note group not found")
+    require_note_group_edit(db, current_user, note_group_id)
     if payload.type not in {"mcq", "multi"}:
         raise HTTPException(status_code=400, detail="Invalid question type")
     if not payload.prompt.strip():
@@ -2202,10 +2334,9 @@ def review_question(
     question_card_id: str,
     payload: QuestionCardReview,
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
-    card = db.get(QuestionCard, question_card_id)
-    if not card:
-        raise HTTPException(status_code=404, detail="Question card not found")
+    card = require_question_card_study(db, current_user, question_card_id)
     if payload.response_time_ms < 0:
         raise HTTPException(status_code=400, detail="Response time must be non-negative")
     correct_indices = json.loads(card.correct_option_indices_json or "[]")
@@ -2257,11 +2388,12 @@ def review_question(
 
 @app.put("/question-cards/{question_card_id}", response_model=QuestionCardOut)
 def update_question_card(
-    question_card_id: str, payload: QuestionCardUpdate, db: Session = Depends(get_db)
+    question_card_id: str,
+    payload: QuestionCardUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
 ):
-    card = db.get(QuestionCard, question_card_id)
-    if not card:
-        raise HTTPException(status_code=404, detail="Question card not found")
+    card = require_question_card_edit(db, current_user, question_card_id)
     if payload.type is not None:
         if payload.type not in {"mcq", "multi"}:
             raise HTTPException(status_code=400, detail="Invalid question type")
@@ -2318,23 +2450,27 @@ def update_question_card(
 
 
 @app.delete("/question-cards/{question_card_id}")
-def delete_question_card(question_card_id: str, db: Session = Depends(get_db)):
-    card = db.get(QuestionCard, question_card_id)
-    if not card:
-        raise HTTPException(status_code=404, detail="Question card not found")
+def delete_question_card(
+    question_card_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    card = require_question_card_edit(db, current_user, question_card_id)
     db.delete(card)
     db.commit()
     return {"deleted": True}
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(payload: ChatRequest, db: Session = Depends(get_db)):
-    module = db.get(Module, payload.module_id)
-    if not module:
-        raise HTTPException(status_code=404, detail="Module not found")
+def chat(
+    payload: ChatRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    module = require_module_read(db, current_user, payload.module_id)
 
     if payload.note_group_id:
-        note_group = db.get(NoteGroup, payload.note_group_id)
+        note_group = require_note_group_read(db, current_user, payload.note_group_id)
         if not note_group or note_group.module_id != payload.module_id:
             raise HTTPException(status_code=404, detail="Note group not found")
 

@@ -6,7 +6,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db import Base
-from app.models import Module, NoteGroup, QuestionCard, StudyCard, Subject, TopicChip
+from app.models import Module, NoteGroup, QuestionCard, StudyCard, Subject, TopicChip, User
 
 
 class ModuleOverviewRoutesTests(unittest.TestCase):
@@ -34,7 +34,8 @@ class ModuleOverviewRoutesTests(unittest.TestCase):
 
         db = TestingSessionLocal()
         try:
-            subject = Subject(id="subject-1", title="Subject")
+            user = User(id="user-1", supabase_user_id="user-sub", email="user@example.com", app_role="creator")
+            subject = Subject(id="subject-1", title="Subject", owner_user_id=user.id)
             module = Module(id="module-1", subject_id=subject.id, title="Module")
             keep_chip = TopicChip(id="chip-keep", module_id=module.id, label="Keep")
             other_chip = TopicChip(id="chip-other", module_id=module.id, label="Other")
@@ -92,6 +93,7 @@ class ModuleOverviewRoutesTests(unittest.TestCase):
             )
             db.add_all(
                 [
+                    user,
                     subject,
                     module,
                     keep_chip,
@@ -105,7 +107,7 @@ class ModuleOverviewRoutesTests(unittest.TestCase):
                 ]
             )
             db.commit()
-            data = get_module_overview("module-1", chip_ids="chip-keep", db=db)
+            data = get_module_overview("module-1", chip_ids="chip-keep", db=db, current_user=user)
         finally:
             db.close()
 

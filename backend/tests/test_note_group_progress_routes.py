@@ -15,6 +15,7 @@ from app.models import (
     StudyCard,
     Subject,
     TopicChip,
+    User,
 )
 
 
@@ -30,7 +31,8 @@ class NoteGroupProgressRoutesTests(unittest.TestCase):
 
     def seed_review_scope(self):
         db = self.SessionLocal()
-        subject = Subject(id="subject-1", title="Subject")
+        user = User(id="user-1", supabase_user_id="user-sub", email="user@example.com", app_role="creator")
+        subject = Subject(id="subject-1", title="Subject", owner_user_id=user.id)
         module = Module(id="module-1", subject_id=subject.id, title="Module")
         topic = TopicChip(id="topic-1", module_id=module.id, label="Caching")
         group = NoteGroup(id="group-1", module_id=module.id, title="Group", raw_text="Raw")
@@ -53,7 +55,7 @@ class NoteGroupProgressRoutesTests(unittest.TestCase):
             lapses=0,
             state=1,
         )
-        db.add_all([subject, module, topic, group, study, question])
+        db.add_all([user, subject, module, topic, group, study, question])
         db.commit()
         return db
 
@@ -106,6 +108,7 @@ class NoteGroupProgressRoutesTests(unittest.TestCase):
                     answer_option_indices=[1],
                 ),
                 db=db,
+                current_user=db.get(User, "user-1"),
             )
             events = db.query(QuestionCardReviewEvent).all()
         finally:
@@ -183,7 +186,13 @@ class NoteGroupProgressRoutesTests(unittest.TestCase):
                 ]
             )
             db.commit()
-            data = get_note_group_progress("group-1", range="30d", chip_ids=None, db=db)
+            data = get_note_group_progress(
+                "group-1",
+                range="30d",
+                chip_ids=None,
+                db=db,
+                current_user=db.get(User, "user-1"),
+            )
         finally:
             db.close()
 
@@ -239,7 +248,13 @@ class NoteGroupProgressRoutesTests(unittest.TestCase):
                 ]
             )
             db.commit()
-            data = get_note_group_progress("group-1", range="30d", chip_ids="topic-1", db=db)
+            data = get_note_group_progress(
+                "group-1",
+                range="30d",
+                chip_ids="topic-1",
+                db=db,
+                current_user=db.get(User, "user-1"),
+            )
         finally:
             db.close()
 
@@ -303,6 +318,7 @@ class NoteGroupProgressRoutesTests(unittest.TestCase):
                 attention=False,
                 chip_ids=None,
                 db=db,
+                current_user=db.get(User, "user-1"),
             )
         finally:
             db.close()
@@ -373,7 +389,7 @@ class NoteGroupProgressRoutesTests(unittest.TestCase):
             )
             db.commit()
 
-            data = get_note_group_card_table("group-1", db=db)
+            data = get_note_group_card_table("group-1", db=db, current_user=db.get(User, "user-1"))
         finally:
             db.close()
 
