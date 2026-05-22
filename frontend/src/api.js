@@ -266,6 +266,10 @@ export function listStudyCards(noteGroupId) {
   return request(`/note-groups/${noteGroupId}/study-cards`);
 }
 
+export function getNoteGroupCardTable(noteGroupId) {
+  return request(`/note-groups/${noteGroupId}/card-table`);
+}
+
 export function listTopicStudyCards(topicId) {
   return request(`/topics/${topicId}/study-cards`);
 }

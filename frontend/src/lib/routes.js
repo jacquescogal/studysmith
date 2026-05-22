@@ -25,10 +25,10 @@ export function matchAppRoute(pathname) {
     /^\/app\/subject\/([a-zA-Z0-9_-]+)\/module\/([a-zA-Z0-9_-]+)\/create-note-group$/
   );
   const noteGroup = pathname.match(
-    /^\/app\/subject\/([a-zA-Z0-9_-]+)\/module\/([a-zA-Z0-9_-]+)\/note-groups\/([a-zA-Z0-9_-]+)(?:\/(overview|study-cards|question-cards))?$/
+    /^\/app\/subject\/([a-zA-Z0-9_-]+)\/module\/([a-zA-Z0-9_-]+)\/note-groups\/([a-zA-Z0-9_-]+)(?:\/(overview|view-cards|study-cards|question-cards))?$/
   );
   const topic = pathname.match(
-    /^\/app\/subject\/([a-zA-Z0-9_-]+)\/module\/([a-zA-Z0-9_-]+)\/topics\/([a-zA-Z0-9_-]+)(?:\/(overview|study-cards|question-cards))?$/
+    /^\/app\/subject\/([a-zA-Z0-9_-]+)\/module\/([a-zA-Z0-9_-]+)\/topics\/([a-zA-Z0-9_-]+)(?:\/(overview|view-cards|study-cards|question-cards))?$/
   );
 
   return {
