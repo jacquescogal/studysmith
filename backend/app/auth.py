@@ -4,6 +4,7 @@ from typing import Optional
 import jwt
 from fastapi import Depends, Header, HTTPException
 from jwt import PyJWKClient
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -32,17 +33,28 @@ def _bearer_token(authorization: Optional[str]) -> Optional[str]:
 def validate_supabase_jwt(token: str) -> dict:
     if not settings.supabase_jwks_url:
         raise HTTPException(status_code=500, detail="Supabase JWT validation is not configured")
-    jwks_client = PyJWKClient(settings.supabase_jwks_url)
-    signing_key = jwks_client.get_signing_key_from_jwt(token)
-    options = {"verify_aud": bool(settings.supabase_jwt_audience)}
-    return jwt.decode(
-        token,
-        signing_key.key,
-        algorithms=["RS256"],
-        audience=settings.supabase_jwt_audience or None,
-        issuer=settings.supabase_jwt_issuer or None,
-        options=options,
-    )
+    try:
+        jwks_client = PyJWKClient(settings.supabase_jwks_url)
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
+        options = {"verify_aud": bool(settings.supabase_jwt_audience)}
+        return jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=settings.supabase_jwt_audience or None,
+            issuer=settings.supabase_jwt_issuer or None,
+            options=options,
+        )
+    except (jwt.PyJWTError, jwt.exceptions.PyJWKClientError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid authentication token") from exc
+
+
+def _email_owner(db: Session, email: str) -> Optional[User]:
+    return db.query(User).filter(User.email == email).one_or_none()
+
+
+def _email_collision() -> HTTPException:
+    return HTTPException(status_code=409, detail="Email is already associated with another user")
 
 
 def get_or_create_user_from_claims(
@@ -58,14 +70,41 @@ def get_or_create_user_from_claims(
     user = db.query(User).filter(User.supabase_user_id == supabase_user_id).one_or_none()
     if user:
         if user.email != email:
+            existing_email_owner = _email_owner(db, email)
+            if existing_email_owner and existing_email_owner.id != user.id:
+                raise _email_collision()
             user.email = email
+            try:
+                db.commit()
+                db.refresh(user)
+            except IntegrityError as exc:
+                db.rollback()
+                existing_email_owner = _email_owner(db, email)
+                if existing_email_owner and existing_email_owner.supabase_user_id != supabase_user_id:
+                    raise _email_collision() from exc
+                raise HTTPException(status_code=409, detail="User profile could not be updated") from exc
         return user
+
+    existing_email_owner = _email_owner(db, email)
+    if existing_email_owner:
+        raise _email_collision()
 
     role = APP_ROLE_ADMIN if email in (admin_emails or settings.admin_emails) else APP_ROLE_READER
     user = User(supabase_user_id=supabase_user_id, email=email, app_role=role)
     db.add(user)
-    db.flush()
-    return user
+    try:
+        db.commit()
+        db.refresh(user)
+        return user
+    except IntegrityError as exc:
+        db.rollback()
+        user = db.query(User).filter(User.supabase_user_id == supabase_user_id).one_or_none()
+        if user:
+            return user
+        existing_email_owner = _email_owner(db, email)
+        if existing_email_owner:
+            raise _email_collision() from exc
+        raise HTTPException(status_code=409, detail="User profile could not be created") from exc
 
 
 def get_auth_context(
