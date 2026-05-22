@@ -305,6 +305,38 @@ documents, and metadata for retrieval.
 
 This is an infrastructure term, not product vocabulary.
 
+## Access And Sharing
+
+### User
+
+A signed-in person authenticated by the configured identity provider. A user can
+own Subjects, receive Subject Access grants, and have personal Learning State
+for shared Question Cards.
+
+### App Role
+
+A global permission level for app-wide capabilities. Initial roles are `reader`,
+`creator`, and `admin`. New users start as `reader`.
+
+### Subject Access
+
+An explicit grant that gives a user `read`, `edit`, or `owner` access to a
+specific Subject. Subject Access inherits to Modules, Note Groups, Study Cards,
+Question Cards, Topics, Review History views, and Tutor Chat inside that
+Subject.
+
+### Subject Visibility
+
+The public publishing state of a Subject. Initial values are `private`,
+`public_requested`, and `public`. Public visibility grants read access, never
+edit access.
+
+### Learning State
+
+Per-user learning data for shared Question Cards. Learning State includes FSRS
+schedule, Due state, Review History, Mastery inputs, and disabled-card status.
+Learning State is separate from shared Question Card content.
+
 ## Naming Rules
 
 - Use `Subject`, `Module`, and `Note Group` only for hierarchy levels.
