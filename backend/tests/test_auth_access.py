@@ -39,6 +39,24 @@ class AuthConfigTests(unittest.TestCase):
             reload(config)
 
 
+class AuthSchemaCompatibilityTests(unittest.TestCase):
+    def test_subject_auth_columns_are_added_to_existing_sqlite_table(self):
+        from sqlalchemy import text
+        from app.main import _ensure_subject_access_columns
+
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        with engine.connect() as conn:
+            conn.execute(text("CREATE TABLE subjects (id VARCHAR PRIMARY KEY, title VARCHAR NOT NULL)"))
+            conn.commit()
+
+        _ensure_subject_access_columns(engine)
+
+        with engine.connect() as conn:
+            columns = {row[1] for row in conn.execute(text("PRAGMA table_info(subjects)"))}
+        self.assertIn("owner_user_id", columns)
+        self.assertIn("visibility", columns)
+
+
 class AccessModelTests(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine(
