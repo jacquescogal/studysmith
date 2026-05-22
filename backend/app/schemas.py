@@ -59,6 +59,21 @@ class SubjectOut(BaseModel):
         from_attributes = True
 
 
+class PublicSubjectOut(BaseModel):
+    id: str
+    short_code: Optional[str] = None
+    title: str
+    description: Optional[str] = None
+    goal: Optional[str] = None
+    scope: Optional[str] = None
+    visibility: str = "public"
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class ModuleCreate(BaseModel):
     title: str
     description: Optional[str] = None

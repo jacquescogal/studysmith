@@ -459,6 +459,25 @@ class AdminRoutesTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_admin_cannot_approve_subject_without_public_request(self):
+        from app.main import approve_public_subject
+        from app.models import APP_ROLE_ADMIN, SUBJECT_VISIBILITY_PRIVATE, User
+
+        db = self.SessionLocal()
+        try:
+            admin = User(id="admin", supabase_user_id="admin-sub", email="admin@example.com", app_role=APP_ROLE_ADMIN)
+            subject = Subject(id="subject-1", title="Subject", visibility=SUBJECT_VISIBILITY_PRIVATE)
+            db.add_all([admin, subject])
+            db.commit()
+
+            with self.assertRaises(HTTPException) as exc:
+                approve_public_subject("subject-1", db=db, current_user=admin)
+
+            self.assertEqual(exc.exception.status_code, 400)
+            self.assertEqual(exc.exception.detail, "Subject has not requested public visibility")
+        finally:
+            db.close()
+
     def test_approving_public_subject_backfills_missing_short_code(self):
         from app.main import approve_public_subject
         from app.models import APP_ROLE_ADMIN, SUBJECT_VISIBILITY_PUBLIC_REQUESTED, SubjectShortCode, User
@@ -489,6 +508,25 @@ class AdminRoutesTests(unittest.TestCase):
             db.commit()
             updated = keep_subject_private("subject-1", db=db, current_user=admin)
             self.assertEqual(updated.visibility, SUBJECT_VISIBILITY_PRIVATE)
+        finally:
+            db.close()
+
+    def test_admin_cannot_keep_private_subject_without_public_request(self):
+        from app.main import keep_subject_private
+        from app.models import APP_ROLE_ADMIN, SUBJECT_VISIBILITY_PUBLIC, User
+
+        db = self.SessionLocal()
+        try:
+            admin = User(id="admin", supabase_user_id="admin-sub", email="admin@example.com", app_role=APP_ROLE_ADMIN)
+            subject = Subject(id="subject-1", title="Subject", visibility=SUBJECT_VISIBILITY_PUBLIC)
+            db.add_all([admin, subject])
+            db.commit()
+
+            with self.assertRaises(HTTPException) as exc:
+                keep_subject_private("subject-1", db=db, current_user=admin)
+
+            self.assertEqual(exc.exception.status_code, 400)
+            self.assertEqual(exc.exception.detail, "Subject has not requested public visibility")
         finally:
             db.close()
 
@@ -850,6 +888,37 @@ class PublicSubjectRoutesTests(unittest.TestCase):
             db.commit()
             subjects = list_public_subjects(db=db)
             self.assertEqual([subject.id for subject in subjects], ["public"])
+        finally:
+            db.close()
+
+    def test_public_subject_output_excludes_owner_user_id(self):
+        from app.models import SUBJECT_VISIBILITY_PUBLIC
+        from app.schemas import PublicSubjectOut
+
+        db = self.SessionLocal()
+        try:
+            subject = Subject(
+                id="public",
+                title="Public",
+                description="Description",
+                goal="Goal",
+                scope="Scope",
+                owner_user_id="owner-user-id",
+                visibility=SUBJECT_VISIBILITY_PUBLIC,
+            )
+            db.add(subject)
+            db.commit()
+            db.refresh(subject)
+
+            payload = PublicSubjectOut.model_validate(subject).model_dump()
+
+            self.assertEqual(payload["id"], "public")
+            self.assertEqual(payload["title"], "Public")
+            self.assertEqual(payload["visibility"], SUBJECT_VISIBILITY_PUBLIC)
+            self.assertIn("short_code", payload)
+            self.assertIn("created_at", payload)
+            self.assertIn("updated_at", payload)
+            self.assertNotIn("owner_user_id", payload)
         finally:
             db.close()
 
