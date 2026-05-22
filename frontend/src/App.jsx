@@ -16,6 +16,7 @@ import { ModuleOverview } from "@/features/modules/ModuleOverview";
 import { NoteGroupCreate } from "@/features/note-groups/NoteGroupCreate";
 import { NoteGroupOverview } from "@/features/note-groups/NoteGroupOverview";
 import { NoteGroupProgress } from "@/features/note-groups/NoteGroupProgress";
+import { NoteGroupViewCards } from "@/features/note-groups/NoteGroupViewCards";
 import { QuestionCardList } from "@/features/question-cards/QuestionCardList";
 import { ReadingDialog } from "@/features/reading/ReadingDialog";
 import { ReviewDialog } from "@/features/review/ReviewDialog";
@@ -61,6 +62,7 @@ import {
   deleteTopic,
   detachTopicChip,
   generateQuestionCards,
+  getNoteGroupCardTable,
   getJob,
   getModule,
   getModuleOverview,
@@ -259,6 +261,12 @@ export default function App() {
   const [noteGroupProgress, setNoteGroupProgress] = useState(normalizeNoteGroupProgress());
   const [noteGroupProgressLoading, setNoteGroupProgressLoading] = useState(false);
   const [noteGroupProgressError, setNoteGroupProgressError] = useState("");
+  const [noteGroupCardTable, setNoteGroupCardTable] = useState({
+    rows: [],
+    unlinked_question_count: 0,
+  });
+  const [noteGroupCardTableLoading, setNoteGroupCardTableLoading] = useState(false);
+  const [noteGroupCardTableError, setNoteGroupCardTableError] = useState("");
   const [isReadingOpen, setIsReadingOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isMetadataOpen, setIsMetadataOpen] = useState(false);
@@ -408,6 +416,7 @@ export default function App() {
     ? resolvedRouteContext.note_group_id || ""
     : "";
   const routeTopicId = resolvedRouteMatches ? resolvedRouteContext.topic_id || "" : "";
+  const isViewCardsPage = routePanel === "view-cards";
   const isStudyPage = routePanel === "study-cards";
   const isQuestionPage = routePanel === "question-cards";
   const hasUnresolvedRouteTarget = Boolean(
@@ -499,6 +508,56 @@ export default function App() {
     });
   }, [filteredQuestionCards, masteryFilter]);
 
+  const topicCardTable = useMemo(() => {
+    if (!selectedTopicId) {
+      return { rows: [], unlinkedQuestionCount: 0 };
+    }
+    const rowsByStudyId = new Map(
+      filteredStudyCards.map((card) => [
+        card.id,
+        {
+          study_card: {
+            id: card.id,
+            title: card.title || "Untitled Study Card",
+            topic_chips: card.topic_chips || []
+          },
+          question_cards: []
+        }
+      ])
+    );
+    let unlinkedQuestionCount = 0;
+    questionCards.forEach((card) => {
+      const linkedStudyIds = (card.study_card_refs || []).filter((studyCardId) =>
+        rowsByStudyId.has(studyCardId)
+      );
+      if (!linkedStudyIds.length) {
+        unlinkedQuestionCount += 1;
+        return;
+      }
+      const score = getMasteryScore(card);
+      const tableQuestion = {
+        id: card.id,
+        prompt: card.prompt,
+        mastery: score === null ? null : Number(score.toFixed(1)),
+        mastery_tier: getMasteryTier(score),
+        success_rate: null,
+        reviews: card.reps || 0,
+        median_response_time_ms: null,
+        due_at: card.due_at
+      };
+      linkedStudyIds.forEach((studyCardId) => {
+        rowsByStudyId.get(studyCardId)?.question_cards.push(tableQuestion);
+      });
+    });
+    return {
+      rows: Array.from(rowsByStudyId.values()),
+      unlinkedQuestionCount
+    };
+  }, [filteredStudyCards, questionCards, selectedTopicId]);
+
+  const topicCardTableRows = topicCardTable.rows;
+  const topicUnlinkedQuestionCount = topicCardTable.unlinkedQuestionCount;
+
   const noteGroupStats = useMemo(() => {
     const staleCount = filteredQuestionCards.filter((card) => card.stale).length;
     return {
@@ -532,6 +591,9 @@ export default function App() {
         { id: "module-note-groups", label: "Note groups" }
       ];
     }
+    if (selectedNoteGroupId && !selectedTopicId && isViewCardsPage) {
+      return [];
+    }
     if (isStudyPage) {
       return [{ id: "study-list", label: "Study cards" }];
     }
@@ -549,6 +611,7 @@ export default function App() {
     selectedModuleId,
     selectedNoteGroupId,
     selectedTopicId,
+    isViewCardsPage,
     isStudyPage,
     isQuestionPage,
     isTopicScope
@@ -1290,6 +1353,44 @@ export default function App() {
   }, [selectedNoteGroupId, selectedTopicId, progressRange, chipFilterIds, reviewRefreshToken]);
 
   useEffect(() => {
+    let cancelled = false;
+    if (!selectedNoteGroupId || selectedTopicId || !isViewCardsPage) {
+      setNoteGroupCardTable({ rows: [], unlinked_question_count: 0 });
+      setNoteGroupCardTableError("");
+      setNoteGroupCardTableLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    const loadCardTable = async () => {
+      setNoteGroupCardTableLoading(true);
+      setNoteGroupCardTableError("");
+      try {
+        const data = await getNoteGroupCardTable(selectedNoteGroupId);
+        if (!cancelled) {
+          setNoteGroupCardTable({
+            rows: data.rows || [],
+            unlinked_question_count: data.unlinked_question_count || 0,
+          });
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setNoteGroupCardTable({ rows: [], unlinked_question_count: 0 });
+          setNoteGroupCardTableError(error.message || "Failed to load View Cards");
+        }
+      } finally {
+        if (!cancelled) {
+          setNoteGroupCardTableLoading(false);
+        }
+      }
+    };
+    loadCardTable();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedNoteGroupId, selectedTopicId, isViewCardsPage]);
+
+  useEffect(() => {
     setChatMessages([]);
     setChatError("");
     setIsChatOpen(false);
@@ -2029,7 +2130,7 @@ export default function App() {
     }
     const noteGroup = noteGroups.find((group) => group.id === noteGroupId);
     const nextPanel =
-      panelOverride || (isStudyPage || isQuestionPage ? routePanel : "overview");
+      panelOverride || (isViewCardsPage || isStudyPage || isQuestionPage ? routePanel : "overview");
     navigate(
       selectedSubjectCode && selectedModuleCode && noteGroup?.short_code
         ? noteGroupPath(selectedSubjectCode, selectedModuleCode, noteGroup.short_code, nextPanel)
@@ -2712,9 +2813,25 @@ export default function App() {
         chip_ids: editingStudyCard.chipIds
       });
       setStudyCards((prev) => prev.map((card) => (card.id === cardId ? updated : card)));
+      setNoteGroupCardTable((prev) => ({
+        ...prev,
+        rows: prev.rows.map((row) =>
+          row.study_card.id === cardId
+            ? {
+                ...row,
+                study_card: {
+                  ...row.study_card,
+                  title: updated.title,
+                },
+              }
+            : row
+        ),
+      }));
       setEditingStudyCardId("");
+      return true;
     } catch (error) {
       setStudyCardError(error.message || "Failed to update study card");
+      return false;
     }
   };
 
@@ -2725,14 +2842,20 @@ export default function App() {
       confirmLabel: "Delete study card"
     });
     if (!confirmed) {
-      return;
+      return false;
     }
     setStudyCardError("");
     try {
       await deleteStudyCard(cardId);
       setStudyCards((prev) => prev.filter((card) => card.id !== cardId));
+      setNoteGroupCardTable((prev) => ({
+        ...prev,
+        rows: prev.rows.filter((row) => row.study_card.id !== cardId),
+      }));
+      return true;
     } catch (error) {
       setStudyCardError(error.message || "Failed to delete study card");
+      return false;
     }
   };
 
@@ -3064,7 +3187,7 @@ export default function App() {
     const indices = parseIndices(editingQuestionCard.correctIndicesText);
     if (options.length < 2 || indices.length === 0 || editingQuestionCard.refs.length === 0) {
       setQuestionCardError("Provide options, correct indices, and study card refs.");
-      return;
+      return false;
     }
     setQuestionCardError("");
     try {
@@ -3076,9 +3199,36 @@ export default function App() {
         study_card_refs: editingQuestionCard.refs
       });
       setQuestionCards((prev) => prev.map((card) => (card.id === cardId ? updated : card)));
+      setNoteGroupCardTable((prev) => {
+        const refs = new Set(updated.study_card_refs || []);
+        const existingMetricRow = prev.rows
+          .flatMap((row) => row.question_cards || [])
+          .find((question) => question.id === cardId);
+        const nextQuestionRow = {
+          ...existingMetricRow,
+          id: updated.id,
+          prompt: updated.prompt,
+        };
+        return {
+          ...prev,
+          rows: prev.rows.map((row) => {
+            const withoutUpdated = (row.question_cards || []).filter(
+              (question) => question.id !== cardId
+            );
+            return {
+              ...row,
+              question_cards: refs.has(row.study_card.id)
+                ? [...withoutUpdated, nextQuestionRow]
+                : withoutUpdated,
+            };
+          }),
+        };
+      });
       setEditingQuestionCardId("");
+      return true;
     } catch (error) {
       setQuestionCardError(error.message || "Failed to update question card");
+      return false;
     }
   };
 
@@ -3089,14 +3239,25 @@ export default function App() {
       confirmLabel: "Delete question card"
     });
     if (!confirmed) {
-      return;
+      return false;
     }
     setQuestionCardError("");
     try {
       await deleteQuestionCard(cardId);
       setQuestionCards((prev) => prev.filter((card) => card.id !== cardId));
+      setNoteGroupCardTable((prev) => ({
+        ...prev,
+        rows: prev.rows.map((row) => ({
+          ...row,
+          question_cards: (row.question_cards || []).filter(
+            (question) => question.id !== cardId
+          ),
+        })),
+      }));
+      return true;
     } catch (error) {
       setQuestionCardError(error.message || "Failed to delete question card");
+      return false;
     }
   };
 
@@ -5068,7 +5229,7 @@ export default function App() {
                   </div>
                 ) : (
                   <>
-                    {!isStudyPage && !isQuestionPage ? (
+                    {!isViewCardsPage && !isStudyPage && !isQuestionPage ? (
                       <div className="space-y-6">
                         {isTopicScope ? (
                           <TopicOverview
@@ -5085,28 +5246,12 @@ export default function App() {
                                         selectedSubjectCode,
                                         selectedModuleCode,
                                         selectedTopicCode,
-                                        "study-cards"
+                                        "view-cards"
                                       )
                                     )
                                   }
                                 >
-                                  View study cards
-                                </button>
-                                <button
-                                  className={outlineButtonClass}
-                                  type="button"
-                                  onClick={() =>
-                                    navigate(
-                                      topicPath(
-                                        selectedSubjectCode,
-                                        selectedModuleCode,
-                                        selectedTopicCode,
-                                        "question-cards"
-                                      )
-                                    )
-                                  }
-                                >
-                                  View question cards
+                                  View cards
                                 </button>
                                 <button
                                   className={outlineButtonClass}
@@ -5243,28 +5388,11 @@ export default function App() {
                                 </>
                               }
                             />
-                            <NoteGroupProgress
-                              progress={noteGroupProgress}
-                              range={progressRange}
-                              loading={noteGroupProgressLoading}
-                              error={noteGroupProgressError}
-                              onRangeChange={setProgressRange}
-                              onOpenPerformance={() =>
-                                navigate(
-                                  noteGroupPath(
-                                    selectedSubjectCode,
-                                    selectedModuleCode,
-                                    selectedNoteGroupCode,
-                                    "question-cards"
-                                  )
-                                )
-                              }
-                            />
                             <section className={panelClass} id="note-group-content">
                               <div className="mb-4">
                                 <h3 className="text-base font-semibold">Content</h3>
                                 <p className={mutedTextClass}>
-                                  Open the cards and source for this Note Group.
+                                  Open the cards table or source for this Note Group.
                                 </p>
                               </div>
                               <div className={buttonRowClass}>
@@ -5277,28 +5405,12 @@ export default function App() {
                                         selectedSubjectCode,
                                         selectedModuleCode,
                                         selectedNoteGroupCode,
-                                        "study-cards"
+                                        "view-cards"
                                       )
                                     )
                                   }
                                 >
-                                  View Study Cards
-                                </button>
-                                <button
-                                  className={outlineButtonClass}
-                                  type="button"
-                                  onClick={() =>
-                                    navigate(
-                                      noteGroupPath(
-                                        selectedSubjectCode,
-                                        selectedModuleCode,
-                                        selectedNoteGroupCode,
-                                        "question-cards"
-                                      )
-                                    )
-                                  }
-                                >
-                                  View Question Cards
+                                  View Cards
                                 </button>
                                 <button
                                   className={outlineButtonClass}
@@ -5310,6 +5422,23 @@ export default function App() {
                                 </button>
                               </div>
                             </section>
+                            <NoteGroupProgress
+                              progress={noteGroupProgress}
+                              range={progressRange}
+                              loading={noteGroupProgressLoading}
+                              error={noteGroupProgressError}
+                              onRangeChange={setProgressRange}
+                              onOpenPerformance={() =>
+                                navigate(
+                                  noteGroupPath(
+                                    selectedSubjectCode,
+                                    selectedModuleCode,
+                                    selectedNoteGroupCode,
+                                    "view-cards"
+                                  )
+                                )
+                              }
+                            />
                           </>
                         )}
                         {isTopicScope ? (
@@ -5339,6 +5468,51 @@ export default function App() {
                           </section>
                         ) : null}
                       </div>
+                    ) : null}
+
+                    {isViewCardsPage ? (
+                      <>
+                        <section className="flex flex-wrap items-start gap-3">
+                          <button className="back-button" type="button" onClick={handleBackToOverview}>
+                            ← Back
+                          </button>
+                          <div>
+                            <h2>View Cards</h2>
+                            <p className={mutedTextClass}>
+                              Study Cards with their linked Question Cards.
+                            </p>
+                          </div>
+                        </section>
+                        <NoteGroupViewCards
+                          rows={isTopicScope ? topicCardTableRows : noteGroupCardTable.rows}
+                          studyCards={studyCards}
+                          questionCards={questionCards}
+                          topicChips={topicChips}
+                          canEdit={canEditCurrentCards}
+                          editingStudyCardId={editingStudyCardId}
+                          editingStudyCard={editingStudyCard}
+                          editingQuestionCardId={editingQuestionCardId}
+                          editingQuestionCard={editingQuestionCard}
+                          fixedTopicFilter={isTopicScope ? selectedTopic : null}
+                          unlinkedQuestionCount={
+                            isTopicScope
+                              ? topicUnlinkedQuestionCount
+                              : noteGroupCardTable.unlinked_question_count
+                          }
+                          loading={isTopicScope ? false : noteGroupCardTableLoading}
+                          error={isTopicScope ? studyCardError || questionCardError : noteGroupCardTableError}
+                          onEditStudyCard={handleEditStudyCard}
+                          onEditingStudyCardChange={setEditingStudyCard}
+                          onSaveStudyCard={handleSaveStudyCard}
+                          onCancelStudyCardEdit={() => setEditingStudyCardId("")}
+                          onDeleteStudyCard={handleDeleteStudyCard}
+                          onEditQuestionCard={handleEditQuestionCard}
+                          onEditingQuestionCardChange={setEditingQuestionCard}
+                          onSaveQuestionCard={handleSaveQuestionCard}
+                          onCancelQuestionCardEdit={() => setEditingQuestionCardId("")}
+                          onDeleteQuestionCard={handleDeleteQuestionCard}
+                        />
+                      </>
                     ) : null}
 
                     {isStudyPage ? (

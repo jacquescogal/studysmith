@@ -154,6 +154,32 @@ class QuestionCardList(BaseModel):
     question_cards: List[QuestionCardOut]
 
 
+class NoteGroupCardTableStudyCardOut(BaseModel):
+    id: str
+    title: Optional[str] = None
+
+
+class NoteGroupCardTableQuestionCardOut(BaseModel):
+    id: str
+    prompt: str
+    mastery: Optional[float] = None
+    mastery_tier: str
+    success_rate: Optional[float] = None
+    median_response_time_ms: Optional[int] = None
+    reviews: int
+    due_at: Optional[datetime] = None
+
+
+class NoteGroupCardTableRowOut(BaseModel):
+    study_card: NoteGroupCardTableStudyCardOut
+    question_cards: List[NoteGroupCardTableQuestionCardOut]
+
+
+class NoteGroupCardTableResponse(BaseModel):
+    rows: List[NoteGroupCardTableRowOut]
+    unlinked_question_count: int
+
+
 class QuestionCardGenerate(BaseModel):
     difficulty: Optional[str] = "mixed"
 

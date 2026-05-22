@@ -29,7 +29,15 @@ class PageRoutesTests(unittest.TestCase):
             "/app/subject/${subjectCode}/module/${moduleCode}/topics/${topicCode}",
             routes_content,
         )
-        self.assertIn("overview|study-cards|question-cards", routes_content)
+        self.assertIn("overview|view-cards|study-cards|question-cards", routes_content)
+        self.assertIn(
+            "topics/${topicCode}`;\n  return panel && panel !== \"overview\" ? `${basePath}/${panel}`",
+            routes_content,
+        )
+        topic_route = routes_content[
+            routes_content.index("const topic ="):routes_content.index("return {")
+        ]
+        self.assertIn("view-cards", topic_route)
         self.assertIn("routeSubjectCode", content)
         self.assertIn("routeModuleCode", content)
         self.assertIn("routeNoteGroupCode", content)
@@ -44,6 +52,197 @@ class PageRoutesTests(unittest.TestCase):
         self.assertNotIn("/app/subjects/", routes_content)
         self.assertNotIn("/app/modules/", routes_content)
         self.assertNotIn("/app/note-groups/", routes_content)
+
+    def test_frontend_exposes_note_group_view_cards_page(self):
+        app_source = Path(__file__).parents[2] / "frontend" / "src" / "App.jsx"
+        api_source = Path(__file__).parents[2] / "frontend" / "src" / "api.js"
+        routes_source = Path(__file__).parents[2] / "frontend" / "src" / "lib" / "routes.js"
+
+        content = app_source.read_text(encoding="utf-8")
+        api_content = api_source.read_text(encoding="utf-8")
+        routes_content = routes_source.read_text(encoding="utf-8")
+
+        self.assertIn("view-cards", routes_content)
+        self.assertIn("getNoteGroupCardTable", api_content)
+        self.assertIn("/note-groups/${noteGroupId}/card-table", api_content)
+        self.assertIn("NoteGroupViewCards", content)
+        self.assertIn("isViewCardsPage", content)
+
+    def test_view_cards_opens_study_card_details_modal_from_study_card_cell(self):
+        component_source = (
+            Path(__file__).parents[2]
+            / "frontend"
+            / "src"
+            / "features"
+            / "note-groups"
+            / "NoteGroupViewCards.jsx"
+        )
+        content = component_source.read_text(encoding="utf-8")
+
+        self.assertIn("Search", content)
+        self.assertIn("Dialog", content)
+        self.assertIn("selectedStudyCardId", content)
+        self.assertIn("aria-label=\"View Study Card details\"", content)
+        self.assertIn("Edit", content)
+        self.assertIn("Delete", content)
+        self.assertNotIn("<TableHead>Actions</TableHead>", content)
+
+    def test_view_cards_edit_modal_uses_single_editable_title_surface(self):
+        component_source = (
+            Path(__file__).parents[2]
+            / "frontend"
+            / "src"
+            / "features"
+            / "note-groups"
+            / "NoteGroupViewCards.jsx"
+        )
+        content = component_source.read_text(encoding="utf-8")
+
+        self.assertIn("isEditingSelected ? \"Edit Study Card\" : selectedTitle", content)
+        self.assertIn("aria-label=\"Study Card title\"", content)
+
+    def test_view_cards_opens_question_card_details_modal_from_question_card_cell(self):
+        component_source = (
+            Path(__file__).parents[2]
+            / "frontend"
+            / "src"
+            / "features"
+            / "note-groups"
+            / "NoteGroupViewCards.jsx"
+        )
+        content = component_source.read_text(encoding="utf-8")
+
+        self.assertIn("selectedQuestionCardId", content)
+        self.assertIn("aria-label=\"View Question Card details\"", content)
+        self.assertIn("Edit Question Card", content)
+        self.assertIn("onEditQuestionCard", content)
+        self.assertIn("onDeleteQuestionCard", content)
+        self.assertIn("correct_option_indices", content)
+
+    def test_view_cards_table_shows_question_card_learning_metrics(self):
+        component_source = (
+            Path(__file__).parents[2]
+            / "frontend"
+            / "src"
+            / "features"
+            / "note-groups"
+            / "NoteGroupViewCards.jsx"
+        )
+        content = component_source.read_text(encoding="utf-8")
+
+        self.assertIn("Mastery", content)
+        self.assertIn("Success Rate", content)
+        self.assertIn("Median Time", content)
+        self.assertIn("Reviews", content)
+        self.assertIn("Due", content)
+        self.assertIn("formatDurationMs", content)
+        self.assertIn("formatPercent", content)
+
+    def test_view_cards_table_supports_filtering_and_sorting(self):
+        component_source = (
+            Path(__file__).parents[2]
+            / "frontend"
+            / "src"
+            / "features"
+            / "note-groups"
+            / "NoteGroupViewCards.jsx"
+        )
+        content = component_source.read_text(encoding="utf-8")
+
+        self.assertIn("masteryFilter", content)
+        self.assertIn("reviewedFilter", content)
+        self.assertIn("dueFilter", content)
+        self.assertIn("searchQuery", content)
+        self.assertIn("sortConfig", content)
+        self.assertIn("toggleSort", content)
+        self.assertIn("filteredRows", content)
+        self.assertIn("All mastery", content)
+        self.assertIn("Reviewed", content)
+        self.assertIn("Due now", content)
+        self.assertIn("Search cards", content)
+
+    def test_view_cards_table_supports_multi_select_study_card_topic_filtering(self):
+        component_source = (
+            Path(__file__).parents[2]
+            / "frontend"
+            / "src"
+            / "features"
+            / "note-groups"
+            / "NoteGroupViewCards.jsx"
+        )
+        content = component_source.read_text(encoding="utf-8")
+
+        self.assertIn("selectedTopicFilters", content)
+        self.assertIn("toggleTopicFilter", content)
+        self.assertIn("All topics", content)
+        self.assertIn("studyTopicIds", content)
+        self.assertIn("activeTopicFilters.length === 0", content)
+        self.assertIn("activeTopicFilters.some", content)
+        self.assertIn("setSelectedTopicFilters([])", content)
+        self.assertIn("buttonVariants", content)
+        self.assertNotIn("<PopoverTrigger asChild>", content)
+
+    def test_topic_view_cards_uses_fixed_topic_filter(self):
+        component_source = (
+            Path(__file__).parents[2]
+            / "frontend"
+            / "src"
+            / "features"
+            / "note-groups"
+            / "NoteGroupViewCards.jsx"
+        )
+        app_source = Path(__file__).parents[2] / "frontend" / "src" / "App.jsx"
+        component_content = component_source.read_text(encoding="utf-8")
+        app_content = app_source.read_text(encoding="utf-8")
+
+        self.assertIn("fixedTopicFilter", component_content)
+        self.assertIn("activeTopicFilters", component_content)
+        self.assertIn("isTopicFilterFixed", component_content)
+        self.assertIn("Fixed topic", component_content)
+        self.assertIn("!isTopicFilterFixed", component_content)
+        self.assertIn("fixedTopicFilter={isTopicScope ? selectedTopic : null}", app_content)
+
+    def test_view_cards_page_does_not_show_section_navigator(self):
+        app_source = Path(__file__).parents[2] / "frontend" / "src" / "App.jsx"
+        content = app_source.read_text(encoding="utf-8")
+
+        self.assertIn("selectedNoteGroupId && !selectedTopicId && isViewCardsPage", content)
+        self.assertNotIn('return [{ id: "view-cards", label: "View cards" }];', content)
+
+    def test_note_group_overview_content_card_is_primary_card_entry_point(self):
+        app_source = Path(__file__).parents[2] / "frontend" / "src" / "App.jsx"
+        content = app_source.read_text(encoding="utf-8")
+
+        overview_index = content.index("<NoteGroupOverview")
+        content_index = content.index('id="note-group-content"')
+        progress_index = content.index("<NoteGroupProgress")
+        self.assertLess(overview_index, content_index)
+        self.assertLess(content_index, progress_index)
+
+        content_section = content[content_index:content.index("</section>", content_index)]
+        self.assertIn("View Cards", content_section)
+        self.assertIn("View Source", content_section)
+        self.assertNotIn("View Study Cards", content_section)
+        self.assertNotIn("View Question Cards", content_section)
+        progress_details = content[
+            content.index("onOpenPerformance", progress_index):content.index("/>", progress_index)
+        ]
+        self.assertIn('"view-cards"', progress_details)
+        self.assertNotIn('"question-cards"', progress_details)
+
+    def test_topic_overview_uses_view_cards_as_card_entry_point(self):
+        app_source = Path(__file__).parents[2] / "frontend" / "src" / "App.jsx"
+        content = app_source.read_text(encoding="utf-8")
+
+        topic_index = content.index("<TopicOverview")
+        topic_actions = content[content.index("actions={", topic_index):content.index("error={topicError}", topic_index)]
+        self.assertIn('"view-cards"', topic_actions)
+        self.assertIn("View cards", topic_actions)
+        self.assertNotIn('"study-cards"', topic_actions)
+        self.assertNotIn('"question-cards"', topic_actions)
+        self.assertNotIn("View study cards", topic_actions)
+        self.assertNotIn("View question cards", topic_actions)
+        self.assertIn("topicCardTableRows", content)
 
     def test_backend_exposes_module_lookup_for_url_restoration(self):
         from app.main import app

@@ -311,6 +311,91 @@ class NoteGroupProgressRoutesTests(unittest.TestCase):
         self.assertEqual(data["rows"][0]["success_rate"], 0.0)
         self.assertTrue(data["rows"][0]["stale"])
 
+    def test_note_group_card_table_groups_question_cards_by_study_card(self):
+        from app.main import get_note_group_card_table
+
+        db = self.seed_review_scope()
+        try:
+            other_study = StudyCard(
+                id="study-2",
+                note_group_id="group-1",
+                title="Other Study",
+                content="Other",
+            )
+            linked_question = QuestionCard(
+                id="question-2",
+                note_group_id="group-1",
+                type="mcq",
+                prompt="Linked prompt",
+                options_json='["A", "B"]',
+                correct_option_indices_json="[0]",
+                study_card_refs_json='["study-1", "study-2"]',
+                stale=False,
+                due_at=datetime.utcnow(),
+            )
+            unlinked_question = QuestionCard(
+                id="question-3",
+                note_group_id="group-1",
+                type="mcq",
+                prompt="Unlinked prompt",
+                options_json='["A", "B"]',
+                correct_option_indices_json="[0]",
+                study_card_refs_json="[]",
+                stale=False,
+                due_at=datetime.utcnow(),
+            )
+            db.add_all([other_study, linked_question, unlinked_question])
+            db.add_all(
+                [
+                    QuestionCardReviewEvent(
+                        question_card_id="question-1",
+                        note_group_id="group-1",
+                        module_id="module-1",
+                        correct=True,
+                        response_time_ms=1000,
+                        rating="easy",
+                        answer_option_indices_json="[1]",
+                        correct_option_indices_json="[1]",
+                        reviewed_at=datetime.utcnow(),
+                    ),
+                    QuestionCardReviewEvent(
+                        question_card_id="question-1",
+                        note_group_id="group-1",
+                        module_id="module-1",
+                        correct=False,
+                        response_time_ms=3000,
+                        rating="again",
+                        answer_option_indices_json="[0]",
+                        correct_option_indices_json="[1]",
+                        reviewed_at=datetime.utcnow(),
+                    ),
+                ]
+            )
+            db.commit()
+
+            data = get_note_group_card_table("group-1", db=db)
+        finally:
+            db.close()
+
+        self.assertEqual([row["study_card"]["id"] for row in data["rows"]], ["study-1", "study-2"])
+        self.assertEqual(data["rows"][0]["study_card"]["title"], "Study")
+        self.assertEqual(
+            [question["prompt"] for question in data["rows"][0]["question_cards"]],
+            ["Prompt", "Linked prompt"],
+        )
+        first_question = data["rows"][0]["question_cards"][0]
+        self.assertEqual(first_question["mastery"], 5.0)
+        self.assertEqual(first_question["mastery_tier"], "medium")
+        self.assertEqual(first_question["success_rate"], 50.0)
+        self.assertEqual(first_question["median_response_time_ms"], 2000)
+        self.assertEqual(first_question["reviews"], 2)
+        self.assertIsNotNone(first_question["due_at"])
+        self.assertEqual(
+            [question["prompt"] for question in data["rows"][1]["question_cards"]],
+            ["Linked prompt"],
+        )
+        self.assertEqual(data["unlinked_question_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

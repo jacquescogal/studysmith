@@ -71,6 +71,7 @@ from app.schemas import (
     ModuleUpdate,
     NoteGroupOut,
     NoteGroupAutoRequest,
+    NoteGroupCardTableResponse,
     NoteGroupSourceCheckRequest,
     NoteGroupSourceCheckResponse,
     NoteGroupTitleUpdate,
@@ -1556,6 +1557,77 @@ def list_study_cards(note_group_id: str, db: Session = Depends(get_db)):
         .all()
     )
     return {"study_cards": cards}
+
+
+@app.get("/note-groups/{note_group_id}/card-table", response_model=NoteGroupCardTableResponse)
+def get_note_group_card_table(note_group_id: str, db: Session = Depends(get_db)):
+    note_group = db.get(NoteGroup, note_group_id)
+    if not note_group:
+        raise HTTPException(status_code=404, detail="Note group not found")
+
+    study_cards = (
+        db.query(StudyCard)
+        .filter(StudyCard.note_group_id == note_group_id)
+        .order_by(StudyCard.created_at.asc())
+        .all()
+    )
+    question_cards = (
+        db.query(QuestionCard)
+        .filter(QuestionCard.note_group_id == note_group_id)
+        .order_by(QuestionCard.created_at.asc())
+        .all()
+    )
+    performance_by_question_id = {
+        row["id"]: row
+        for row in build_question_card_performance(
+            db,
+            note_group_id,
+            range_value="all",
+            sort="success_rate",
+            direction="asc",
+            mastery="all",
+            stale=None,
+            reviewed="all",
+            attention=False,
+            chip_ids=None,
+        )["rows"]
+    }
+
+    questions_by_study_id = defaultdict(list)
+    unlinked_question_count = 0
+    for question_card in question_cards:
+        refs = _question_card_refs(question_card)
+        if not refs:
+            unlinked_question_count += 1
+            continue
+        performance = performance_by_question_id.get(question_card.id, {})
+        for study_card_id in refs:
+            questions_by_study_id[study_card_id].append(
+                {
+                    "id": question_card.id,
+                    "prompt": question_card.prompt,
+                    "mastery": performance.get("mastery"),
+                    "mastery_tier": performance.get("mastery_tier", "unknown"),
+                    "success_rate": performance.get("success_rate"),
+                    "median_response_time_ms": performance.get("median_response_time_ms"),
+                    "reviews": performance.get("reviews", 0),
+                    "due_at": performance.get("due_at"),
+                }
+            )
+
+    return {
+        "rows": [
+            {
+                "study_card": {
+                    "id": study_card.id,
+                    "title": study_card.title,
+                },
+                "question_cards": questions_by_study_id.get(study_card.id, []),
+            }
+            for study_card in study_cards
+        ],
+        "unlinked_question_count": unlinked_question_count,
+    }
 
 
 @app.get("/study-cards/{study_card_id}", response_model=StudyCardOut)
