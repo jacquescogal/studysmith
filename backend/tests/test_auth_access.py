@@ -1,5 +1,6 @@
 import os
 import unittest
+from datetime import datetime, timedelta, timezone
 from importlib import reload
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -36,6 +37,22 @@ class AuthConfigTests(unittest.TestCase):
 
                 self.assertEqual(config.settings.admin_emails, {"admin@example.com", "second@example.com"})
                 self.assertEqual(config.settings.supabase_jwt_audience, "authenticated")
+        finally:
+            reload(config)
+
+    def test_postgres_database_url_uses_psycopg_driver(self):
+        try:
+            with patch.dict(
+                os.environ,
+                {"DATABASE_URL": "postgresql://user:pass@example.supabase.co/postgres"},
+                clear=False,
+            ):
+                reload(config)
+
+                self.assertEqual(
+                    config.settings.database_url,
+                    "postgresql+psycopg://user:pass@example.supabase.co/postgres",
+                )
         finally:
             reload(config)
 
@@ -1288,8 +1305,8 @@ class RouteAccessEnforcementTests(unittest.TestCase):
             db.close()
 
     def test_reader_review_uses_personal_learning_state_without_mutating_shared_question_card(self):
-        from app.main import review_question
-        from app.models import QuestionCard, QuestionCardReviewEvent
+        from app.main import list_review_question_cards, review_question
+        from app.models import QuestionCard, QuestionCardLearningState, QuestionCardReviewEvent
         from app.schemas import QuestionCardReview
 
         db = self.SessionLocal()
@@ -1317,6 +1334,20 @@ class RouteAccessEnforcementTests(unittest.TestCase):
             self.assertEqual(result["due_at"], event.next_due_at)
             self.assertIsNotNone(result["last_review_at"])
             self.assertNotEqual(event.next_due_at, original_due_at)
+
+            learning_state = (
+                db.query(QuestionCardLearningState)
+                .filter(
+                    QuestionCardLearningState.question_card_id == card.id,
+                    QuestionCardLearningState.user_id == reader.id,
+                )
+                .one()
+            )
+            learning_state.due_at = datetime.now(timezone.utc) + timedelta(days=10)
+            db.commit()
+
+            due_cards = list_review_question_cards("note-group-1", mode="due", limit=10, db=db, current_user=reader)
+            self.assertEqual(due_cards["question_cards"], [])
         finally:
             db.close()
 

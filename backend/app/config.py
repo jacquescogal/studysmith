@@ -25,12 +25,20 @@ def _resolve_path(path_value: str) -> str:
     return str((BASE_DIR / path).resolve())
 
 
+def _normalize_database_url(value: str) -> str:
+    if value.startswith("postgresql://"):
+        return value.replace("postgresql://", "postgresql+psycopg://", 1)
+    if value.startswith("postgres://"):
+        return value.replace("postgres://", "postgresql+psycopg://", 1)
+    return value
+
+
 class Settings:
     openai_api_key = _get_env("OPENAI_API_KEY", "")
     openai_weak_model = _get_env("OPENAI_WEAK_MODEL", "gpt-5.4-mini")
     openai_strong_model = _get_env("OPENAI_STRONG_MODEL", "gpt-5.4")
     openai_embedding_model = _get_env("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
-    database_url = _get_env("DATABASE_URL", "sqlite:///./study.db")
+    database_url = _normalize_database_url(_get_env("DATABASE_URL", "sqlite:///./study.db"))
     chroma_path = _resolve_path(_get_env("CHROMA_PATH", "./chroma"))
     supabase_url = _get_env("SUPABASE_URL", "")
     supabase_jwks_url = _get_env("SUPABASE_JWKS_URL", "")
