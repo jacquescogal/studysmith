@@ -27,6 +27,10 @@ class SubjectAccessOut(BaseModel):
         from_attributes = True
 
 
+class SubjectAccessGrantUpdate(BaseModel):
+    access_level: str
+
+
 class SubjectCreate(BaseModel):
     title: str
     description: Optional[str] = None

@@ -51,6 +51,10 @@ def can_edit_subject(user: User | None, subject: Subject) -> bool:
     return _access_level(user, subject) in EDIT_LEVELS
 
 
+def can_own_subject(user: User | None, subject: Subject) -> bool:
+    return _access_level(user, subject) == SUBJECT_ACCESS_OWNER
+
+
 def require_subject_read(user: User | None, subject: Subject) -> None:
     if not can_read_subject(user, subject):
         raise HTTPException(status_code=404, detail="Subject not found")
@@ -66,6 +70,11 @@ def require_subject_study(user: User | None, subject: Subject) -> None:
 def require_subject_edit(user: User | None, subject: Subject) -> None:
     if not can_edit_subject(user, subject):
         raise HTTPException(status_code=403, detail="Edit access required")
+
+
+def require_subject_owner(user: User | None, subject: Subject) -> None:
+    if not can_own_subject(user, subject):
+        raise HTTPException(status_code=403, detail="Owner access required")
 
 
 def readable_subject_filter(user: User):
