@@ -379,6 +379,83 @@ class AuthResolutionTests(unittest.TestCase):
         self.assertEqual(exc.exception.detail, "Admin access required")
 
 
+class AdminRoutesTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
+        Base.metadata.create_all(bind=self.engine)
+
+    def test_admin_can_promote_user(self):
+        from app.main import update_user_role
+        from app.models import APP_ROLE_ADMIN, APP_ROLE_CREATOR, User
+        from app.schemas import UserRoleUpdate
+
+        db = self.SessionLocal()
+        try:
+            admin = User(id="admin", supabase_user_id="admin-sub", email="admin@example.com", app_role=APP_ROLE_ADMIN)
+            reader = User(id="reader", supabase_user_id="reader-sub", email="reader@example.com", app_role="reader")
+            db.add_all([admin, reader])
+            db.commit()
+            updated = update_user_role("reader", UserRoleUpdate(app_role=APP_ROLE_CREATOR), db=db, current_user=admin)
+            self.assertEqual(updated.app_role, APP_ROLE_CREATOR)
+        finally:
+            db.close()
+
+    def test_admin_can_reject_invalid_role(self):
+        from app.main import update_user_role
+        from app.models import APP_ROLE_ADMIN, User
+        from app.schemas import UserRoleUpdate
+
+        db = self.SessionLocal()
+        try:
+            admin = User(id="admin", supabase_user_id="admin-sub", email="admin@example.com", app_role=APP_ROLE_ADMIN)
+            reader = User(id="reader", supabase_user_id="reader-sub", email="reader@example.com", app_role="reader")
+            db.add_all([admin, reader])
+            db.commit()
+
+            with self.assertRaises(HTTPException) as exc:
+                update_user_role("reader", UserRoleUpdate(app_role="manager"), db=db, current_user=admin)
+
+            self.assertEqual(exc.exception.status_code, 400)
+            self.assertEqual(exc.exception.detail, "Invalid app role")
+        finally:
+            db.close()
+
+    def test_admin_can_approve_public_subject(self):
+        from app.main import approve_public_subject
+        from app.models import APP_ROLE_ADMIN, SUBJECT_VISIBILITY_PUBLIC, SUBJECT_VISIBILITY_PUBLIC_REQUESTED, User
+
+        db = self.SessionLocal()
+        try:
+            admin = User(id="admin", supabase_user_id="admin-sub", email="admin@example.com", app_role=APP_ROLE_ADMIN)
+            subject = Subject(id="subject-1", title="Subject", visibility=SUBJECT_VISIBILITY_PUBLIC_REQUESTED)
+            db.add_all([admin, subject])
+            db.commit()
+            updated = approve_public_subject("subject-1", db=db, current_user=admin)
+            self.assertEqual(updated.visibility, SUBJECT_VISIBILITY_PUBLIC)
+        finally:
+            db.close()
+
+    def test_admin_can_keep_subject_private(self):
+        from app.main import keep_subject_private
+        from app.models import APP_ROLE_ADMIN, SUBJECT_VISIBILITY_PRIVATE, SUBJECT_VISIBILITY_PUBLIC_REQUESTED, User
+
+        db = self.SessionLocal()
+        try:
+            admin = User(id="admin", supabase_user_id="admin-sub", email="admin@example.com", app_role=APP_ROLE_ADMIN)
+            subject = Subject(id="subject-1", title="Subject", visibility=SUBJECT_VISIBILITY_PUBLIC_REQUESTED)
+            db.add_all([admin, subject])
+            db.commit()
+            updated = keep_subject_private("subject-1", db=db, current_user=admin)
+            self.assertEqual(updated.visibility, SUBJECT_VISIBILITY_PRIVATE)
+        finally:
+            db.close()
+
+
 class SubjectAccessTests(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine(
