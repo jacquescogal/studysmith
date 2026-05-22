@@ -316,14 +316,16 @@ for shared Question Cards.
 ### App Role
 
 A global permission level for app-wide capabilities. Initial roles are `reader`,
-`creator`, and `admin`. New users start as `reader`.
+`creator`, and `admin`. Readers can study available content, creators can
+create Subjects, and admins can manage app-wide settings and access. New users
+start as `reader`.
 
 ### Subject Access
 
 An explicit grant that gives a user `read`, `edit`, or `owner` access to a
-specific Subject. Subject Access inherits to Modules, Note Groups, Study Cards,
-Question Cards, Topics, Review History views, and Tutor Chat inside that
-Subject.
+specific Subject. Subject Access applies to resources inside the Subject:
+Modules, Note Groups, Study Cards, Question Cards, Topics, Review History
+views, and Tutor Chat.
 
 ### Subject Visibility
 
@@ -334,8 +336,9 @@ edit access.
 ### Learning State
 
 Per-user learning data for shared Question Cards. Learning State includes FSRS
-schedule, Due state, Review History, Mastery inputs, and disabled-card status.
-Learning State is separate from shared Question Card content.
+schedule, FSRS scheduling fields used to derive Mastery, Due state, Review
+History, and disabled-card status. Learning State is separate from shared
+Question Card content.
 
 ## Naming Rules
 
