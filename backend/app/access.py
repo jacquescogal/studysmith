@@ -51,7 +51,9 @@ def require_subject_read(user: User | None, subject: Subject) -> None:
 
 def require_subject_study(user: User | None, subject: Subject) -> None:
     if not can_study_subject(user, subject):
-        raise HTTPException(status_code=401 if user is None else 403, detail="Authentication required to study")
+        if user is None:
+            raise HTTPException(status_code=401, detail="Authentication required to study")
+        raise HTTPException(status_code=403, detail="Subject access required to study")
 
 
 def require_subject_edit(user: User | None, subject: Subject) -> None:
