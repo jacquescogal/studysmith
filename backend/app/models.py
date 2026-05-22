@@ -4,6 +4,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -47,6 +48,11 @@ def _uuid() -> str:
     return str(uuid.uuid4())
 
 
+def _check_values(column_name: str, values: set[str]) -> str:
+    quoted_values = ", ".join(f"'{value}'" for value in sorted(values))
+    return f"{column_name} IN ({quoted_values})"
+
+
 note_group_topic_chips = Table(
     "note_group_topic_chips",
     Base.metadata,
@@ -64,6 +70,12 @@ study_card_topic_chips = Table(
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint(
+            _check_values("app_role", APP_ROLES),
+            name="ck_users_app_role",
+        ),
+    )
 
     id = Column(String, primary_key=True, default=_uuid)
     supabase_user_id = Column(String, nullable=False, unique=True, index=True)
@@ -82,7 +94,13 @@ class User(Base):
 
 class SubjectAccess(Base):
     __tablename__ = "subject_access"
-    __table_args__ = (UniqueConstraint("subject_id", "user_id", name="uq_subject_access_user"),)
+    __table_args__ = (
+        CheckConstraint(
+            _check_values("access_level", SUBJECT_ACCESS_LEVELS),
+            name="ck_subject_access_access_level",
+        ),
+        UniqueConstraint("subject_id", "user_id", name="uq_subject_access_user"),
+    )
 
     id = Column(String, primary_key=True, default=_uuid)
     subject_id = Column(String, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False)
@@ -97,6 +115,12 @@ class SubjectAccess(Base):
 
 class Subject(Base):
     __tablename__ = "subjects"
+    __table_args__ = (
+        CheckConstraint(
+            _check_values("visibility", SUBJECT_VISIBILITIES),
+            name="ck_subjects_visibility",
+        ),
+    )
 
     id = Column(String, primary_key=True, default=_uuid)
     title = Column(String, nullable=False, unique=True)

@@ -9,12 +9,18 @@ class UserOut(BaseModel):
     email: str
     app_role: str
 
+    class Config:
+        from_attributes = True
+
 
 class SubjectAccessOut(BaseModel):
     id: str
     subject_id: str
     user_id: str
     access_level: str
+
+    class Config:
+        from_attributes = True
 
 
 class SubjectCreate(BaseModel):
