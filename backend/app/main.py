@@ -16,7 +16,7 @@ from sqlalchemy import case, func, or_, text
 from app.db import Base, engine, get_db
 from sqlalchemy.exc import IntegrityError
 from app.access import grant_owner_access
-from app.auth import require_creator
+from app.auth import require_admin, require_creator
 from app.chroma import get_collection
 from app.auto_queue import enqueue_auto_job, remove_auto_job, resume_auto_jobs, start_auto_worker
 from app.jobs import (
@@ -27,6 +27,7 @@ from app.jobs import (
 from app.models import (
     APP_ROLE_ADMIN,
     APP_ROLE_CREATOR,
+    APP_ROLES,
     DEFAULT_MODULE_SETTINGS,
     Job,
     Module,
@@ -39,7 +40,9 @@ from app.models import (
     StudyCardSourceRange,
     Subject,
     SubjectShortCode,
+    SUBJECT_VISIBILITY_PRIVATE,
     SUBJECT_VISIBILITY_PUBLIC,
+    SUBJECT_VISIBILITY_PUBLIC_REQUESTED,
     TopicChip,
     TopicChipShortCode,
     User,
@@ -104,6 +107,8 @@ from app.schemas import (
     TopicChipAttach,
     TopicChipCreate,
     TopicChipOut,
+    UserOut,
+    UserRoleUpdate,
 )
 
 def _normalize_source_text(value: str) -> str:
@@ -632,6 +637,72 @@ def module_intent_chat(payload: IntentChatRequest):
         "goal": result.get("goal"),
         "scope": result.get("scope"),
     }
+
+
+@app.get("/admin/users", response_model=list[UserOut])
+def list_users(db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
+    return db.query(User).order_by(User.email.asc()).all()
+
+
+@app.put("/admin/users/{user_id}/role", response_model=UserOut)
+def update_user_role(
+    user_id: str,
+    payload: UserRoleUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    if payload.app_role not in APP_ROLES:
+        raise HTTPException(status_code=400, detail="Invalid app role")
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.app_role = payload.app_role
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@app.get("/admin/subjects/public-requests", response_model=list[SubjectOut])
+def list_public_subject_requests(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    return (
+        db.query(Subject)
+        .filter(Subject.visibility == SUBJECT_VISIBILITY_PUBLIC_REQUESTED)
+        .order_by(Subject.updated_at.asc())
+        .all()
+    )
+
+
+@app.post("/admin/subjects/{subject_id}/approve-public", response_model=SubjectOut)
+def approve_public_subject(
+    subject_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    subject = db.get(Subject, subject_id)
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    subject.visibility = SUBJECT_VISIBILITY_PUBLIC
+    db.commit()
+    db.refresh(subject)
+    return subject
+
+
+@app.post("/admin/subjects/{subject_id}/keep-private", response_model=SubjectOut)
+def keep_subject_private(
+    subject_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    subject = db.get(Subject, subject_id)
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    subject.visibility = SUBJECT_VISIBILITY_PRIVATE
+    db.commit()
+    db.refresh(subject)
+    return subject
 
 
 @app.get("/subjects", response_model=list[SubjectOut])

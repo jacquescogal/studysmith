@@ -13,6 +13,10 @@ class UserOut(BaseModel):
         from_attributes = True
 
 
+class UserRoleUpdate(BaseModel):
+    app_role: str
+
+
 class SubjectAccessOut(BaseModel):
     id: str
     subject_id: str
@@ -35,6 +39,10 @@ class SubjectUpdate(BaseModel):
     description: Optional[str] = None
     goal: Optional[str] = None
     scope: Optional[str] = None
+
+
+class SubjectVisibilityUpdate(BaseModel):
+    visibility: str
 
 
 class SubjectOut(BaseModel):
