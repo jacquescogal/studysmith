@@ -15,6 +15,8 @@ from sqlalchemy import case, func, or_, text
 
 from app.db import Base, engine, get_db
 from sqlalchemy.exc import IntegrityError
+from app.access import grant_owner_access
+from app.auth import require_creator
 from app.chroma import get_collection
 from app.auto_queue import enqueue_auto_job, remove_auto_job, resume_auto_jobs, start_auto_worker
 from app.jobs import (
@@ -23,6 +25,8 @@ from app.jobs import (
     run_question_card_generation,
 )
 from app.models import (
+    APP_ROLE_ADMIN,
+    APP_ROLE_CREATOR,
     DEFAULT_MODULE_SETTINGS,
     Job,
     Module,
@@ -37,6 +41,7 @@ from app.models import (
     SubjectShortCode,
     TopicChip,
     TopicChipShortCode,
+    User,
     note_group_topic_chips,
     study_card_topic_chips,
 )
@@ -637,7 +642,13 @@ def list_subjects(db: Session = Depends(get_db)):
 
 
 @app.post("/subjects", response_model=SubjectOut)
-def create_subject(payload: SubjectCreate, db: Session = Depends(get_db)):
+def create_subject(
+    payload: SubjectCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_creator),
+):
+    if current_user.app_role not in {APP_ROLE_CREATOR, APP_ROLE_ADMIN}:
+        raise HTTPException(status_code=403, detail="Creator access required")
     title = payload.title.strip()
     if not title:
         raise HTTPException(status_code=400, detail="Title cannot be empty")
@@ -646,10 +657,14 @@ def create_subject(payload: SubjectCreate, db: Session = Depends(get_db)):
         description=payload.description,
         goal=payload.goal.strip() if payload.goal else None,
         scope=payload.scope.strip() if payload.scope else None,
+        owner_user_id=current_user.id,
     )
     db.add(subject)
     try:
         db.flush()
+        grant_owner_access(db, subject, current_user)
+        db.commit()
+        db.refresh(subject)
         ensure_subject_short_code(db, subject)
         db.commit()
         db.refresh(subject)
