@@ -39,6 +39,7 @@ from app.models import (
     StudyCardSourceRange,
     Subject,
     SubjectShortCode,
+    SUBJECT_VISIBILITY_PUBLIC,
     TopicChip,
     TopicChipShortCode,
     User,
@@ -636,6 +637,19 @@ def module_intent_chat(payload: IntentChatRequest):
 @app.get("/subjects", response_model=list[SubjectOut])
 def list_subjects(db: Session = Depends(get_db)):
     subjects = db.query(Subject).order_by(Subject.created_at.desc()).all()
+    ensure_subject_short_codes(db, subjects)
+    db.commit()
+    return subjects
+
+
+@app.get("/public/subjects", response_model=list[SubjectOut])
+def list_public_subjects(db: Session = Depends(get_db)):
+    subjects = (
+        db.query(Subject)
+        .filter(Subject.visibility == SUBJECT_VISIBILITY_PUBLIC)
+        .order_by(Subject.title.asc())
+        .all()
+    )
     ensure_subject_short_codes(db, subjects)
     db.commit()
     return subjects
