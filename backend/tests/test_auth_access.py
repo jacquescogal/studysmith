@@ -1,8 +1,11 @@
 import os
 import unittest
 from importlib import reload
+from types import SimpleNamespace
 from unittest.mock import patch
 
+import jwt
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
@@ -254,6 +257,108 @@ class AuthResolutionTests(unittest.TestCase):
             self.assertEqual(user.app_role, APP_ROLE_CREATOR)
         finally:
             db.close()
+
+    def test_invalid_jwt_validation_maps_to_401(self):
+        from app.auth import validate_supabase_jwt
+
+        with (
+            patch("app.auth.settings.supabase_jwks_url", "https://example.supabase.co/jwks.json"),
+            patch("app.auth.PyJWKClient") as jwks_client,
+            patch("app.auth.jwt.decode", side_effect=jwt.InvalidTokenError("bad token")),
+        ):
+            jwks_client.return_value.get_signing_key_from_jwt.return_value = SimpleNamespace(key="key")
+
+            with self.assertRaises(HTTPException) as exc:
+                validate_supabase_jwt("malformed-token")
+
+        self.assertEqual(exc.exception.status_code, 401)
+        self.assertEqual(exc.exception.detail, "Invalid authentication token")
+
+    def test_created_profile_persists_after_session_closes(self):
+        from app.auth import get_or_create_user_from_claims
+        from app.models import User
+
+        db = self.SessionLocal()
+        try:
+            user = get_or_create_user_from_claims(
+                db,
+                {"sub": "supabase-reader", "email": "reader@example.com"},
+                admin_emails=set(),
+            )
+            user_id = user.id
+        finally:
+            db.close()
+
+        db = self.SessionLocal()
+        try:
+            stored = db.get(User, user_id)
+            self.assertIsNotNone(stored)
+            self.assertEqual(stored.supabase_user_id, "supabase-reader")
+            self.assertEqual(stored.email, "reader@example.com")
+        finally:
+            db.close()
+
+    def test_existing_user_email_collision_raises_controlled_http_exception(self):
+        from app.auth import get_or_create_user_from_claims
+        from app.models import APP_ROLE_READER, User
+
+        db = self.SessionLocal()
+        try:
+            db.add_all(
+                [
+                    User(
+                        id="user-1",
+                        supabase_user_id="supabase-1",
+                        email="first@example.com",
+                        app_role=APP_ROLE_READER,
+                    ),
+                    User(
+                        id="user-2",
+                        supabase_user_id="supabase-2",
+                        email="second@example.com",
+                        app_role=APP_ROLE_READER,
+                    ),
+                ]
+            )
+            db.commit()
+
+            with self.assertRaises(HTTPException) as exc:
+                get_or_create_user_from_claims(
+                    db,
+                    {"sub": "supabase-1", "email": "second@example.com"},
+                    admin_emails=set(),
+                )
+
+            self.assertEqual(exc.exception.status_code, 409)
+            self.assertEqual(exc.exception.detail, "Email is already associated with another user")
+        finally:
+            db.close()
+
+    def test_require_user_rejects_anonymous_auth_context(self):
+        from app.auth import AuthContext, require_user
+
+        with self.assertRaises(HTTPException) as exc:
+            require_user(AuthContext(user=None))
+
+        self.assertEqual(exc.exception.status_code, 401)
+        self.assertEqual(exc.exception.detail, "Authentication required")
+
+    def test_require_admin_rejects_non_admin_user(self):
+        from app.auth import require_admin
+        from app.models import APP_ROLE_READER, User
+
+        user = User(
+            id="user-1",
+            supabase_user_id="supabase-reader",
+            email="reader@example.com",
+            app_role=APP_ROLE_READER,
+        )
+
+        with self.assertRaises(HTTPException) as exc:
+            require_admin(user)
+
+        self.assertEqual(exc.exception.status_code, 403)
+        self.assertEqual(exc.exception.detail, "Admin access required")
 
 
 if __name__ == "__main__":
