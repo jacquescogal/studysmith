@@ -1,6 +1,7 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 const MAX_REQUEST_ATTEMPTS = 3;
 const RETRY_DELAYS_MS = [250, 750];
+let accessTokenProvider = null;
 
 const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
@@ -8,6 +9,21 @@ const isRetryableStatus = (status) =>
   status === 408 || status === 429 || (status >= 500 && status < 600);
 
 const isAbortError = (error) => error?.name === "AbortError";
+
+export function setAccessTokenProvider(provider) {
+  accessTokenProvider = typeof provider === "function" ? provider : null;
+}
+
+export function clearAccessTokenProvider() {
+  accessTokenProvider = null;
+}
+
+async function getAccessToken() {
+  if (!accessTokenProvider) {
+    return "";
+  }
+  return String((await accessTokenProvider()) || "").trim();
+}
 
 async function parseErrorResponse(response) {
   const raw = await response.text();
@@ -24,10 +40,12 @@ async function parseErrorResponse(response) {
 }
 
 async function request(path, options = {}) {
+  const accessToken = await getAccessToken();
   const requestOptions = {
     ...options,
     headers: {
       "Content-Type": "application/json",
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       ...(options.headers || {})
     }
   };
@@ -67,6 +85,10 @@ async function request(path, options = {}) {
 
 export function listSubjects() {
   return request("/subjects");
+}
+
+export function listPublicSubjects() {
+  return request("/public/subjects");
 }
 
 export function resolveAppSubjectRoute(subjectCode) {

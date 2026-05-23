@@ -4,6 +4,7 @@ import Select from "react-select";
 import { toast } from "sonner";
 
 import { Toaster } from "@/components/ui/sonner";
+import { useAuth } from "@/auth/AuthProvider";
 import { Button } from "@/components/ui/button";
 import { AppShell } from "@/components/layout/AppShell";
 import { ContextSidebar } from "@/components/layout/ContextSidebar";
@@ -77,6 +78,7 @@ import {
   listAllModules,
   listModuleReviewQuestionCards,
   listModules,
+  listPublicSubjects,
   listQuestionCards,
   listReviewQuestionCards,
   listStudyCards,
@@ -173,6 +175,13 @@ const showFetchToast = (error, fallback) => {
 };
 
 export default function App() {
+  const auth = useAuth();
+  const canUseProtectedActions = auth.isAuthenticated;
+  const [authEmail, setAuthEmail] = useState("");
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [authMessage, setAuthMessage] = useState("");
+  const [authUiError, setAuthUiError] = useState("");
+
   const [subjects, setSubjects] = useState([]);
   const [selectedSubjectId, setSelectedSubjectId] = useState("");
   const [newSubjectTitle, setNewSubjectTitle] = useState("");
@@ -438,6 +447,18 @@ export default function App() {
     () => subjects.find((subject) => subject.id === selectedSubjectId),
     [subjects, selectedSubjectId]
   );
+
+  useEffect(() => {
+    if (!selectedSubjectId || subjects.some((subject) => subject.id === selectedSubjectId)) {
+      return;
+    }
+    setSelectedSubjectId("");
+    setSelectedModuleId("");
+    setSelectedNoteGroupId("");
+    setSelectedTopicId("");
+    setNoteGroupMode("overview");
+    navigate("/");
+  }, [navigate, selectedSubjectId, subjects]);
   const selectedModule = useMemo(
     () => modules.find((module) => module.id === selectedModuleId),
     [modules, selectedModuleId]
@@ -458,7 +479,9 @@ export default function App() {
     ? selectedTopic.label
     : selectedNoteGroup?.title || "Untitled note group";
   const isTopicScope = Boolean(selectedTopicId);
-  const canEditCurrentCards = Boolean(selectedNoteGroupId && !selectedTopicId);
+  const canEditCurrentCards = Boolean(
+    canUseProtectedActions && selectedNoteGroupId && !selectedTopicId
+  );
   const focusQuestionCard = useMemo(
     () => questionCards.find((card) => card.id === focusQuestionCardId),
     [questionCards, focusQuestionCardId]
@@ -828,10 +851,26 @@ export default function App() {
       : focusQuestionCard?.type || "mcq";
 
   useEffect(() => {
-    listSubjects()
-      .then((data) => setSubjects(data))
-      .catch((error) => showFetchToast(error, "Failed to load subjects"));
-  }, []);
+    if (auth.loading) {
+      return;
+    }
+    let cancelled = false;
+    const loadSubjects = auth.isAuthenticated ? listSubjects : listPublicSubjects;
+    loadSubjects()
+      .then((data) => {
+        if (!cancelled) {
+          setSubjects(data);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          showFetchToast(error, "Failed to load subjects");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.isAuthenticated, auth.loading, auth.user?.id]);
 
   useEffect(() => {
     setResolvedRouteContext(null);
@@ -1767,6 +1806,47 @@ export default function App() {
     setAutoJobsByNoteGroupId(nextMap);
   };
 
+  const handleSignIn = async (event) => {
+    event.preventDefault();
+    if (authSubmitting) {
+      return;
+    }
+    setAuthSubmitting(true);
+    setAuthUiError("");
+    setAuthMessage("");
+    try {
+      await auth.signInWithEmail(authEmail);
+      setAuthMessage("Check your email for the sign-in link.");
+    } catch (error) {
+      setAuthUiError(error.message || "Failed to start sign in");
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    setAuthSubmitting(true);
+    setAuthUiError("");
+    setAuthMessage("");
+    try {
+      await auth.signOut();
+      setSelectedSubjectId("");
+      setSelectedModuleId("");
+      setSelectedNoteGroupId("");
+      setSelectedTopicId("");
+      setNoteGroupMode("overview");
+      setReviewSummary(null);
+      setIsChatOpen(false);
+      setIsMetadataOpen(false);
+      setIsModuleMetadataOpen(false);
+      navigate("/");
+    } catch (error) {
+      setAuthUiError(error.message || "Failed to sign out");
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
   const handleSelectSubject = (option) => {
     const nextId = option ? option.value : "";
     const subject = nextId ? subjects.find((item) => item.id === nextId) : null;
@@ -1807,6 +1887,10 @@ export default function App() {
   };
 
   const handleCreateSubject = async () => {
+    if (!canUseProtectedActions) {
+      setSidebarError("Sign in to create subjects.");
+      return;
+    }
     if (!newSubjectTitle.trim()) {
       return;
     }
@@ -1836,6 +1920,10 @@ export default function App() {
   };
 
   const handleOpenSubjectWizard = () => {
+    if (!canUseProtectedActions) {
+      setSidebarError("Sign in to create subjects.");
+      return;
+    }
     setSubjectWizardMessages([]);
     setSubjectWizardInput("");
     setSubjectWizardTitle("");
@@ -1886,6 +1974,10 @@ export default function App() {
   };
 
   const handleCreateSubjectFromWizard = async () => {
+    if (!canUseProtectedActions) {
+      setSubjectWizardError("Sign in to create subjects.");
+      return;
+    }
     if (!subjectWizardTitle.trim() || subjectWizardCreating) {
       return;
     }
@@ -1918,6 +2010,10 @@ export default function App() {
   };
 
   const openSubjectMetadataModal = (subject) => {
+    if (!canUseProtectedActions) {
+      setSidebarError("Sign in to edit subjects.");
+      return;
+    }
     if (!subject) {
       return;
     }
@@ -1956,6 +2052,10 @@ export default function App() {
   };
 
   const handleDeleteSubject = async (subjectOverride) => {
+    if (!canUseProtectedActions) {
+      setSidebarError("Sign in to delete subjects.");
+      return;
+    }
     const subjectId = subjectOverride?.id || selectedSubjectId;
     if (!subjectId) {
       return;
@@ -1991,6 +2091,10 @@ export default function App() {
   };
 
   const handleOpenModuleWizard = () => {
+    if (!canUseProtectedActions) {
+      setSidebarError("Sign in to create modules.");
+      return;
+    }
     setModuleWizardMessages([]);
     setModuleWizardInput("");
     setModuleWizardTitle("");
@@ -2336,6 +2440,10 @@ export default function App() {
   };
 
   const handleStartAutoNoteGroup = () => {
+    if (!canUseProtectedActions) {
+      setSidebarError("Sign in to create note groups.");
+      return;
+    }
     setNoteGroupMode("auto");
     setSelectedNoteGroupId("");
     setSelectedTopicId("");
@@ -2588,6 +2696,10 @@ export default function App() {
   };
 
   const openModuleMetadataModal = () => {
+    if (!canUseProtectedActions) {
+      setModuleMetadataError("Sign in to edit module settings.");
+      return;
+    }
     if (!selectedModuleId) {
       return;
     }
@@ -2645,6 +2757,10 @@ export default function App() {
   };
 
   const openMetadataModal = () => {
+    if (!canUseProtectedActions) {
+      setMetadataError("Sign in to edit note group metadata.");
+      return;
+    }
     if (!selectedNoteGroupId) {
       return;
     }
@@ -2883,6 +2999,10 @@ export default function App() {
   };
 
   const startReview = async (mode, scope = "note-group") => {
+    if (!canUseProtectedActions) {
+      setReviewError("Sign in to review question cards.");
+      return;
+    }
     if (scope === "module") {
       if (!selectedModuleId) {
         return;
@@ -3167,6 +3287,10 @@ export default function App() {
   };
 
   const openQuestionCreateModal = () => {
+    if (!canUseProtectedActions) {
+      setQuestionCardError("Sign in to create question cards.");
+      return;
+    }
     setQuestionCardError("");
     setIsQuestionCreateOpen(true);
   };
@@ -3587,12 +3711,53 @@ export default function App() {
       topics={filteredTopicOptions}
       selectedNoteGroupId={selectedNoteGroupId}
       selectedTopicId={selectedTopicId}
+      canCreateNoteGroup={canUseProtectedActions}
       onSelectNoteGroup={handleSelectNoteGroup}
       onSelectTopic={handleSelectTopic}
       onCreateNoteGroup={handleStartAutoNoteGroup}
       error={sidebarError}
     />
   ) : null;
+  const authActions = (
+    <div className="flex max-w-sm flex-col items-end gap-2 text-right">
+      {auth.isAuthenticated ? (
+        <>
+          <div className="text-xs text-muted-foreground">{auth.user?.email}</div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleSignOut}
+            disabled={authSubmitting}
+          >
+            Sign out
+          </Button>
+        </>
+      ) : auth.isConfigured ? (
+        <form className="flex flex-wrap justify-end gap-2" onSubmit={handleSignIn}>
+          <input
+            className="h-9 min-w-48 rounded-md border bg-background px-3 text-sm"
+            type="email"
+            value={authEmail}
+            onChange={(event) => setAuthEmail(event.target.value)}
+            placeholder="Email"
+            disabled={auth.loading || authSubmitting}
+          />
+          <Button type="submit" size="sm" disabled={auth.loading || authSubmitting || !authEmail.trim()}>
+            {authSubmitting ? "Sending..." : "Sign in"}
+          </Button>
+        </form>
+      ) : (
+        <p className="max-w-xs text-xs text-muted-foreground">
+          Supabase env vars are required for sign in.
+        </p>
+      )}
+      {authMessage ? <p className="text-xs text-muted-foreground">{authMessage}</p> : null}
+      {authUiError || auth.error ? (
+        <p className="text-xs font-medium text-destructive">{authUiError || auth.error}</p>
+      ) : null}
+    </div>
+  );
 
   return (
     <>
@@ -4034,13 +4199,13 @@ export default function App() {
                         : "Ask a question about this module..."
                     }
                     rows={2}
-                    disabled={!selectedModuleId}
+                    disabled={!canUseProtectedActions || !selectedModuleId}
                   />
                   <button
                     className={primaryButtonClass}
                     type="button"
                     onClick={handleSendChat}
-                    disabled={!selectedModuleId || !chatInput.trim() || chatLoading}
+                    disabled={!canUseProtectedActions || !selectedModuleId || !chatInput.trim() || chatLoading}
                   >
                     {chatLoading ? "Sending..." : "Send"}
                   </button>
@@ -4265,14 +4430,14 @@ export default function App() {
                 value={newStudyCardTitle}
                 onChange={(event) => setNewStudyCardTitle(event.target.value)}
                 placeholder="New study card title"
-                disabled={!selectedNoteGroupId}
+                disabled={!canUseProtectedActions || !selectedNoteGroupId}
               />
               <textarea
                 value={newStudyCardContent}
                 onChange={(event) => setNewStudyCardContent(event.target.value)}
                 placeholder="New study card content"
                 rows={4}
-                disabled={!selectedNoteGroupId}
+                disabled={!canUseProtectedActions || !selectedNoteGroupId}
               />
               {chipOptions.length > 0 ? (
                 <Select
@@ -4304,7 +4469,7 @@ export default function App() {
                   className={primaryButtonClass}
                   type="button"
                   onClick={handleCreateStudyCard}
-                  disabled={!selectedNoteGroupId || !newStudyCardContent.trim()}
+                  disabled={!canUseProtectedActions || !selectedNoteGroupId || !newStudyCardContent.trim()}
                 >
                   Add study card
                 </button>
@@ -4390,7 +4555,7 @@ export default function App() {
                   className={primaryButtonClass}
                   type="button"
                   onClick={handleCreateQuestionCard}
-                  disabled={!selectedNoteGroupId || !newQuestionPrompt.trim()}
+                  disabled={!canUseProtectedActions || !selectedNoteGroupId || !newQuestionPrompt.trim()}
                 >
                   Add question card
                 </button>
@@ -4840,6 +5005,7 @@ export default function App() {
             title="Build structured notes from raw text."
             description={pageDescription}
             breadcrumbs={pageBreadcrumbs}
+            actions={authActions}
           />
         }
         sectionNav={sectionNavItems.length ? <SectionNav items={sectionNavItems} /> : null}
@@ -4857,6 +5023,8 @@ export default function App() {
               <SubjectIndex
                 subjects={subjects}
                 error={sidebarError}
+                canCreate={canUseProtectedActions}
+                canEdit={canUseProtectedActions}
                 onOpenWizard={handleOpenSubjectWizard}
                 onSelect={(subject) =>
                   handleSelectSubject({
@@ -4878,6 +5046,8 @@ export default function App() {
                 dueCounts={moduleDueCounts}
                 subjectDescription={selectedSubject?.description}
                 error={sidebarError}
+                canCreate={canUseProtectedActions}
+                canEdit={canUseProtectedActions}
                 onOpenWizard={handleOpenModuleWizard}
                 onBack={handleBreadcrumbHome}
                 onSelect={(module) =>
@@ -4901,7 +5071,9 @@ export default function App() {
                 autoCreateError={autoCreateError}
                 autoCreateLoading={autoCreateLoading}
                 rawTextDisabled={!selectedModuleId}
-                createDisabled={!selectedModuleId || !isSourceReady || !autoRawText.trim()}
+                createDisabled={
+                  !canUseProtectedActions || !selectedModuleId || !isSourceReady || !autoRawText.trim()
+                }
                 additionalInstructionsMeta={`Word count: ${countWords(autoAdditionalInstructions)}/500`}
                 onUniqueIdChange={handleUniqueIdChange}
                 onGenerateUniqueId={handleUseGeneratedUniqueId}
@@ -4973,7 +5145,7 @@ export default function App() {
                           <Button
                             type="button"
                             onClick={() => setIsChatOpen(true)}
-                            disabled={!selectedModuleId || isReviewOverlayVisible}
+                            disabled={!canUseProtectedActions || !selectedModuleId || isReviewOverlayVisible}
                           >
                             Open chat
                           </Button>
@@ -4981,7 +5153,7 @@ export default function App() {
                             type="button"
                             variant="outline"
                             onClick={openModuleMetadataModal}
-                            disabled={!selectedModuleId || isReviewOverlayVisible}
+                            disabled={!canUseProtectedActions || !selectedModuleId || isReviewOverlayVisible}
                           >
                             Module settings
                           </Button>
@@ -4989,7 +5161,7 @@ export default function App() {
                             type="button"
                             variant="destructive"
                             onClick={handleDeleteModule}
-                            disabled={!selectedModuleId || isReviewOverlayVisible}
+                            disabled={!canUseProtectedActions || !selectedModuleId || isReviewOverlayVisible}
                           >
                             Delete module
                           </Button>
@@ -5015,7 +5187,7 @@ export default function App() {
                             className={primaryButtonClass}
                             type="button"
                             onClick={() => startReview("due", "module")}
-                            disabled={!selectedModuleId || isReviewing}
+                            disabled={!canUseProtectedActions || !selectedModuleId || isReviewing}
                           >
                             Review due
                           </button>
@@ -5023,7 +5195,7 @@ export default function App() {
                             className={primaryButtonClass}
                             type="button"
                             onClick={() => startReview("queue", "module")}
-                            disabled={!selectedModuleId || isReviewing}
+                            disabled={!canUseProtectedActions || !selectedModuleId || isReviewing}
                           >
                             Review next
                           </button>
@@ -5031,7 +5203,7 @@ export default function App() {
                             className={outlineButtonClass}
                             type="button"
                             onClick={() => startReview("all", "module")}
-                            disabled={!selectedModuleId || isReviewing}
+                            disabled={!canUseProtectedActions || !selectedModuleId || isReviewing}
                           >
                             Review all
                           </button>
@@ -5257,7 +5429,7 @@ export default function App() {
                                   className={outlineButtonClass}
                                   type="button"
                                   onClick={() => setIsChatOpen(true)}
-                                  disabled={!selectedModuleId || isReviewOverlayVisible}
+                                  disabled={!canUseProtectedActions || !selectedModuleId || isReviewOverlayVisible}
                                 >
                                   Open chat
                                 </button>
@@ -5284,7 +5456,7 @@ export default function App() {
                                   className={primaryButtonClass}
                                   type="button"
                                   onClick={handleSaveTopic}
-                                  disabled={topicSaving || !topicTitleDraft.trim()}
+                                  disabled={!canUseProtectedActions || topicSaving || !topicTitleDraft.trim()}
                                 >
                                   {topicSaving ? "Saving..." : "Rename topic"}
                                 </button>
@@ -5292,7 +5464,7 @@ export default function App() {
                                   className={destructiveOutlineButtonClass}
                                   type="button"
                                   onClick={handleDeleteTopic}
-                                  disabled={topicSaving || isReviewOverlayVisible}
+                                  disabled={!canUseProtectedActions || topicSaving || isReviewOverlayVisible}
                                 >
                                   Delete topic
                                 </button>
@@ -5354,7 +5526,7 @@ export default function App() {
                                     className={primaryButtonClass}
                                     type="button"
                                     onClick={() => startReview("due", "note-group")}
-                                    disabled={!selectedNoteGroupId || isReviewing}
+                                    disabled={!canUseProtectedActions || !selectedNoteGroupId || isReviewing}
                                   >
                                     Review Due
                                     <span className="rounded-md bg-primary-foreground/20 px-2 py-0.5 text-xs">
@@ -5365,7 +5537,7 @@ export default function App() {
                                     className={outlineButtonClass}
                                     type="button"
                                     onClick={() => setIsChatOpen(true)}
-                                    disabled={!selectedModuleId || isReviewOverlayVisible}
+                                    disabled={!canUseProtectedActions || !selectedModuleId || isReviewOverlayVisible}
                                   >
                                     Chat
                                   </button>
@@ -5373,7 +5545,7 @@ export default function App() {
                                     className={outlineButtonClass}
                                     type="button"
                                     onClick={openMetadataModal}
-                                    disabled={!selectedNoteGroupId || isReviewOverlayVisible}
+                                    disabled={!canUseProtectedActions || !selectedNoteGroupId || isReviewOverlayVisible}
                                   >
                                     Edit metadata
                                   </button>
@@ -5381,7 +5553,7 @@ export default function App() {
                                     className={destructiveOutlineButtonClass}
                                     type="button"
                                     onClick={handleDeleteNoteGroup}
-                                    disabled={!selectedNoteGroupId || isReviewOverlayVisible}
+                                    disabled={!canUseProtectedActions || !selectedNoteGroupId || isReviewOverlayVisible}
                                   >
                                     Delete note group
                                   </button>
@@ -5457,7 +5629,7 @@ export default function App() {
                                 type="button"
                                 variant="outline"
                                 onClick={() => startReview("due", "topic")}
-                                disabled={!selectedTopicId || isReviewing}
+                                disabled={!canUseProtectedActions || !selectedTopicId || isReviewing}
                               >
                                 Review due
                                 <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
@@ -5606,6 +5778,7 @@ export default function App() {
                           generationStatus={questionJobStatus}
                           generating={isGeneratingQuestions}
                           canEdit={canEditCurrentCards}
+                          canReview={canUseProtectedActions}
                           editingQuestionCardId={editingQuestionCardId}
                           editingQuestionCard={editingQuestionCard}
                           studyCards={studyCards}
