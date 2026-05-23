@@ -91,6 +91,54 @@ export function listPublicSubjects() {
   return request("/public/subjects");
 }
 
+export function getCurrentUser() {
+  return request("/me");
+}
+
+export function listAdminUsers() {
+  return request("/admin/users");
+}
+
+export function updateAdminUserRole(userId, appRole) {
+  return request(`/admin/users/${userId}/role`, {
+    method: "PUT",
+    body: JSON.stringify({ app_role: appRole })
+  });
+}
+
+export function listPublicSubjectRequests() {
+  return request("/admin/subjects/public-requests");
+}
+
+export function approvePublicSubject(subjectId) {
+  return request(`/admin/subjects/${subjectId}/approve-public`, {
+    method: "POST"
+  });
+}
+
+export function keepSubjectPrivate(subjectId) {
+  return request(`/admin/subjects/${subjectId}/keep-private`, {
+    method: "POST"
+  });
+}
+
+export function listSubjectAccess(subjectId) {
+  return request(`/subjects/${subjectId}/access`);
+}
+
+export function upsertSubjectAccess(subjectId, userId, accessLevel) {
+  return request(`/subjects/${subjectId}/access/${userId}`, {
+    method: "PUT",
+    body: JSON.stringify({ access_level: accessLevel })
+  });
+}
+
+export function deleteSubjectAccess(subjectId, userId) {
+  return request(`/subjects/${subjectId}/access/${userId}`, {
+    method: "DELETE"
+  });
+}
+
 export function resolveAppSubjectRoute(subjectCode) {
   return request(`/routes/app/subject/${subjectCode}`);
 }

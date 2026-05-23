@@ -2,10 +2,19 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   clearAccessTokenProvider,
+  approvePublicSubject,
   createSubject,
+  deleteSubjectAccess,
+  getCurrentUser,
+  keepSubjectPrivate,
+  listAdminUsers,
   listPublicSubjects,
+  listPublicSubjectRequests,
+  listSubjectAccess,
   listSubjects,
-  setAccessTokenProvider
+  setAccessTokenProvider,
+  updateAdminUserRole,
+  upsertSubjectAccess
 } from "./api";
 
 const jsonResponse = (payload) =>
@@ -17,6 +26,81 @@ const jsonResponse = (payload) =>
 afterEach(() => {
   clearAccessTokenProvider();
   vi.restoreAllMocks();
+});
+
+describe("admin and access API calls", () => {
+  test("getCurrentUser calls profile endpoint", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ id: "user-1" }));
+
+    await getCurrentUser();
+
+    expect(fetchMock).toHaveBeenCalledWith("/me", expect.any(Object));
+  });
+
+  test("listAdminUsers calls admin users endpoint", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse([]));
+
+    await listAdminUsers();
+
+    expect(fetchMock).toHaveBeenCalledWith("/admin/users", expect.any(Object));
+  });
+
+  test("updateAdminUserRole sends app role payload", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ id: "user-1" }));
+
+    await updateAdminUserRole("user-1", "creator");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/admin/users/user-1/role",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ app_role: "creator" })
+      })
+    );
+  });
+
+  test("public request helpers call admin approval endpoints", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => Promise.resolve(jsonResponse([])));
+
+    await listPublicSubjectRequests();
+    await approvePublicSubject("subject-1");
+    await keepSubjectPrivate("subject-1");
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/admin/subjects/public-requests", expect.any(Object));
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/admin/subjects/subject-1/approve-public",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/admin/subjects/subject-1/keep-private",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
+  test("subject access helpers call access endpoints", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => Promise.resolve(jsonResponse([])));
+
+    await listSubjectAccess("subject-1");
+    await upsertSubjectAccess("subject-1", "user-1", "edit");
+    await deleteSubjectAccess("subject-1", "user-1");
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/subjects/subject-1/access", expect.any(Object));
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/subjects/subject-1/access/user-1",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ access_level: "edit" })
+      })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/subjects/subject-1/access/user-1",
+      expect.objectContaining({ method: "DELETE" })
+    );
+  });
 });
 
 describe("API auth headers", () => {

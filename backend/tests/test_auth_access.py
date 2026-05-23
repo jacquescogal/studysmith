@@ -423,6 +423,23 @@ class AdminRoutesTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_current_user_profile_returns_authenticated_user(self):
+        from app.main import get_current_user_profile
+        from app.models import APP_ROLE_ADMIN, User
+
+        user = User(
+            id="admin",
+            supabase_user_id="admin-sub",
+            email="admin@example.com",
+            app_role=APP_ROLE_ADMIN,
+        )
+
+        result = get_current_user_profile(current_user=user)
+
+        self.assertEqual(result.id, "admin")
+        self.assertEqual(result.email, "admin@example.com")
+        self.assertEqual(result.app_role, APP_ROLE_ADMIN)
+
     def test_admin_can_reject_invalid_role(self):
         from app.main import update_user_role
         from app.models import APP_ROLE_ADMIN, User

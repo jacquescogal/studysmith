@@ -14,7 +14,7 @@ export default defineConfig({
     port: 5173,
     host: true,
     proxy: {
-      "^/(subjects|public|modules|note-groups|jobs|study-cards|question-cards|topic-chips|topics|chat|routes)": {
+      "^/(me|admin|subjects|public|modules|note-groups|jobs|study-cards|question-cards|topic-chips|topics|chat|routes)": {
         target: "http://localhost:8000",
         changeOrigin: true
       }
