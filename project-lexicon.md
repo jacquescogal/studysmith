@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document is the semantic source of truth for the Flashcard Study project.
+This document is the semantic source of truth for the StudySmith project.
 Use it when naming models, API fields, UI text, prompts, tests, and docs. Its
 purpose is to reduce drift: the same product concept should keep the same name,
 meaning, and boundary across the codebase.
