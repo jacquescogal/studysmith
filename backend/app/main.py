@@ -297,6 +297,11 @@ app.add_middleware(
 )
 
 
+@app.get("/me", response_model=UserOut)
+def get_current_user_profile(current_user: User = Depends(require_user)):
+    return current_user
+
+
 @app.on_event("startup")
 def _start_auto_worker() -> None:
     start_auto_worker()

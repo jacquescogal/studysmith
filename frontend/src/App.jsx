@@ -13,6 +13,7 @@ import { SectionNav } from "@/components/layout/SectionNav";
 import { ConfirmActionDialog } from "@/components/common/ConfirmActionDialog";
 import { LegacyDialog } from "@/components/common/LegacyDialog";
 import { ModuleIndex } from "@/features/modules/ModuleIndex";
+import { AdminPanel } from "@/features/admin/AdminPanel";
 import { ModuleOverview } from "@/features/modules/ModuleOverview";
 import { NoteGroupCreate } from "@/features/note-groups/NoteGroupCreate";
 import { NoteGroupOverview } from "@/features/note-groups/NoteGroupOverview";
@@ -63,6 +64,7 @@ import {
   deleteTopic,
   detachTopicChip,
   generateQuestionCards,
+  getCurrentUser,
   getNoteGroupCardTable,
   getJob,
   getModule,
@@ -181,6 +183,9 @@ export default function App() {
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
   const [authUiError, setAuthUiError] = useState("");
+  const [currentUserProfile, setCurrentUserProfile] = useState(null);
+  const [currentUserError, setCurrentUserError] = useState("");
+  const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
 
   const [subjects, setSubjects] = useState([]);
   const [selectedSubjectId, setSelectedSubjectId] = useState("");
@@ -849,6 +854,41 @@ export default function App() {
     (focusQuestionCard.correct_option_indices || []).length > 1
       ? "multi"
       : focusQuestionCard?.type || "mcq";
+  const isAdmin = currentUserProfile?.app_role === "admin";
+
+  useEffect(() => {
+    if (auth.loading) {
+      return;
+    }
+    if (!auth.isAuthenticated) {
+      setCurrentUserProfile(null);
+      setCurrentUserError("");
+      setIsAdminPanelOpen(false);
+      return;
+    }
+
+    let cancelled = false;
+    setCurrentUserError("");
+    getCurrentUser()
+      .then((profile) => {
+        if (!cancelled) {
+          setCurrentUserProfile(profile);
+          if (profile?.app_role !== "admin") {
+            setIsAdminPanelOpen(false);
+          }
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setCurrentUserProfile(null);
+          setCurrentUserError(error.message || "Failed to load user profile");
+          setIsAdminPanelOpen(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.isAuthenticated, auth.loading, auth.user?.id]);
 
   useEffect(() => {
     if (auth.loading) {
@@ -1839,12 +1879,20 @@ export default function App() {
       setIsChatOpen(false);
       setIsMetadataOpen(false);
       setIsModuleMetadataOpen(false);
+      setCurrentUserProfile(null);
+      setIsAdminPanelOpen(false);
       navigate("/");
     } catch (error) {
       setAuthUiError(error.message || "Failed to sign out");
     } finally {
       setAuthSubmitting(false);
     }
+  };
+
+  const handleAdminSubjectUpdated = (updatedSubject) => {
+    setSubjects((current) =>
+      current.map((subject) => (subject.id === updatedSubject.id ? updatedSubject : subject))
+    );
   };
 
   const handleSelectSubject = (option) => {
@@ -3723,15 +3771,27 @@ export default function App() {
       {auth.isAuthenticated ? (
         <>
           <div className="text-xs text-muted-foreground">{auth.user?.email}</div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleSignOut}
-            disabled={authSubmitting}
-          >
-            Sign out
-          </Button>
+          <div className="flex flex-wrap justify-end gap-2">
+            {isAdmin ? (
+              <Button
+                type="button"
+                variant={isAdminPanelOpen ? "default" : "outline"}
+                size="sm"
+                onClick={() => setIsAdminPanelOpen((open) => !open)}
+              >
+                Admin
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleSignOut}
+              disabled={authSubmitting}
+            >
+              Sign out
+            </Button>
+          </div>
         </>
       ) : auth.isConfigured ? (
         <form className="flex flex-wrap justify-end gap-2" onSubmit={handleSignIn}>
@@ -3755,6 +3815,9 @@ export default function App() {
       {authMessage ? <p className="text-xs text-muted-foreground">{authMessage}</p> : null}
       {authUiError || auth.error ? (
         <p className="text-xs font-medium text-destructive">{authUiError || auth.error}</p>
+      ) : null}
+      {currentUserError ? (
+        <p className="text-xs font-medium text-destructive">{currentUserError}</p>
       ) : null}
     </div>
   );
@@ -5011,7 +5074,14 @@ export default function App() {
         sectionNav={sectionNavItems.length ? <SectionNav items={sectionNavItems} /> : null}
       >
         <>
-            {routeRestoreError ? (
+            {isAdminPanelOpen && isAdmin ? (
+              <AdminPanel
+                subjects={subjects}
+                selectedSubjectId={selectedSubjectId}
+                onSubjectUpdated={handleAdminSubjectUpdated}
+                onClose={() => setIsAdminPanelOpen(false)}
+              />
+            ) : routeRestoreError ? (
               <section className={panelClass}>
                 <h2>Unable to restore page</h2>
                 <p className={errorTextClass}>{routeRestoreError}</p>
