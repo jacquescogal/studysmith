@@ -10,6 +10,8 @@ export function ModuleIndex({
   dueCounts,
   subjectDescription,
   error,
+  canCreate = true,
+  canEdit = true,
   onOpenWizard,
   onBack,
   onSelect,
@@ -36,9 +38,11 @@ export function ModuleIndex({
             <Button type="button" variant="outline" onClick={onBack}>
               <ArrowLeft className="size-4" /> Subjects
             </Button>
-            <Button type="button" onClick={onOpenWizard}>
-              <Plus className="size-4" /> Create module
-            </Button>
+            {canCreate ? (
+              <Button type="button" onClick={onOpenWizard}>
+                <Plus className="size-4" /> Create module
+              </Button>
+            ) : null}
           </div>
         </div>
       </div>
@@ -77,9 +81,11 @@ export function ModuleIndex({
                   <Button type="button" onClick={() => onSelect(module)}>
                     Open module
                   </Button>
-                  <Button type="button" variant="outline" size="icon" aria-label={`Delete ${module.title}`} onClick={() => onDelete(module)}>
-                    <Trash2 className="size-4" />
-                  </Button>
+                  {canEdit ? (
+                    <Button type="button" variant="outline" size="icon" aria-label={`Delete ${module.title}`} onClick={() => onDelete(module)}>
+                      <Trash2 className="size-4" />
+                    </Button>
+                  ) : null}
                 </div>
               </div>
             );

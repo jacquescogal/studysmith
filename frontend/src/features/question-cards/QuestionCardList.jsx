@@ -17,6 +17,7 @@ export function QuestionCardList({
   generationStatus,
   generating,
   canEdit,
+  canReview = true,
   editingQuestionCardId,
   editingQuestionCard,
   studyCards,
@@ -45,9 +46,9 @@ export function QuestionCardList({
             <label className="text-sm font-medium" htmlFor="review-count">Review count</label>
             <Input id="review-count" type="number" min="1" value={reviewCount} onChange={(event) => onReviewCountChange(Number(event.target.value))} className="w-28" />
           </div>
-          <Button type="button" onClick={onStartReviewDue}>Review Due</Button>
-          <Button type="button" onClick={onStartReviewNext}>Review Next</Button>
-          <Button type="button" variant="outline" onClick={onStartReviewAll}>Review All</Button>
+          <Button type="button" onClick={onStartReviewDue} disabled={!canReview}>Review Due</Button>
+          <Button type="button" onClick={onStartReviewNext} disabled={!canReview}>Review Next</Button>
+          <Button type="button" variant="outline" onClick={onStartReviewAll} disabled={!canReview}>Review All</Button>
         </CardContent>
       </Card>
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -67,11 +68,15 @@ export function QuestionCardList({
             </SelectContent>
           </Select>
           {canEdit ? <Button type="button" onClick={onCreate}><Plus className="size-4" /> Add Question Card</Button> : null}
-          <Button type="button" variant="outline" disabled={generating} onClick={onGenerate}>
-            <RefreshCcw className="size-4" /> {generating ? "Generating..." : "Generate"}
-          </Button>
-          {generationStatus !== "idle" ? <Badge variant="secondary">{generationStatus}</Badge> : null}
-          {generating ? <Button type="button" variant="outline" onClick={onCancelGeneration}>Cancel</Button> : null}
+          {canEdit ? (
+            <>
+              <Button type="button" variant="outline" disabled={generating} onClick={onGenerate}>
+                <RefreshCcw className="size-4" /> {generating ? "Generating..." : "Generate"}
+              </Button>
+              {generationStatus !== "idle" ? <Badge variant="secondary">{generationStatus}</Badge> : null}
+              {generating ? <Button type="button" variant="outline" onClick={onCancelGeneration}>Cancel</Button> : null}
+            </>
+          ) : null}
         </div>
       </div>
       <ErrorAlert title="Question Card action failed" message={error} />
