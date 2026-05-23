@@ -39,7 +39,6 @@ from app.access import (
     require_topic_study,
 )
 from app.auth import require_admin, require_creator, require_user
-from app.chroma import get_collection
 from app.auto_queue import enqueue_auto_job, remove_auto_job, resume_auto_jobs, start_auto_worker
 from app.jobs import (
     JOB_TYPE_NOTE_GROUP_QUESTION_GENERATION,
@@ -92,6 +91,11 @@ from app.openai_client import (
     generate_chat_response,
     generate_module_intent_response,
     generate_subject_intent_response,
+)
+from app.vector_store import (
+    delete_study_card_embeddings,
+    query_study_card_embeddings,
+    upsert_study_card_embedding,
 )
 from app.schemas import (
     ChatRequest,
@@ -500,20 +504,10 @@ def _mark_question_cards_stale(db: Session, note_group_id: str, study_card_id: s
 
 def _upsert_study_card_embedding(card: StudyCard, module_id: str) -> None:
     embedding = embed_texts([card.content])[0]
-    chip_ids = ",".join([chip.id for chip in card.topic_chips])
-    collection = get_collection()
-    collection.upsert(
-        ids=[card.id],
-        embeddings=[embedding],
-        documents=[card.content],
-        metadatas=[
-            {
-                "note_group_id": card.note_group_id,
-                "module_id": module_id,
-                "chip_ids": chip_ids,
-            }
-        ],
-    )
+    db = Session.object_session(card)
+    if db is None:
+        raise RuntimeError("Study Card must be attached to a database session")
+    upsert_study_card_embedding(db, card, module_id, embedding)
 
 
 def _next_note_group_sort_order(db: Session, module_id: str) -> Optional[int]:
@@ -548,6 +542,7 @@ def _delete_note_groups(db: Session, note_group_ids: list[str]) -> list[str]:
     study_card_ids = [row[0] for row in study_card_rows]
 
     if study_card_ids:
+        delete_study_card_embeddings(db, study_card_ids)
         db.query(StudyCardSourceRange).filter(
             StudyCardSourceRange.study_card_id.in_(study_card_ids)
         ).delete(synchronize_session=False)
@@ -587,6 +582,7 @@ def _reset_note_group_for_retry(db: Session, note_group: NoteGroup) -> list[str]
     study_card_ids = [row[0] for row in study_cards]
 
     if study_card_ids:
+        delete_study_card_embeddings(db, study_card_ids)
         db.query(StudyCardSourceRange).filter(
             StudyCardSourceRange.study_card_id.in_(study_card_ids)
         ).delete(synchronize_session=False)
@@ -1151,10 +1147,6 @@ def delete_subject(
     db.delete(subject)
     db.commit()
 
-    if study_card_ids:
-        collection = get_collection()
-        collection.delete(ids=study_card_ids)
-
     return {"deleted": True}
 
 
@@ -1347,10 +1339,6 @@ def delete_module(
     )
     db.delete(module)
     db.commit()
-
-    if study_card_ids:
-        collection = get_collection()
-        collection.delete(ids=study_card_ids)
 
     return {"deleted": True}
 
@@ -1918,10 +1906,6 @@ def delete_note_group(
     study_card_ids = _delete_note_groups(db, [note_group_id])
     db.commit()
 
-    if study_card_ids:
-        collection = get_collection()
-        collection.delete(ids=study_card_ids)
-
     return {"deleted": True}
 
 
@@ -2007,10 +1991,6 @@ def retry_job(
     note_group.title = new_job.id
     db.commit()
     db.refresh(new_job)
-
-    if study_card_ids:
-        collection = get_collection()
-        collection.delete(ids=study_card_ids)
 
     enqueue_auto_job(new_job.id)
     return new_job
@@ -2200,10 +2180,9 @@ def delete_study_card(
     card = require_study_card_edit(db, current_user, study_card_id)
     note_group_id = card.note_group_id
     card_id = card.id
+    delete_study_card_embeddings(db, [card_id])
     db.delete(card)
     db.commit()
-    collection = get_collection()
-    collection.delete(ids=[card_id])
     _mark_question_cards_stale(db, note_group_id, card_id)
     return {"deleted": True}
 
@@ -2235,12 +2214,10 @@ def review_study_cards(
         return {"deleted": 0}
 
     ids_to_delete = [card.id for card in cards]
+    delete_study_card_embeddings(db, ids_to_delete)
     for card in cards:
         db.delete(card)
     db.commit()
-
-    collection = get_collection()
-    collection.delete(ids=ids_to_delete)
 
     return {"deleted": len(ids_to_delete)}
 
@@ -2680,31 +2657,25 @@ def chat(
         if not note_group or note_group.module_id != payload.module_id:
             raise HTTPException(status_code=404, detail="Note group not found")
 
-    collection = get_collection()
     query_embedding = embed_texts([payload.message])[0]
-    where = {"module_id": payload.module_id}
-    if payload.note_group_id:
-        where = {
-            "$and": [
-                {"module_id": payload.module_id},
-                {"note_group_id": payload.note_group_id},
-            ]
-        }
-
-    results = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=20,
-        where=where,
+    results = query_study_card_embeddings(
+        db,
+        query_embedding,
+        payload.module_id,
+        note_group_id=payload.note_group_id,
+        limit=20,
     )
-    ids = results.get("ids", [[]])[0]
-    documents = results.get("documents", [[]])[0]
-    if not ids or not documents:
+    if not results:
         return {
             "answer": "I couldn't find that in your study cards yet.",
             "study_card_refs": [],
         }
 
-    filtered = [(card_id, doc) for card_id, doc in zip(ids, documents) if card_id and doc]
+    filtered = [
+        (result.study_card_id, result.content)
+        for result in results
+        if result.study_card_id and result.content
+    ]
     if not filtered:
         return {
             "answer": "I couldn't find that in your study cards yet.",
