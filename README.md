@@ -1,6 +1,6 @@
-# Flashcard Study
+# StudySmith
 
-Flashcard Study is a local-first learning workspace that turns raw study material
+StudySmith is a local-first learning workspace that turns raw study material
 into structured study cards, scheduled question cards, and retrieval-grounded
 Tutor Chat.
 
@@ -200,7 +200,7 @@ Open `http://localhost:8000`.
 
 Docker Compose reads configuration from the repo-root `.env`, builds the
 frontend, serves the API and frontend from one container, and stores SQLite plus
-ChromaDB data in the named Docker volume `flashcard_study_study-data`.
+ChromaDB data in the named Docker volume `studysmith_study-data`.
 
 Reset Docker data with:
 
@@ -274,7 +274,7 @@ Manual local data lives under `backend/`:
 - `backend/study.db`: SQLite database
 - `backend/chroma/`: ChromaDB persistence
 
-Docker local data lives in the `flashcard_study_study-data` named volume.
+Docker local data lives in the `studysmith_study-data` named volume.
 
 If schema changes produce local startup errors, delete `backend/study.db` and
 `backend/chroma/`, then restart the app. For Docker, run
