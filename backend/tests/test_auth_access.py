@@ -1287,14 +1287,15 @@ class RouteAccessEnforcementTests(unittest.TestCase):
                 )
             self.assertEqual(exc.exception.status_code, 403)
 
-            with patch("app.main.get_collection") as collection, patch("app.main.embed_texts", return_value=[[0.1]]), patch(
+            with patch(
+                "app.main.query_study_card_embeddings",
+                return_value=[
+                    SimpleNamespace(study_card_id="study-card-1", content="Content")
+                ],
+            ), patch("app.main.embed_texts", return_value=[[0.1]]), patch(
                 "app.main.generate_chat_response",
                 return_value={"answer": "ok", "used_ref_ids": ["study-card-1"]},
             ):
-                collection.return_value.query.return_value = {
-                    "ids": [["study-card-1"]],
-                    "documents": [["Content"]],
-                }
                 result = chat(ChatRequest(module_id="module-1", message="Hi"), db=db, current_user=reader)
             self.assertEqual(result["answer"], "ok")
 

@@ -16,7 +16,9 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
+from pgvector.sqlalchemy import Vector
 
+from app.config import settings
 from app.db import Base
 
 DEFAULT_MODULE_SETTINGS = {
@@ -325,6 +327,32 @@ class StudyCard(Base):
         secondary=study_card_topic_chips,
         back_populates="study_cards",
     )
+    embedding = relationship(
+        "StudyCardEmbedding",
+        back_populates="study_card",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+
+class StudyCardEmbedding(Base):
+    __tablename__ = "study_card_embeddings"
+
+    study_card_id = Column(
+        String,
+        ForeignKey("study_cards.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    module_id = Column(String, ForeignKey("modules.id", ondelete="CASCADE"), nullable=False, index=True)
+    note_group_id = Column(String, ForeignKey("note_groups.id", ondelete="CASCADE"), nullable=False, index=True)
+    content = Column(Text, nullable=False)
+    embedding = Column(Vector(settings.embedding_dimension), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    study_card = relationship("StudyCard", back_populates="embedding")
+    module = relationship("Module")
+    note_group = relationship("NoteGroup")
 
 
 class StudyCardSourceRange(Base):

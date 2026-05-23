@@ -18,13 +18,6 @@ def _get_csv_set(name: str) -> set[str]:
     return {item.strip().lower() for item in value.split(",") if item.strip()}
 
 
-def _resolve_path(path_value: str) -> str:
-    path = Path(path_value)
-    if path.is_absolute():
-        return str(path)
-    return str((BASE_DIR / path).resolve())
-
-
 def _normalize_database_url(value: str) -> str:
     if value.startswith("postgresql://"):
         return value.replace("postgresql://", "postgresql+psycopg://", 1)
@@ -38,8 +31,8 @@ class Settings:
     openai_weak_model = _get_env("OPENAI_WEAK_MODEL", "gpt-5.4-mini")
     openai_strong_model = _get_env("OPENAI_STRONG_MODEL", "gpt-5.4")
     openai_embedding_model = _get_env("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+    embedding_dimension = int(_get_env("EMBEDDING_DIMENSION", "1536"))
     database_url = _normalize_database_url(_get_env("DATABASE_URL", "sqlite:///./study.db"))
-    chroma_path = _resolve_path(_get_env("CHROMA_PATH", "./chroma"))
     supabase_url = _get_env("SUPABASE_URL", "")
     supabase_jwks_url = _get_env("SUPABASE_JWKS_URL", "")
     supabase_jwt_issuer = _get_env("SUPABASE_JWT_ISSUER", "")

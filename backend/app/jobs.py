@@ -3,7 +3,6 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.chroma import get_collection
 from app.db import SessionLocal
 from app.fsrs_utils import initialize_question_card
 
@@ -28,6 +27,7 @@ from app.openai_client import (
 )
 from app.source_ranges import find_evidence_ranges
 from app.text_formatter import build_formatted_sections, sections_to_markdown
+from app.vector_store import delete_study_card_embeddings, upsert_study_card_embeddings
 
 
 JOB_TYPE_NOTE_GROUP_QUESTION_GENERATION = "NOTE_GROUP_QUESTION_GENERATION"
@@ -77,6 +77,7 @@ def _cleanup_note_group(db: Session, note_group: NoteGroup) -> list[str]:
     study_card_ids = [row[0] for row in study_card_rows]
 
     if study_card_ids:
+        delete_study_card_embeddings(db, study_card_ids)
         db.query(StudyCardSourceRange).filter(
             StudyCardSourceRange.study_card_id.in_(study_card_ids)
         ).delete(synchronize_session=False)
@@ -113,6 +114,7 @@ def _cleanup_note_group_by_id(db: Session, note_group_id: str) -> list[str]:
     study_card_ids = [row[0] for row in study_card_rows]
 
     if study_card_ids:
+        delete_study_card_embeddings(db, study_card_ids)
         db.query(StudyCardSourceRange).filter(
             StudyCardSourceRange.study_card_id.in_(study_card_ids)
         ).delete(synchronize_session=False)
@@ -521,14 +523,6 @@ def run_auto_note_group_generation(job_id: str) -> None:
         ]
         study_card_ids = [card.id for card in study_cards]
         study_card_contents = [card.content for card in study_cards]
-        chroma_metadatas = [
-            {
-                "note_group_id": note_group.id,
-                "module_id": module.id,
-                "chip_ids": ",".join([chip.id for chip in card.topic_chips]),
-            }
-            for card in study_cards
-        ]
         db.commit()
         _raise_if_cancelled(db, job)
 
@@ -546,13 +540,14 @@ def run_auto_note_group_generation(job_id: str) -> None:
         db.commit()
 
         embeddings = embed_texts(study_card_contents)
-        collection = get_collection()
-        collection.upsert(
-            ids=study_card_ids,
-            embeddings=embeddings,
-            documents=study_card_contents,
-            metadatas=chroma_metadatas,
+        upsert_study_card_embeddings(
+            db,
+            [
+                (card, module.id, embedding)
+                for card, embedding in zip(study_cards, embeddings)
+            ],
         )
+        db.commit()
         _raise_if_cancelled(db, job)
 
         question_payloads = generate_question_cards(
@@ -620,10 +615,9 @@ def run_auto_note_group_generation(job_id: str) -> None:
         for card_id in cancelled_ids:
             if card_id not in study_card_ids:
                 study_card_ids.append(card_id)
-        db.commit()
         if study_card_ids:
-            collection = get_collection()
-            collection.delete(ids=study_card_ids)
+            delete_study_card_embeddings(db, study_card_ids)
+        db.commit()
     except Exception as exc:
         if job:
             job.status = "failed"
