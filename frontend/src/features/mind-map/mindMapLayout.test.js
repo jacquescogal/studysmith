@@ -67,4 +67,38 @@ describe("buildMindMapElements", () => {
       label: "requires"
     });
   });
+
+  test("uses the note group title as root in note group scope", () => {
+    const graph = {
+      scope: "note_group",
+      module_id: "module-1",
+      note_group_id: "note-a",
+      note_groups: [{ id: "note-a", title: "Authentication" }],
+      nodes: [
+        {
+          id: "concept-1",
+          title: "Magic Links",
+          summary: "Passwordless sign-in links.",
+          importance: "core",
+          concept_type: "term",
+          note_group_ids: ["note-a"],
+          study_card_count: 2
+        }
+      ],
+      edges: []
+    };
+
+    const { nodes, edges } = buildMindMapElements(graph, { title: "Authentication Mind Map" });
+
+    expect(nodes.map((node) => node.id)).toEqual(["mind-map-root:note-a", "concept-1"]);
+    expect(nodes[0].data.title).toBe("Authentication Mind Map");
+    expect(edges).toEqual([
+      expect.objectContaining({
+        id: "mind-map-root-edge:concept-1",
+        source: "mind-map-root:note-a",
+        target: "concept-1",
+        label: "contains"
+      })
+    ]);
+  });
 });

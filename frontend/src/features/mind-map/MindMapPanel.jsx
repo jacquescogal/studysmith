@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Background,
   Controls,
+  Handle,
   MiniMap,
+  Position,
   ReactFlow,
   useEdgesState,
   useNodesState
@@ -16,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { buildMindMapElements, layoutMindMapElements } from "./mindMapLayout";
 
-function MindMapNode({ data }) {
+export function MindMapNode({ data }) {
   const className = [
     "mind-map-node",
     data.nodeType ? `mind-map-node-${data.nodeType}` : "",
@@ -27,6 +29,7 @@ function MindMapNode({ data }) {
 
   return (
     <div className={className}>
+      <Handle className="mind-map-node-handle" type="target" position={Position.Left} />
       <div className="mind-map-node-title">{data.title}</div>
       {data.summary ? <div className="mind-map-node-summary">{data.summary}</div> : null}
       {data.badges?.length ? (
@@ -36,6 +39,7 @@ function MindMapNode({ data }) {
           ))}
         </div>
       ) : null}
+      <Handle className="mind-map-node-handle" type="source" position={Position.Right} />
     </div>
   );
 }
