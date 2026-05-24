@@ -2122,13 +2122,14 @@ def generate_note_group_mind_map(
         if existing_job.status == "queued":
             background_tasks.add_task(run_mind_map_generation, existing_job.id)
             return existing_job
+        if existing_job.status == "running":
+            if not _is_stale_mind_map_generation_job(existing_job):
+                return existing_job
+            existing_job.status = "failed"
+            existing_job.error = STALE_MIND_MAP_JOB_ERROR
+            db.commit()
         if existing_job.status == "completed":
             return existing_job
-        if not _is_stale_mind_map_generation_job(existing_job):
-            return existing_job
-        existing_job.status = "failed"
-        existing_job.error = STALE_MIND_MAP_JOB_ERROR
-        db.commit()
 
     job = Job(type=JOB_TYPE_MIND_MAP_GENERATION, note_group_id=note_group_id)
     db.add(job)
