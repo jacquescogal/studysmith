@@ -350,12 +350,21 @@ def run_question_card_generation(job_id: str, count: int, difficulty: str) -> No
 def run_mind_map_generation(job_id: str) -> None:
     db: Session = SessionLocal()
     try:
-        job = db.get(Job, job_id)
-        if not job:
+        claimed = (
+            db.query(Job)
+            .filter(Job.id == job_id, Job.status == "queued")
+            .update(
+                {
+                    Job.status: "running",
+                    Job.error: None,
+                },
+                synchronize_session=False,
+            )
+        )
+        if claimed != 1:
             return
 
-        job.status = "running"
-        job.error = None
+        job = db.get(Job, job_id)
         note_group = job.note_group
         if note_group:
             note_group.mind_map_status = "generating"
@@ -415,6 +424,21 @@ def run_mind_map_generation(job_id: str) -> None:
             study_cards=study_card_payloads,
             existing_concepts=existing_concept_payloads,
         )
+
+        db.expire_all()
+        current_job = db.get(Job, job_id)
+        active_running_job = (
+            db.query(Job)
+            .filter(
+                Job.note_group_id == note_group.id,
+                Job.type == JOB_TYPE_MIND_MAP_GENERATION,
+                Job.status == "running",
+            )
+            .order_by(Job.created_at.desc(), Job.id.desc())
+            .first()
+        )
+        if not current_job or current_job.status != "running" or active_running_job is None or active_running_job.id != job_id:
+            return
 
         regenerate_note_group_mind_map(db, note_group.id, candidate_payload)
         job = db.get(Job, job_id)
