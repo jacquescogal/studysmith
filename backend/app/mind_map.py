@@ -1,4 +1,5 @@
 import json
+import math
 import re
 import uuid
 from datetime import datetime
@@ -63,6 +64,7 @@ def validate_candidate_graph(payload: dict, study_card_ids: set[str], existing_c
 
     valid_refs = set(existing_concept_ids)
     temp_ids: set[str] = set()
+    candidate_slugs: set[str] = set()
     normalized_concepts = []
     temp_to_canonical: dict[str, str] = {}
 
@@ -88,6 +90,10 @@ def validate_candidate_graph(payload: dict, study_card_ids: set[str], existing_c
             raise MindMapValidationError(f"Unknown matched_existing_concept_id: {matched_existing_concept_id}.")
 
         canonical_ref = matched_existing_concept_id or temp_id
+        slug = slugify_concept_title(title)
+        if slug in candidate_slugs:
+            raise MindMapValidationError(f"Duplicate concept slug: {slug}.")
+        candidate_slugs.add(slug)
         valid_refs.add(temp_id)
         temp_to_canonical[temp_id] = canonical_ref
         normalized_concepts.append(
@@ -99,7 +105,7 @@ def validate_candidate_graph(payload: dict, study_card_ids: set[str], existing_c
                 "concept_type": concept_type,
                 "importance": importance,
                 "source_quote": _optional_string_field(concept, "source_quote"),
-                "slug": slugify_concept_title(title),
+                "slug": slug,
             }
         )
 
@@ -107,8 +113,18 @@ def validate_candidate_graph(payload: dict, study_card_ids: set[str], existing_c
     for index, relation in enumerate(relations):
         if not isinstance(relation, dict):
             raise MindMapValidationError(f"Relation at index {index} must be an object.")
-        source_ref = _relation_ref(relation, "source_concept_id", "source", index)
-        target_ref = _relation_ref(relation, "target_concept_id", "target", index)
+        source_ref = _relation_ref(
+            relation,
+            ("source_concept_id", "source_temp_or_existing_id", "sourceConceptId"),
+            "source_concept_id",
+            index,
+        )
+        target_ref = _relation_ref(
+            relation,
+            ("target_concept_id", "target_temp_or_existing_id", "targetConceptId"),
+            "target_concept_id",
+            index,
+        )
         if source_ref not in valid_refs:
             raise MindMapValidationError(f"Relation source does not resolve: {source_ref}.")
         if target_ref not in valid_refs:
@@ -123,7 +139,10 @@ def validate_candidate_graph(payload: dict, study_card_ids: set[str], existing_c
         )
         if relation_type not in RELATION_TYPES:
             raise MindMapValidationError(f"Invalid relation_type: {relation_type}.")
-        confidence = _float_value(relation.get("confidence", 1.0), f"Relation at index {index} has invalid confidence.")
+        confidence = _confidence_value(
+            relation.get("confidence", 1.0),
+            f"Relation at index {index} has invalid confidence.",
+        )
         if confidence < MIN_RELATION_CONFIDENCE:
             continue
 
@@ -166,7 +185,9 @@ def validate_candidate_graph(payload: dict, study_card_ids: set[str], existing_c
         normalized_links.append(normalized_link)
         links_by_study_card_id[study_card_id].append(normalized_link)
 
-    missing_link_ids = [study_card_id for study_card_id, card_links in links_by_study_card_id.items() if not card_links]
+    missing_link_ids = sorted(
+        study_card_id for study_card_id, card_links in links_by_study_card_id.items() if not card_links
+    )
     if missing_link_ids:
         raise MindMapValidationError(f"Every Study Card must have at least one concept link: {', '.join(missing_link_ids)}.")
 
@@ -344,7 +365,7 @@ def build_module_mind_map_response(db: Session, module_id: str) -> MindMapRespon
     }
     stale = any(bool(note_group.mind_map_stale) for note_group in note_groups)
     generated_times = [note_group.mind_map_generated_at for note_group in note_groups if note_group.mind_map_generated_at]
-    status = "complete" if concept_ids and all(note_group.mind_map_status == "complete" for note_group in note_groups) else "not_generated"
+    status = _module_mind_map_status(note_groups, bool(concept_ids))
     return _build_mind_map_response(
         db=db,
         scope="module",
@@ -509,18 +530,36 @@ def _optional_string_field(payload: dict[str, Any], key: str) -> str | None:
     return stripped or None
 
 
-def _relation_ref(relation: dict[str, Any], primary_key: str, fallback_key: str, index: int) -> str:
-    value = relation.get(primary_key, relation.get(fallback_key))
+def _relation_ref(relation: dict[str, Any], allowed_keys: tuple[str, ...], display_key: str, index: int) -> str:
+    value = None
+    for key in allowed_keys:
+        if key in relation:
+            value = relation[key]
+            break
     if not isinstance(value, str) or not value.strip():
-        raise MindMapValidationError(f"Relation at index {index} is missing {primary_key}.")
+        raise MindMapValidationError(f"Relation at index {index} is missing {display_key}.")
     return value.strip()
 
 
-def _float_value(value: Any, message: str) -> float:
+def _confidence_value(value: Any, message: str) -> float:
+    if isinstance(value, bool):
+        raise MindMapValidationError(message)
     try:
-        return float(value)
+        confidence = float(value)
     except (TypeError, ValueError) as exc:
         raise MindMapValidationError(message) from exc
+    if not math.isfinite(confidence) or confidence < 0 or confidence > 1:
+        raise MindMapValidationError(message)
+    return confidence
+
+
+def _module_mind_map_status(note_groups: list[NoteGroup], has_graph_nodes: bool) -> str:
+    if has_graph_nodes or any(note_group.mind_map_status == "complete" for note_group in note_groups):
+        return "complete"
+    for status in ("generating", "queued", "failed"):
+        if any(note_group.mind_map_status == status for note_group in note_groups):
+            return status
+    return "not_generated"
 
 
 def _canonical_ref(ref: str, temp_to_canonical: dict[str, str]) -> str:

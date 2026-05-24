@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 from app.db import Base
 from app.mind_map import (
     MindMapValidationError,
+    build_module_mind_map_response,
     build_note_group_mind_map_response,
     regenerate_note_group_mind_map,
     slugify_concept_title,
@@ -252,6 +253,115 @@ class MindMapServiceTests(unittest.TestCase):
         with self.assertRaises(MindMapValidationError):
             validate_candidate_graph(payload, {"study-card-1"}, set())
 
+    def test_validate_candidate_graph_rejects_generic_relation_endpoint_keys(self):
+        payload = {
+            "concepts": [
+                {
+                    "temp_id": "candidate-1",
+                    "title": "Row-Level Security",
+                    "summary": "Restricts rows by policy.",
+                    "concept_type": "term",
+                    "importance": "core",
+                },
+                {
+                    "temp_id": "candidate-2",
+                    "title": "Security Policies",
+                    "summary": "Define row access rules.",
+                    "concept_type": "principle",
+                    "importance": "supporting",
+                },
+            ],
+            "relations": [
+                {
+                    "source": "candidate-1",
+                    "target": "candidate-2",
+                    "relation_type": "requires",
+                    "confidence": 0.9,
+                }
+            ],
+            "links": [
+                {
+                    "study_card_id": "study-card-1",
+                    "concept_id": "candidate-1",
+                    "role": "primary",
+                }
+            ],
+        }
+
+        with self.assertRaises(MindMapValidationError):
+            validate_candidate_graph(payload, {"study-card-1"}, set())
+
+    def test_validate_candidate_graph_rejects_invalid_relation_confidence_values(self):
+        for confidence in [float("nan"), float("inf"), 2.0, True]:
+            with self.subTest(confidence=confidence):
+                payload = {
+                    "concepts": [
+                        {
+                            "temp_id": "candidate-1",
+                            "title": "Row-Level Security",
+                            "summary": "Restricts rows by policy.",
+                            "concept_type": "term",
+                            "importance": "core",
+                        },
+                        {
+                            "temp_id": "candidate-2",
+                            "title": "Security Policies",
+                            "summary": "Define row access rules.",
+                            "concept_type": "principle",
+                            "importance": "supporting",
+                        },
+                    ],
+                    "relations": [
+                        {
+                            "source_concept_id": "candidate-1",
+                            "target_concept_id": "candidate-2",
+                            "relation_type": "requires",
+                            "confidence": confidence,
+                        }
+                    ],
+                    "links": [
+                        {
+                            "study_card_id": "study-card-1",
+                            "concept_id": "candidate-1",
+                            "role": "primary",
+                        }
+                    ],
+                }
+
+                with self.assertRaises(MindMapValidationError):
+                    validate_candidate_graph(payload, {"study-card-1"}, set())
+
+    def test_validate_candidate_graph_rejects_duplicate_normalized_candidate_slugs(self):
+        payload = {
+            "concepts": [
+                {
+                    "temp_id": "candidate-1",
+                    "title": "Row Level Security",
+                    "summary": "Restricts rows by policy.",
+                    "concept_type": "term",
+                    "importance": "core",
+                },
+                {
+                    "temp_id": "candidate-2",
+                    "title": "row-level security",
+                    "summary": "Also describes row security.",
+                    "concept_type": "term",
+                    "importance": "supporting",
+                },
+            ],
+            "relations": [],
+            "links": [
+                {
+                    "study_card_id": "study-card-1",
+                    "concept_id": "candidate-1",
+                    "role": "primary",
+                }
+            ],
+        }
+
+        with self.assertRaises(MindMapValidationError):
+            validate_candidate_graph(payload, {"study-card-1"}, set())
+
     def test_regenerate_note_group_mind_map_replaces_target_graph_and_preserves_other_group(self):
         db = self.SessionLocal()
         try:
@@ -333,6 +443,69 @@ class MindMapServiceTests(unittest.TestCase):
             self.assertEqual(other_links[0].concept_id, "concept-other")
             self.assertNotIn("relation-old-target", relation_ids)
             self.assertIn("relation-other", relation_ids)
+        finally:
+            db.close()
+
+    def test_build_module_mind_map_response_is_complete_when_one_note_group_has_graph_data(self):
+        db = self.SessionLocal()
+        try:
+            owner = self._owner()
+            subject = Subject(id="subject-1", title="Subject", owner_user_id="owner-1")
+            module = Module(id="module-1", subject_id="subject-1", title="Module")
+            generated_group = NoteGroup(
+                id="note-group-1",
+                module_id="module-1",
+                title="Generated",
+                raw_text="generated",
+                mind_map_status="complete",
+                mind_map_generated_at=datetime.utcnow(),
+            )
+            empty_group = NoteGroup(
+                id="note-group-2",
+                module_id="module-1",
+                title="Empty",
+                raw_text="empty",
+            )
+            study_card = StudyCard(
+                id="study-card-1",
+                note_group_id="note-group-1",
+                title="RLS",
+                content="Row-level security content",
+            )
+            concept = MindMapConcept(
+                id="concept-1",
+                module_id="module-1",
+                slug="row_level_security",
+                title="Row-Level Security",
+                summary="Restricts rows.",
+                concept_type="term",
+                importance="core",
+            )
+            db.add_all([owner, subject, module, generated_group, empty_group, study_card, concept])
+            db.commit()
+            db.add_all(
+                [
+                    NoteGroupMindMapConcept(
+                        module_id="module-1",
+                        note_group_id="note-group-1",
+                        concept_id="concept-1",
+                    ),
+                    StudyCardMindMapConcept(
+                        module_id="module-1",
+                        note_group_id="note-group-1",
+                        study_card_id="study-card-1",
+                        concept_id="concept-1",
+                        role="primary",
+                    ),
+                ]
+            )
+            db.commit()
+
+            response = build_module_mind_map_response(db, "module-1")
+
+            self.assertEqual(response.status, "complete")
+            self.assertEqual([node.id for node in response.nodes], ["concept-1"])
+            self.assertEqual([card.id for card in response.study_cards], ["study-card-1"])
         finally:
             db.close()
 
