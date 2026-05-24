@@ -396,6 +396,9 @@ class NoteGroupShortCode(Base):
 
 class StudyCard(Base):
     __tablename__ = "study_cards"
+    __table_args__ = (
+        UniqueConstraint("note_group_id", "id", name="uq_study_cards_note_group_id_id"),
+    )
 
     id = Column(String, primary_key=True, default=_uuid)
     note_group_id = Column(String, ForeignKey("note_groups.id"), nullable=False)
@@ -566,12 +569,37 @@ class MindMapRelation(Base):
 class StudyCardMindMapConcept(Base):
     __tablename__ = "study_card_mind_map_concepts"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["module_id", "concept_id"],
+            ["mind_map_concepts.module_id", "mind_map_concepts.id"],
+            ondelete="CASCADE",
+            name="fk_study_card_mind_map_concepts_concept_module",
+        ),
+        ForeignKeyConstraint(
+            ["module_id", "note_group_id"],
+            ["note_groups.module_id", "note_groups.id"],
+            ondelete="CASCADE",
+            name="fk_study_card_mind_map_concepts_note_group_module",
+        ),
+        ForeignKeyConstraint(
+            ["note_group_id", "study_card_id"],
+            ["study_cards.note_group_id", "study_cards.id"],
+            ondelete="CASCADE",
+            name="fk_study_card_mind_map_concepts_study_card_note_group",
+        ),
         CheckConstraint(_check_values("role", MIND_MAP_STUDY_CARD_ROLES), name="ck_study_card_mind_map_concepts_role"),
         Index("ix_study_card_mind_map_concepts_concept_id", "concept_id"),
+        Index("ix_study_card_mind_map_concepts_module_id", "module_id"),
+        Index("ix_study_card_mind_map_concepts_note_group_id", "note_group_id"),
+        Index("ix_study_card_mind_map_concepts_module_concept_id", "module_id", "concept_id"),
+        Index("ix_study_card_mind_map_concepts_module_note_group_id", "module_id", "note_group_id"),
+        Index("ix_study_card_mind_map_concepts_note_group_study_card_id", "note_group_id", "study_card_id"),
     )
 
-    study_card_id = Column(String, ForeignKey("study_cards.id", ondelete="CASCADE"), primary_key=True)
-    concept_id = Column(String, ForeignKey("mind_map_concepts.id", ondelete="CASCADE"), primary_key=True)
+    study_card_id = Column(String, primary_key=True)
+    concept_id = Column(String, primary_key=True)
+    module_id = Column(String, nullable=False)
+    note_group_id = Column(String, nullable=False)
     role = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -582,11 +610,27 @@ class StudyCardMindMapConcept(Base):
 class NoteGroupMindMapConcept(Base):
     __tablename__ = "note_group_mind_map_concepts"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["module_id", "note_group_id"],
+            ["note_groups.module_id", "note_groups.id"],
+            ondelete="CASCADE",
+            name="fk_note_group_mind_map_concepts_note_group_module",
+        ),
+        ForeignKeyConstraint(
+            ["module_id", "concept_id"],
+            ["mind_map_concepts.module_id", "mind_map_concepts.id"],
+            ondelete="CASCADE",
+            name="fk_note_group_mind_map_concepts_concept_module",
+        ),
         Index("ix_note_group_mind_map_concepts_concept_id", "concept_id"),
+        Index("ix_note_group_mind_map_concepts_module_id", "module_id"),
+        Index("ix_note_group_mind_map_concepts_module_note_group_id", "module_id", "note_group_id"),
+        Index("ix_note_group_mind_map_concepts_module_concept_id", "module_id", "concept_id"),
     )
 
-    note_group_id = Column(String, ForeignKey("note_groups.id", ondelete="CASCADE"), primary_key=True)
-    concept_id = Column(String, ForeignKey("mind_map_concepts.id", ondelete="CASCADE"), primary_key=True)
+    note_group_id = Column(String, primary_key=True)
+    concept_id = Column(String, primary_key=True)
+    module_id = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

@@ -6,6 +6,9 @@ alter table public.note_groups
 alter table public.note_groups
   add constraint uq_note_groups_module_id_id unique (module_id, id);
 
+alter table public.study_cards
+  add constraint uq_study_cards_note_group_id_id unique (note_group_id, id);
+
 create table if not exists public.mind_map_concepts (
   id varchar not null,
   module_id varchar not null,
@@ -52,21 +55,25 @@ create table if not exists public.mind_map_relations (
 create table if not exists public.study_card_mind_map_concepts (
   study_card_id varchar not null,
   concept_id varchar not null,
+  module_id varchar not null,
+  note_group_id varchar not null,
   role varchar not null,
   created_at timestamp without time zone,
   primary key (study_card_id, concept_id),
   constraint ck_study_card_mind_map_concepts_role check (role in ('primary', 'supporting')),
-  foreign key(study_card_id) references public.study_cards (id) on delete cascade,
-  foreign key(concept_id) references public.mind_map_concepts (id) on delete cascade
+  constraint fk_study_card_mind_map_concepts_concept_module foreign key(module_id, concept_id) references public.mind_map_concepts (module_id, id) on delete cascade,
+  constraint fk_study_card_mind_map_concepts_note_group_module foreign key(module_id, note_group_id) references public.note_groups (module_id, id) on delete cascade,
+  constraint fk_study_card_mind_map_concepts_study_card_note_group foreign key(note_group_id, study_card_id) references public.study_cards (note_group_id, id) on delete cascade
 );
 
 create table if not exists public.note_group_mind_map_concepts (
   note_group_id varchar not null,
   concept_id varchar not null,
+  module_id varchar not null,
   created_at timestamp without time zone,
   primary key (note_group_id, concept_id),
-  foreign key(note_group_id) references public.note_groups (id) on delete cascade,
-  foreign key(concept_id) references public.mind_map_concepts (id) on delete cascade
+  constraint fk_note_group_mind_map_concepts_note_group_module foreign key(module_id, note_group_id) references public.note_groups (module_id, id) on delete cascade,
+  constraint fk_note_group_mind_map_concepts_concept_module foreign key(module_id, concept_id) references public.mind_map_concepts (module_id, id) on delete cascade
 );
 
 create index if not exists ix_mind_map_concepts_module_id on public.mind_map_concepts (module_id);
@@ -78,7 +85,15 @@ create index if not exists ix_mind_map_relations_module_source_concept_id on pub
 create index if not exists ix_mind_map_relations_module_target_concept_id on public.mind_map_relations (module_id, target_concept_id);
 create index if not exists ix_mind_map_relations_module_source_note_group_id on public.mind_map_relations (module_id, source_note_group_id);
 create index if not exists ix_study_card_mind_map_concepts_concept_id on public.study_card_mind_map_concepts (concept_id);
+create index if not exists ix_study_card_mind_map_concepts_module_id on public.study_card_mind_map_concepts (module_id);
+create index if not exists ix_study_card_mind_map_concepts_note_group_id on public.study_card_mind_map_concepts (note_group_id);
+create index if not exists ix_study_card_mind_map_concepts_module_concept_id on public.study_card_mind_map_concepts (module_id, concept_id);
+create index if not exists ix_study_card_mind_map_concepts_module_note_group_id on public.study_card_mind_map_concepts (module_id, note_group_id);
+create index if not exists ix_study_card_mind_map_concepts_note_group_study_card_id on public.study_card_mind_map_concepts (note_group_id, study_card_id);
 create index if not exists ix_note_group_mind_map_concepts_concept_id on public.note_group_mind_map_concepts (concept_id);
+create index if not exists ix_note_group_mind_map_concepts_module_id on public.note_group_mind_map_concepts (module_id);
+create index if not exists ix_note_group_mind_map_concepts_module_note_group_id on public.note_group_mind_map_concepts (module_id, note_group_id);
+create index if not exists ix_note_group_mind_map_concepts_module_concept_id on public.note_group_mind_map_concepts (module_id, concept_id);
 
 alter table public.mind_map_concepts disable row level security;
 alter table public.mind_map_relations disable row level security;

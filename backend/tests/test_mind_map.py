@@ -108,11 +108,14 @@ class MindMapModelTests(unittest.TestCase):
             link = StudyCardMindMapConcept(
                 study_card_id="study-card-1",
                 concept_id="concept-1",
+                module_id="module-1",
+                note_group_id="note-group-1",
                 role="primary",
             )
             note_group_link = NoteGroupMindMapConcept(
                 note_group_id="note-group-1",
                 concept_id="concept-1",
+                module_id="module-1",
             )
             relation = MindMapRelation(
                 id="relation-1",
@@ -235,6 +238,8 @@ class MindMapModelTests(unittest.TestCase):
                 StudyCardMindMapConcept(
                     study_card_id="study-card-1",
                     concept_id="concept-1",
+                    module_id="module-1",
+                    note_group_id="note-group-1",
                     role="main",
                 ),
             ]
@@ -356,6 +361,75 @@ class MindMapModelTests(unittest.TestCase):
             )
 
             db.add(relation)
+            with self.assertRaises(IntegrityError):
+                db.commit()
+            db.rollback()
+        finally:
+            db.close()
+
+    def test_study_card_concept_link_rejects_concept_from_other_module_locally(self):
+        db = self.SessionLocal()
+        try:
+            owner = self._owner()
+            subject = Subject(id="subject-1", title="Subject", owner_user_id="owner-1")
+            source_module = Module(id="module-1", subject_id="subject-1", title="Source Module")
+            other_module = Module(id="module-2", subject_id="subject-1", title="Other Module")
+            note_group = NoteGroup(id="note-group-1", module_id="module-1", raw_text="raw")
+            card = StudyCard(id="study-card-1", note_group_id="note-group-1", content="Card content")
+            other_concept = MindMapConcept(
+                id="concept-1",
+                module_id="module-2",
+                slug="other_concept",
+                title="Other Concept",
+                summary="Other concept summary.",
+                concept_type="topic",
+                importance="core",
+            )
+            db.add_all([owner, subject, source_module, other_module, note_group, card, other_concept])
+            db.commit()
+
+            link = StudyCardMindMapConcept(
+                study_card_id="study-card-1",
+                concept_id="concept-1",
+                module_id="module-1",
+                note_group_id="note-group-1",
+                role="primary",
+            )
+
+            db.add(link)
+            with self.assertRaises(IntegrityError):
+                db.commit()
+            db.rollback()
+        finally:
+            db.close()
+
+    def test_note_group_concept_link_rejects_concept_from_other_module_locally(self):
+        db = self.SessionLocal()
+        try:
+            owner = self._owner()
+            subject = Subject(id="subject-1", title="Subject", owner_user_id="owner-1")
+            source_module = Module(id="module-1", subject_id="subject-1", title="Source Module")
+            other_module = Module(id="module-2", subject_id="subject-1", title="Other Module")
+            note_group = NoteGroup(id="note-group-1", module_id="module-1", raw_text="raw")
+            other_concept = MindMapConcept(
+                id="concept-1",
+                module_id="module-2",
+                slug="other_concept",
+                title="Other Concept",
+                summary="Other concept summary.",
+                concept_type="topic",
+                importance="core",
+            )
+            db.add_all([owner, subject, source_module, other_module, note_group, other_concept])
+            db.commit()
+
+            link = NoteGroupMindMapConcept(
+                note_group_id="note-group-1",
+                concept_id="concept-1",
+                module_id="module-1",
+            )
+
+            db.add(link)
             with self.assertRaises(IntegrityError):
                 db.commit()
             db.rollback()
