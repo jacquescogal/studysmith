@@ -263,15 +263,37 @@ def regenerate_note_group_mind_map(db: Session, note_group_id: str, candidate_pa
 
     db.flush()
 
+    final_links: dict[tuple[str, str], dict[str, str]] = {}
+    final_links_by_study_card_id: dict[str, list[dict[str, str]]] = {
+        study_card_id: [] for study_card_id in study_card_ids
+    }
     for link in validated["links"]:
         concept = resolved_concepts[link["concept_id"]]
         graph_concept_ids.add(concept.id)
+        dedupe_key = (link["study_card_id"], concept.id)
+        final_link = final_links.get(dedupe_key)
+        if final_link is None:
+            final_link = {
+                "study_card_id": link["study_card_id"],
+                "concept_id": concept.id,
+                "role": link["role"],
+            }
+            final_links[dedupe_key] = final_link
+            final_links_by_study_card_id[link["study_card_id"]].append(final_link)
+        elif link["role"] == "primary":
+            final_link["role"] = "primary"
+
+    for card_links in final_links_by_study_card_id.values():
+        if card_links and not any(link["role"] == "primary" for link in card_links):
+            card_links[0]["role"] = "primary"
+
+    for link in final_links.values():
         db.add(
             StudyCardMindMapConcept(
                 module_id=note_group.module_id,
                 note_group_id=note_group_id,
                 study_card_id=link["study_card_id"],
-                concept_id=concept.id,
+                concept_id=link["concept_id"],
                 role=link["role"],
             )
         )
