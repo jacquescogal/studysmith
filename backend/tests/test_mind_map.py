@@ -2154,6 +2154,40 @@ class MindMapRouteTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_generation_integrity_conflict_exhaustion_returns_controlled_error(self):
+        import app.db as db_module
+
+        with patch.object(db_module, "engine", self.engine):
+            from app.main import generate_note_group_mind_map
+
+        db = self.SessionLocal()
+        try:
+            self.seed_graph_scope(db)
+            owner = db.get(User, "owner-1")
+            failed_job = Job(
+                id="job-failed",
+                type=JOB_TYPE_MIND_MAP_GENERATION,
+                status="failed",
+                note_group_id="note-a",
+                error="LLM failed",
+            )
+            db.add(failed_job)
+            db.commit()
+
+            def always_conflict():
+                raise IntegrityError("insert job", {}, RuntimeError("active job conflict"))
+
+            background_tasks = BackgroundTasks()
+
+            with patch.object(db, "commit", side_effect=always_conflict):
+                with self.assertRaises(HTTPException) as error:
+                    generate_note_group_mind_map("note-a", background_tasks, db, owner)
+
+            self.assertEqual(error.exception.status_code, 409)
+            self.assertEqual(background_tasks.tasks, [])
+        finally:
+            db.close()
+
     def test_stale_running_generation_job_is_failed_and_new_job_is_scheduled(self):
         db = self.SessionLocal()
         try:
