@@ -446,6 +446,90 @@ class MindMapServiceTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_regenerate_note_group_mind_map_dedupes_links_after_concept_resolution(self):
+        db = self.SessionLocal()
+        try:
+            owner = self._owner()
+            subject = Subject(id="subject-1", title="Subject", owner_user_id="owner-1")
+            module = Module(id="module-1", subject_id="subject-1", title="Module")
+            note_group = NoteGroup(id="note-group-1", module_id="module-1", title="Target", raw_text="target")
+            study_card = StudyCard(
+                id="study-card-1",
+                note_group_id="note-group-1",
+                title="RLS",
+                content="Row-level security content",
+            )
+            existing_concept = MindMapConcept(
+                id="concept-rls",
+                module_id="module-1",
+                slug="row_level_security",
+                title="Row Level Security",
+                summary="Restricts visible rows by policy.",
+                concept_type="term",
+                importance="core",
+            )
+            db.add_all([owner, subject, module, note_group, study_card, existing_concept])
+            db.commit()
+
+            payload = {
+                "concepts": [
+                    {
+                        "temp_id": "c1",
+                        "matched_existing_concept_id": "concept-rls",
+                        "title": "RLS Policy Enforcement",
+                        "summary": "Uses policies to filter rows.",
+                        "concept_type": "term",
+                        "importance": "core",
+                    },
+                    {
+                        "temp_id": "c2",
+                        "title": "Row Level Security",
+                        "summary": "Restricts rows for each user.",
+                        "concept_type": "term",
+                        "importance": "core",
+                    },
+                ],
+                "relations": [
+                    {
+                        "source_concept_id": "c1",
+                        "target_concept_id": "c2",
+                        "relation_type": "related_to",
+                        "confidence": 0.9,
+                    }
+                ],
+                "links": [
+                    {
+                        "study_card_id": "study-card-1",
+                        "concept_id": "c1",
+                        "role": "supporting",
+                    },
+                    {
+                        "study_card_id": "study-card-1",
+                        "concept_id": "c2",
+                        "role": "primary",
+                    },
+                ],
+            }
+
+            regenerate_note_group_mind_map(db, "note-group-1", payload)
+            db.commit()
+
+            links = (
+                db.query(StudyCardMindMapConcept)
+                .filter(
+                    StudyCardMindMapConcept.study_card_id == "study-card-1",
+                    StudyCardMindMapConcept.concept_id == "concept-rls",
+                )
+                .all()
+            )
+            relations = db.query(MindMapRelation).filter(MindMapRelation.source_note_group_id == "note-group-1").all()
+
+            self.assertEqual(len(links), 1)
+            self.assertEqual(links[0].role, "primary")
+            self.assertEqual(relations, [])
+        finally:
+            db.close()
+
     def test_build_module_mind_map_response_is_complete_when_one_note_group_has_graph_data(self):
         db = self.SessionLocal()
         try:
