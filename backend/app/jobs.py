@@ -430,9 +430,26 @@ def run_mind_map_generation(job_id: str) -> None:
                 "title": concept.title,
                 "summary": concept.summary,
                 "concept_type": concept.concept_type,
+                "knowledge_type": concept.knowledge_type,
                 "importance": concept.importance,
+                "topic_id": concept.topic_id,
             }
             for concept in existing_concepts
+        ]
+        existing_topics = (
+            db.query(TopicChip)
+            .filter(TopicChip.module_id == module.id)
+            .order_by(TopicChip.label.asc(), TopicChip.id.asc())
+            .all()
+        )
+        existing_topic_payloads = [
+            {
+                "topic_id": topic.id,
+                "title": topic.label,
+                "summary": topic.description or "",
+                "parent_topic_id": topic.parent_topic_id,
+            }
+            for topic in existing_topics
         ]
 
         candidate_payload = generate_mind_map_candidate_graph(
@@ -440,6 +457,7 @@ def run_mind_map_generation(job_id: str) -> None:
             note_group_title=note_group.title or "",
             study_cards=study_card_payloads,
             existing_concepts=existing_concept_payloads,
+            existing_topics=existing_topic_payloads,
         )
 
         db.expire_all()

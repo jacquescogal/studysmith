@@ -42,6 +42,7 @@ from app.models import (
     SUBJECT_ACCESS_READER,
     SUBJECT_VISIBILITY_PUBLIC,
     TopicChip,
+    note_group_topic_chips,
     User,
     study_card_topic_chips,
 )
@@ -704,6 +705,90 @@ class MindMapServiceTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_regenerate_note_group_mind_map_creates_topic_tree_and_knowledge_nodes(self):
+        db = self.SessionLocal()
+        try:
+            owner = self._owner()
+            subject = Subject(id="subject-1", title="Subject", owner_user_id="owner-1")
+            module = Module(id="module-1", subject_id="subject-1", title="Module")
+            note_group = NoteGroup(id="note-group-1", module_id="module-1", title="Auth", raw_text="target")
+            study_card = StudyCard(
+                id="study-card-1",
+                note_group_id="note-group-1",
+                title="Magic links",
+                content="Magic links are email sign-in links.",
+            )
+            db.add_all([owner, subject, module, note_group, study_card])
+            db.commit()
+
+            payload = {
+                "topics": [
+                    {
+                        "temp_id": "topic-auth",
+                        "title": "Authentication",
+                        "summary": "How users prove identity.",
+                    },
+                    {
+                        "temp_id": "topic-magic-links",
+                        "parent_topic_id": "topic-auth",
+                        "title": "Magic Links",
+                        "summary": "Passwordless email sign-in.",
+                    },
+                ],
+                "knowledge_nodes": [
+                    {
+                        "temp_id": "node-magic-link-definition",
+                        "topic_id": "topic-magic-links",
+                        "title": "Magic link definition",
+                        "summary": "A magic link is a passwordless sign-in link sent by email.",
+                        "knowledge_type": "definition",
+                        "importance": "core",
+                    }
+                ],
+                "relations": [],
+                "study_card_topic_links": [
+                    {
+                        "study_card_id": "study-card-1",
+                        "topic_id": "topic-magic-links",
+                        "role": "primary",
+                    }
+                ],
+                "study_card_knowledge_node_links": [
+                    {
+                        "study_card_id": "study-card-1",
+                        "knowledge_node_id": "node-magic-link-definition",
+                        "role": "primary",
+                    }
+                ],
+            }
+
+            regenerate_note_group_mind_map(db, "note-group-1", payload)
+            db.commit()
+
+            auth = db.query(TopicChip).filter(TopicChip.module_id == "module-1", TopicChip.label == "Authentication").one()
+            magic_links = (
+                db.query(TopicChip).filter(TopicChip.module_id == "module-1", TopicChip.label == "Magic Links").one()
+            )
+            knowledge_node = db.query(MindMapConcept).filter(MindMapConcept.module_id == "module-1").one()
+            study_topic_links = db.execute(study_card_topic_chips.select()).all()
+            note_group_topic_links = db.execute(note_group_topic_chips.select()).all()
+            knowledge_node_links = db.query(StudyCardMindMapConcept).all()
+
+            self.assertIsNone(auth.parent_topic_id)
+            self.assertEqual(magic_links.parent_topic_id, auth.id)
+            self.assertEqual(knowledge_node.topic_id, magic_links.id)
+            self.assertEqual(knowledge_node.knowledge_type, "definition")
+            self.assertIn(("study-card-1", magic_links.id), [(row.study_card_id, row.chip_id) for row in study_topic_links])
+            self.assertEqual(
+                {row.chip_id for row in note_group_topic_links},
+                {auth.id, magic_links.id},
+            )
+            self.assertEqual(len(knowledge_node_links), 1)
+            self.assertEqual(knowledge_node_links[0].concept_id, knowledge_node.id)
+            self.assertEqual(knowledge_node_links[0].role, "primary")
+        finally:
+            db.close()
+
     def test_build_module_mind_map_response_is_complete_when_one_note_group_has_graph_data(self):
         db = self.SessionLocal()
         try:
@@ -1233,11 +1318,18 @@ class MindMapServiceTests(unittest.TestCase):
 
 
 class MindMapOpenAIClientTests(unittest.TestCase):
-    def test_generate_mind_map_candidate_graph_returns_validator_ready_links(self):
-        legacy_links = [
+    def test_generate_mind_map_candidate_graph_requests_topic_tree_payload(self):
+        topic_links = [
             {
                 "study_card_id": "card-a",
-                "concept_id": "concept-a",
+                "topic_id": "topic-a",
+                "role": "primary",
+            }
+        ]
+        knowledge_node_links = [
+            {
+                "study_card_id": "card-a",
+                "knowledge_node_id": "node-a",
                 "role": "primary",
             }
         ]
@@ -1245,9 +1337,11 @@ class MindMapOpenAIClientTests(unittest.TestCase):
         with patch(
             "app.openai_client._strong_high_json",
             return_value={
-                "concepts": [],
+                "topics": [],
+                "knowledge_nodes": [],
                 "relations": [],
-                "study_card_concept_links": legacy_links,
+                "study_card_topic_links": topic_links,
+                "study_card_knowledge_node_links": knowledge_node_links,
             },
         ) as generate_json:
             payload = generate_mind_map_candidate_graph(
@@ -1255,19 +1349,23 @@ class MindMapOpenAIClientTests(unittest.TestCase):
                 note_group_title="Note A",
                 study_cards=[{"study_card_id": "card-a", "content": "Card content"}],
                 existing_concepts=[],
+                existing_topics=[],
             )
 
         self.assertEqual(
             payload,
             {
-                "concepts": [],
+                "topics": [],
+                "knowledge_nodes": [],
                 "relations": [],
-                "links": legacy_links,
+                "study_card_topic_links": topic_links,
+                "study_card_knowledge_node_links": knowledge_node_links,
             },
         )
         user_prompt = generate_json.call_args.args[1]
-        self.assertIn("concepts, relations, links", user_prompt)
-        self.assertNotIn("study_card_concept_links", user_prompt)
+        self.assertIn("topics, knowledge_nodes, relations, study_card_topic_links, study_card_knowledge_node_links", user_prompt)
+        self.assertIn("Allowed knowledge_type values", user_prompt)
+        self.assertNotIn("concepts, relations, links", user_prompt)
 
 
 class MindMapJobTests(unittest.TestCase):
