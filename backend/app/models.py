@@ -733,12 +733,24 @@ class TopicChip(Base):
 
     id = Column(String, primary_key=True, default=_uuid)
     module_id = Column(String, ForeignKey("modules.id"), nullable=False)
+    parent_topic_id = Column(String, ForeignKey("topic_chips.id", ondelete="SET NULL"), nullable=True, index=True)
     label = Column(String, nullable=False)
     description = Column(Text, nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     module = relationship("Module", back_populates="topic_chips")
+    parent_topic = relationship(
+        "TopicChip",
+        remote_side=[id],
+        back_populates="child_topics",
+    )
+    child_topics = relationship(
+        "TopicChip",
+        back_populates="parent_topic",
+        order_by="TopicChip.sort_order.asc(), TopicChip.label.asc(), TopicChip.id.asc()",
+    )
     short_code_record = relationship(
         "TopicChipShortCode",
         back_populates="topic_chip",

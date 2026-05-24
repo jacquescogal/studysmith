@@ -95,6 +95,30 @@ class MindMapModelTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_topic_chip_supports_single_parent_lineage(self):
+        db = self.SessionLocal()
+        try:
+            owner = self._owner()
+            subject = Subject(id="subject-1", title="Subject", owner_user_id="owner-1")
+            module = Module(id="module-1", subject_id="subject-1", title="Module")
+            parent = TopicChip(id="topic-parent", module_id="module-1", label="Authentication")
+            child = TopicChip(
+                id="topic-child",
+                module_id="module-1",
+                label="Magic Links",
+                parent_topic_id="topic-parent",
+            )
+            db.add_all([owner, subject, module, parent, child])
+            db.commit()
+
+            stored = db.get(TopicChip, "topic-child")
+
+            self.assertEqual(stored.parent_topic_id, "topic-parent")
+            self.assertEqual(stored.parent_topic.label, "Authentication")
+            self.assertEqual([topic.id for topic in parent.child_topics], ["topic-child"])
+        finally:
+            db.close()
+
 
 class MindMapServiceTests(unittest.TestCase):
     def setUp(self):
