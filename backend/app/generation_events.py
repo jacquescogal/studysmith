@@ -1,0 +1,111 @@
+import asyncio
+import logging
+import threading
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, AsyncIterator
+
+from sqlalchemy import event
+from sqlalchemy.orm import Session
+
+from app.models import Job
+
+logger = logging.getLogger(__name__)
+
+_PENDING_EVENTS_KEY = "generation_events_pending"
+_LISTENERS_INSTALLED_KEY = "generation_events_listeners_installed"
+
+
+@dataclass(frozen=True)
+class GenerationEvent:
+    module_id: str
+    event: str
+    payload: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _Subscriber:
+    loop: asyncio.AbstractEventLoop
+    queue: asyncio.Queue[GenerationEvent]
+
+
+class GenerationEventBus:
+    def __init__(self) -> None:
+        self._subscribers: dict[str, set[_Subscriber]] = {}
+        self._lock = threading.RLock()
+
+    async def subscribe(self, module_id: str) -> AsyncIterator[GenerationEvent]:
+        loop = asyncio.get_running_loop()
+        subscriber = _Subscriber(loop=loop, queue=asyncio.Queue())
+        with self._lock:
+            self._subscribers.setdefault(module_id, set()).add(subscriber)
+        try:
+            while True:
+                yield await subscriber.queue.get()
+        finally:
+            with self._lock:
+                subscribers = self._subscribers.get(module_id)
+                if subscribers is None:
+                    return
+                subscribers.discard(subscriber)
+                if not subscribers:
+                    self._subscribers.pop(module_id, None)
+
+    def publish(self, event: GenerationEvent) -> None:
+        with self._lock:
+            subscribers = list(self._subscribers.get(event.module_id, set()))
+        for subscriber in subscribers:
+            if subscriber.loop.is_closed():
+                continue
+            subscriber.loop.call_soon_threadsafe(subscriber.queue.put_nowait, event)
+
+
+generation_event_bus = GenerationEventBus()
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    return value
+
+
+def _publish_pending_generation_events(session: Session) -> None:
+    pending_events = session.info.pop(_PENDING_EVENTS_KEY, [])
+    for queued_event in pending_events:
+        generation_event_bus.publish(queued_event)
+
+
+def _clear_pending_generation_events(session: Session) -> None:
+    session.info.pop(_PENDING_EVENTS_KEY, None)
+
+
+def _ensure_session_event_listeners(db: Session) -> None:
+    if db.info.get(_LISTENERS_INSTALLED_KEY):
+        return
+    event.listen(db, "after_commit", _publish_pending_generation_events)
+    event.listen(db, "after_rollback", _clear_pending_generation_events)
+    db.info[_LISTENERS_INSTALLED_KEY] = True
+
+
+def publish_generation_event(db: Session, job: Job, event_type: str) -> None:
+    try:
+        note_group = job.note_group
+        if note_group is None or not note_group.module_id:
+            return
+        from app.generation_workflow import serialize_generation_workflow
+
+        payload = _json_safe(serialize_generation_workflow(db, job))
+        db.info.setdefault(_PENDING_EVENTS_KEY, []).append(
+            GenerationEvent(
+                module_id=note_group.module_id,
+                event=event_type,
+                payload=payload,
+            )
+        )
+        _ensure_session_event_listeners(db)
+    except Exception:
+        logger.exception("Failed to queue generation workflow event")
