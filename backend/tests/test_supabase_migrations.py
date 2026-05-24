@@ -96,3 +96,14 @@ def test_topic_knowledge_node_review_migration_adds_review_status():
     assert "constraint ck_topic_chips_knowledge_node_status" in sql
     assert "check (knowledge_node_status in ('not_generated', 'complete', 'needs_review'))" in sql
     assert "ix_topic_chips_module_knowledge_node_status" in sql
+
+
+def test_note_group_delete_reference_migration_preserves_jobs_and_removes_reviews():
+    sql = _migration_sql().lower()
+
+    assert "constraint jobs_note_group_id_fkey" in sql
+    assert "references public.note_groups (id) on delete set null" in sql
+    assert "constraint question_card_reviews_question_card_id_fkey" in sql
+    assert "references public.question_cards (id) on delete cascade" in sql
+    assert "constraint question_card_reviews_note_group_id_fkey" in sql
+    assert "references public.note_groups (id) on delete cascade" in sql

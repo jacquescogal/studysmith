@@ -601,11 +601,15 @@ def _delete_note_groups(db: Session, note_group_ids: list[str]) -> list[str]:
     jobs = db.query(Job).filter(Job.note_group_id.in_(note_group_ids)).all()
     for job in jobs:
         if job.status in {"completed", "failed", "cancelled"}:
+            job.note_group_id = None
             continue
         if job.type == JOB_TYPE_NOTE_GROUP_AUTO_GENERATION:
             remove_auto_job(job.id)
         job.status = "cancelled"
         job.error = "Note group deleted"
+        job.note_group_id = None
+    if jobs:
+        db.flush()
 
     study_card_rows = (
         db.query(StudyCard.id)
@@ -632,6 +636,9 @@ def _delete_note_groups(db: Session, note_group_ids: list[str]) -> list[str]:
     )
     db.query(NoteGroupShortCode).filter(
         NoteGroupShortCode.note_group_id.in_(note_group_ids)
+    ).delete(synchronize_session=False)
+    db.query(QuestionCardReviewEvent).filter(
+        QuestionCardReviewEvent.note_group_id.in_(note_group_ids)
     ).delete(synchronize_session=False)
     db.query(QuestionCard).filter(
         QuestionCard.note_group_id.in_(note_group_ids)
