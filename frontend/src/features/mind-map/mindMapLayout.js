@@ -78,7 +78,15 @@ function hasTopicTreeNodes(graph) {
   return graph.nodes.some((node) => node.node_type === "topic" || node.node_type === "knowledge_node");
 }
 
-export function buildMindMapElements(graph, { title = "Mind Map" } = {}) {
+export function buildMindMapElements(
+  graph,
+  {
+    title = "Mind Map",
+    canRegenerateTopicKnowledgeNodes = false,
+    onRegenerateTopicKnowledgeNodes,
+    regeneratingTopicId = ""
+  } = {}
+) {
   if (emptyGraph(graph)) {
     return { nodes: [], edges: [] };
   }
@@ -118,13 +126,17 @@ export function buildMindMapElements(graph, { title = "Mind Map" } = {}) {
         type: "mindMapNode",
         position: { x: 0, y: 0 },
         data: {
+          id: item.id,
           title: compactTitle(item.title, isTopic ? "Untitled Topic" : "Untitled Knowledge Node"),
           summary: item.summary || "",
           nodeType: isTopic ? "topic" : isKnowledgeNode ? "knowledge_node" : "concept",
           importance: item.importance || (isKnowledgeNode ? "supporting" : undefined),
           badges: isTopic ? topicBadges(item) : knowledgeNodeBadges(item),
           studyCardIds: item.study_card_ids || [],
-          noteGroupIds: item.note_group_ids || []
+          noteGroupIds: item.note_group_ids || [],
+          canRegenerateKnowledgeNodes: Boolean(isTopic && canRegenerateTopicKnowledgeNodes),
+          onRegenerateKnowledgeNodes: isTopic ? onRegenerateTopicKnowledgeNodes : undefined,
+          regeneratingKnowledgeNodes: Boolean(isTopic && regeneratingTopicId === item.id)
         },
         width: NODE_WIDTH,
         height: isTopic ? ROOT_NODE_HEIGHT : NODE_HEIGHT

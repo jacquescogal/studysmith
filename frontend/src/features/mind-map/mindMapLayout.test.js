@@ -178,4 +178,44 @@ describe("buildMindMapElements", () => {
       ["topic-magic-links", "node-definition"]
     ]);
   });
+
+  test("adds selected-topic regeneration actions only to topic nodes when enabled", () => {
+    const graph = {
+      scope: "module",
+      module_id: "module-1",
+      note_groups: [],
+      nodes: [
+        {
+          id: "topic-auth",
+          node_type: "topic",
+          title: "Authentication"
+        },
+        {
+          id: "node-definition",
+          node_type: "knowledge_node",
+          title: "Authentication definition",
+          parent_topic_id: "topic-auth",
+          knowledge_type: "definition",
+          importance: "core"
+        }
+      ],
+      edges: []
+    };
+    const regenerate = () => {};
+
+    const { nodes } = buildMindMapElements(graph, {
+      title: "Supabase Auth",
+      canRegenerateTopicKnowledgeNodes: true,
+      onRegenerateTopicKnowledgeNodes: regenerate,
+      regeneratingTopicId: "topic-auth"
+    });
+
+    const topicNode = nodes.find((node) => node.id === "topic-auth");
+    const knowledgeNode = nodes.find((node) => node.id === "node-definition");
+
+    expect(topicNode.data.canRegenerateKnowledgeNodes).toBe(true);
+    expect(topicNode.data.onRegenerateKnowledgeNodes).toBe(regenerate);
+    expect(topicNode.data.regeneratingKnowledgeNodes).toBe(true);
+    expect(knowledgeNode.data.canRegenerateKnowledgeNodes).toBe(false);
+  });
 });
