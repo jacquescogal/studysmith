@@ -307,6 +307,9 @@ class ModuleShortCode(Base):
 
 class NoteGroup(Base):
     __tablename__ = "note_groups"
+    __table_args__ = (
+        UniqueConstraint("module_id", "id", name="uq_note_groups_module_id_id"),
+    )
 
     id = Column(String, primary_key=True, default=_uuid)
     module_id = Column(String, ForeignKey("modules.id"), nullable=False)
@@ -520,6 +523,12 @@ class MindMapRelation(Base):
             ondelete="CASCADE",
             name="fk_mind_map_relations_target_concept_module",
         ),
+        ForeignKeyConstraint(
+            ["module_id", "source_note_group_id"],
+            ["note_groups.module_id", "note_groups.id"],
+            ondelete="CASCADE",
+            name="fk_mind_map_relations_source_note_group_module",
+        ),
         UniqueConstraint(
             "module_id",
             "source_concept_id",
@@ -534,6 +543,7 @@ class MindMapRelation(Base):
         Index("ix_mind_map_relations_target_concept_id", "target_concept_id"),
         Index("ix_mind_map_relations_module_source_concept_id", "module_id", "source_concept_id"),
         Index("ix_mind_map_relations_module_target_concept_id", "module_id", "target_concept_id"),
+        Index("ix_mind_map_relations_module_source_note_group_id", "module_id", "source_note_group_id"),
     )
 
     id = Column(String, primary_key=True, default=_uuid)
@@ -550,7 +560,7 @@ class MindMapRelation(Base):
     module = relationship("Module", back_populates="mind_map_relations")
     source_concept = relationship("MindMapConcept", foreign_keys=[source_concept_id], back_populates="outgoing_relations")
     target_concept = relationship("MindMapConcept", foreign_keys=[target_concept_id], back_populates="incoming_relations")
-    source_note_group = relationship("NoteGroup")
+    source_note_group = relationship("NoteGroup", foreign_keys=[source_note_group_id])
 
 
 class StudyCardMindMapConcept(Base):
