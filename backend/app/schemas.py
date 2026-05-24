@@ -180,7 +180,9 @@ class MindMapNodeOut(BaseModel):
     node_type: str
     title: str
     summary: Optional[str] = None
+    parent_topic_id: Optional[str] = None
     concept_type: Optional[str] = None
+    knowledge_type: Optional[str] = None
     importance: Optional[str] = None
     topic_ids: List[str] = []
     study_card_ids: List[str] = []

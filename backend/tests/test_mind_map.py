@@ -852,6 +852,81 @@ class MindMapServiceTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_build_module_mind_map_response_returns_topic_tree_and_knowledge_nodes(self):
+        db = self.SessionLocal()
+        try:
+            owner = self._owner()
+            subject = Subject(id="subject-1", title="Subject", owner_user_id="owner-1")
+            module = Module(id="module-1", subject_id="subject-1", title="Module")
+            note_group = NoteGroup(
+                id="note-group-1",
+                module_id="module-1",
+                title="Auth",
+                raw_text="target",
+                mind_map_status="complete",
+                mind_map_generated_at=datetime.utcnow(),
+            )
+            auth = TopicChip(id="topic-auth", module_id="module-1", label="Authentication")
+            magic_links = TopicChip(
+                id="topic-magic-links",
+                module_id="module-1",
+                label="Magic Links",
+                parent_topic_id="topic-auth",
+            )
+            study_card = StudyCard(
+                id="study-card-1",
+                note_group_id="note-group-1",
+                title="Magic links",
+                content="Magic links are email sign-in links.",
+            )
+            knowledge_node = MindMapConcept(
+                id="node-1",
+                module_id="module-1",
+                topic_id="topic-magic-links",
+                slug="magic_link_definition",
+                title="Magic link definition",
+                summary="A magic link is a passwordless sign-in link sent by email.",
+                concept_type="term",
+                knowledge_type="definition",
+                importance="core",
+            )
+            db.add_all([owner, subject, module, note_group, auth, magic_links, study_card, knowledge_node])
+            db.commit()
+            db.execute(note_group_topic_chips.insert().values(note_group_id="note-group-1", chip_id="topic-auth"))
+            db.execute(note_group_topic_chips.insert().values(note_group_id="note-group-1", chip_id="topic-magic-links"))
+            db.execute(study_card_topic_chips.insert().values(study_card_id="study-card-1", chip_id="topic-magic-links"))
+            db.add_all(
+                [
+                    NoteGroupMindMapConcept(
+                        module_id="module-1",
+                        note_group_id="note-group-1",
+                        concept_id="node-1",
+                    ),
+                    StudyCardMindMapConcept(
+                        module_id="module-1",
+                        note_group_id="note-group-1",
+                        study_card_id="study-card-1",
+                        concept_id="node-1",
+                        role="primary",
+                    ),
+                ]
+            )
+            db.commit()
+
+            response = build_module_mind_map_response(db, "module-1")
+            nodes_by_id = {node.id: node for node in response.nodes}
+
+            self.assertEqual(nodes_by_id["topic-auth"].node_type, "topic")
+            self.assertIsNone(nodes_by_id["topic-auth"].parent_topic_id)
+            self.assertEqual(nodes_by_id["topic-magic-links"].node_type, "topic")
+            self.assertEqual(nodes_by_id["topic-magic-links"].parent_topic_id, "topic-auth")
+            self.assertEqual(nodes_by_id["topic-magic-links"].study_card_ids, ["study-card-1"])
+            self.assertEqual(nodes_by_id["node-1"].node_type, "knowledge_node")
+            self.assertEqual(nodes_by_id["node-1"].parent_topic_id, "topic-magic-links")
+            self.assertEqual(nodes_by_id["node-1"].knowledge_type, "definition")
+        finally:
+            db.close()
+
     def test_build_note_group_mind_map_response_includes_question_cards_through_study_card_refs(self):
         db = self.SessionLocal()
         try:

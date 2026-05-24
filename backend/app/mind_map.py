@@ -800,6 +800,27 @@ def _build_mind_map_response(
             .all()
         )
 
+    topic_ids: set[str] = {concept.topic_id for concept in concepts if concept.topic_id}
+    note_group_ids_by_topic_id: dict[str, set[str]] = {}
+    if note_group_ids:
+        note_group_topic_rows = db.execute(
+            note_group_topic_chips.select()
+            .where(note_group_topic_chips.c.note_group_id.in_(note_group_ids))
+            .order_by(note_group_topic_chips.c.note_group_id.asc(), note_group_topic_chips.c.chip_id.asc())
+        ).all()
+        for row in note_group_topic_rows:
+            topic_ids.add(row.chip_id)
+            note_group_ids_by_topic_id.setdefault(row.chip_id, set()).add(row.note_group_id)
+
+    topics = []
+    if topic_ids:
+        topics = (
+            db.query(TopicChip)
+            .filter(TopicChip.module_id == module_id, TopicChip.id.in_(topic_ids))
+            .order_by(TopicChip.sort_order.asc(), TopicChip.label.asc(), TopicChip.id.asc())
+            .all()
+        )
+
     study_card_links = []
     if concept_ids:
         study_card_links = (
@@ -814,6 +835,25 @@ def _build_mind_map_response(
             study_card_links = [link for link in study_card_links if link.note_group_id in note_group_ids]
 
     study_card_ids = {link.study_card_id for link in study_card_links}
+    scoped_study_card_ids = set()
+    if note_group_ids:
+        scoped_study_card_ids = {
+            row[0]
+            for row in db.query(StudyCard.id)
+            .filter(StudyCard.note_group_id.in_(note_group_ids))
+            .all()
+        }
+    study_card_ids_by_topic_id: dict[str, set[str]] = {topic_id: set() for topic_id in topic_ids}
+    if scoped_study_card_ids and topic_ids:
+        topic_link_rows = db.execute(
+            study_card_topic_chips.select()
+            .where(study_card_topic_chips.c.study_card_id.in_(scoped_study_card_ids))
+            .where(study_card_topic_chips.c.chip_id.in_(topic_ids))
+            .order_by(study_card_topic_chips.c.chip_id.asc(), study_card_topic_chips.c.study_card_id.asc())
+        ).all()
+        for row in topic_link_rows:
+            study_card_ids.add(row.study_card_id)
+            study_card_ids_by_topic_id.setdefault(row.chip_id, set()).add(row.study_card_id)
     study_cards = []
     if study_card_ids:
         study_cards = (
@@ -877,6 +917,38 @@ def _build_mind_map_response(
 
     question_cards = _question_cards_for_study_cards(db, note_group_ids, study_card_ids)
     note_group_id = note_groups[0].id if scope == "note_group" and note_groups else None
+    topic_nodes = [
+        {
+            "id": topic.id,
+            "node_type": "topic",
+            "title": topic.label,
+            "summary": topic.description,
+            "parent_topic_id": topic.parent_topic_id,
+            "study_card_ids": sorted(study_card_ids_by_topic_id.get(topic.id, set())),
+            "note_group_ids": sorted(note_group_ids_by_topic_id.get(topic.id, set())),
+            "study_card_count": len(study_card_ids_by_topic_id.get(topic.id, set())),
+            "note_group_count": len(note_group_ids_by_topic_id.get(topic.id, set())),
+        }
+        for topic in topics
+    ]
+    concept_nodes = [
+        {
+            "id": concept.id,
+            "node_type": "knowledge_node" if concept.topic_id or concept.knowledge_type else "concept",
+            "title": concept.title,
+            "summary": concept.summary,
+            "parent_topic_id": concept.topic_id,
+            "concept_type": concept.concept_type,
+            "knowledge_type": concept.knowledge_type,
+            "importance": concept.importance,
+            "topic_ids": sorted(topic_ids_by_concept_id.get(concept.id, set())),
+            "study_card_ids": sorted(study_card_ids_by_concept_id.get(concept.id, set())),
+            "note_group_ids": sorted(note_group_ids_by_concept_id.get(concept.id, set())),
+            "study_card_count": len(study_card_ids_by_concept_id.get(concept.id, set())),
+            "note_group_count": len(note_group_ids_by_concept_id.get(concept.id, set())),
+        }
+        for concept in concepts
+    ]
     return MindMapResponse(
         scope=scope,
         module_id=module_id,
@@ -884,22 +956,7 @@ def _build_mind_map_response(
         status=status,
         stale=stale,
         generated_at=generated_at,
-        nodes=[
-            {
-                "id": concept.id,
-                "node_type": "concept",
-                "title": concept.title,
-                "summary": concept.summary,
-                "concept_type": concept.concept_type,
-                "importance": concept.importance,
-                "topic_ids": sorted(topic_ids_by_concept_id.get(concept.id, set())),
-                "study_card_ids": sorted(study_card_ids_by_concept_id.get(concept.id, set())),
-                "note_group_ids": sorted(note_group_ids_by_concept_id.get(concept.id, set())),
-                "study_card_count": len(study_card_ids_by_concept_id.get(concept.id, set())),
-                "note_group_count": len(note_group_ids_by_concept_id.get(concept.id, set())),
-            }
-            for concept in concepts
-        ],
+        nodes=[*topic_nodes, *concept_nodes],
         edges=edges,
         study_cards=[
             {
