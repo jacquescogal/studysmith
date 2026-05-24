@@ -1,4 +1,6 @@
 import unittest
+import threading
+import time
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
@@ -24,6 +26,7 @@ from app.mind_map import (
     mark_note_group_mind_map_stale,
     regenerate_note_group_mind_map,
     regenerate_topic_knowledge_nodes,
+    run_dependency_aware_topic_tasks,
     slugify_concept_title,
     validate_candidate_graph,
 )
@@ -1664,6 +1667,94 @@ class MindMapServiceTests(unittest.TestCase):
             db.close()
 
 
+class MindMapSchedulerTests(unittest.TestCase):
+    def test_dependency_scheduler_runs_parent_only_after_dependencies_complete(self):
+        run_order = []
+        dependencies = {
+            "topic-parent": {"topic-child-a", "topic-child-b"},
+            "topic-child-a": set(),
+            "topic-child-b": set(),
+        }
+
+        run_dependency_aware_topic_tasks(
+            topic_ids=set(dependencies),
+            dependencies_by_topic_id=dependencies,
+            run_topic=lambda topic_id: run_order.append(topic_id),
+            mark_needs_review=lambda topic_id, reason: None,
+            max_workers=2,
+        )
+
+        self.assertLess(run_order.index("topic-child-a"), run_order.index("topic-parent"))
+        self.assertLess(run_order.index("topic-child-b"), run_order.index("topic-parent"))
+
+    def test_dependency_scheduler_blocks_parent_when_child_fails(self):
+        run_order = []
+        review_reasons = {}
+        dependencies = {
+            "topic-parent": {"topic-child"},
+            "topic-child": set(),
+        }
+
+        def run_topic(topic_id: str) -> None:
+            run_order.append(topic_id)
+            if topic_id == "topic-child":
+                raise RuntimeError("LLM failed")
+
+        run_dependency_aware_topic_tasks(
+            topic_ids=set(dependencies),
+            dependencies_by_topic_id=dependencies,
+            run_topic=run_topic,
+            mark_needs_review=lambda topic_id, reason: review_reasons.setdefault(topic_id, reason),
+            max_workers=2,
+        )
+
+        self.assertEqual(run_order, ["topic-child"])
+        self.assertIn("failed", review_reasons["topic-child"].lower())
+        self.assertIn("child", review_reasons["topic-parent"].lower())
+
+    def test_dependency_scheduler_caps_concurrency(self):
+        current_running = 0
+        max_running = 0
+        lock = threading.Lock()
+        release = threading.Event()
+        entered = threading.Event()
+        entered_count = 0
+        dependencies = {f"topic-{index}": set() for index in range(6)}
+
+        def run_topic(topic_id: str) -> None:
+            nonlocal current_running, max_running, entered_count
+            with lock:
+                current_running += 1
+                entered_count += 1
+                max_running = max(max_running, current_running)
+                if entered_count == 5:
+                    entered.set()
+            entered.wait(timeout=1)
+            release.wait(timeout=1)
+            with lock:
+                current_running -= 1
+
+        worker = threading.Thread(
+            target=lambda: run_dependency_aware_topic_tasks(
+                topic_ids=set(dependencies),
+                dependencies_by_topic_id=dependencies,
+                run_topic=run_topic,
+                mark_needs_review=lambda topic_id, reason: None,
+                max_workers=5,
+            )
+        )
+        worker.start()
+        entered.wait(timeout=1)
+        time.sleep(0.05)
+        with lock:
+            observed_max_running = max_running
+        release.set()
+        worker.join(timeout=2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(observed_max_running, 5)
+
+
 class MindMapOpenAIClientTests(unittest.TestCase):
     def test_generate_mind_map_candidate_graph_splits_topic_tree_and_knowledge_node_calls(self):
         topic_links = [
@@ -2743,6 +2834,52 @@ class MindMapRouteTests(unittest.TestCase):
             self.assertEqual(len(links), 1)
         finally:
             db.close()
+
+    def test_owner_can_regenerate_needs_review_topics_for_note_group(self):
+        db = self.SessionLocal()
+        try:
+            self.seed_graph_scope(db)
+            owner = db.get(User, "owner-1")
+            topic = db.get(TopicChip, "topic-a")
+            topic.knowledge_node_status = "needs_review"
+            topic.knowledge_node_review_reason = "Missing definition Knowledge Node"
+            db.execute(note_group_topic_chips.insert().values(note_group_id="note-a", chip_id="topic-a"))
+            db.commit()
+        finally:
+            db.close()
+
+        client = self._client(user=owner)
+
+        with patch("app.main.reconcile_note_group_topic_knowledge_nodes") as reconcile:
+            response = client.post("/note-groups/note-a/mind-map/regenerate-needs-review")
+
+        self.assertEqual(response.status_code, 200)
+        reconcile.assert_called_once_with("note-a", only_needs_review=True)
+        topic_nodes = [node for node in response.json()["nodes"] if node["node_type"] == "topic"]
+        self.assertEqual(topic_nodes[0]["knowledge_node_status"], "needs_review")
+
+    def test_owner_can_regenerate_needs_review_topics_for_module(self):
+        db = self.SessionLocal()
+        try:
+            self.seed_graph_scope(db)
+            owner = db.get(User, "owner-1")
+            topic = db.get(TopicChip, "topic-a")
+            topic.knowledge_node_status = "needs_review"
+            topic.knowledge_node_review_reason = "Missing definition Knowledge Node"
+            db.execute(note_group_topic_chips.insert().values(note_group_id="note-a", chip_id="topic-a"))
+            db.commit()
+        finally:
+            db.close()
+
+        client = self._client(user=owner)
+
+        with patch("app.main.reconcile_note_group_topic_knowledge_nodes") as reconcile:
+            response = client.post("/modules/module-1/mind-map/regenerate-needs-review")
+
+        self.assertEqual(response.status_code, 200)
+        reconcile.assert_called_once_with("note-a", only_needs_review=True)
+        topic_nodes = [node for node in response.json()["nodes"] if node["node_type"] == "topic"]
+        self.assertEqual(topic_nodes[0]["knowledge_node_status"], "needs_review")
 
     def test_reader_cannot_regenerate_selected_topic_knowledge_nodes(self):
         db = self.SessionLocal()

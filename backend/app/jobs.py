@@ -6,6 +6,11 @@ from sqlalchemy.orm import Session, selectinload
 from app.db import SessionLocal
 from app.fsrs_utils import initialize_question_card
 from app.mind_map import regenerate_note_group_mind_map
+from app.mind_map import (
+    build_topic_knowledge_node_generation_context,
+    regenerate_topic_knowledge_nodes,
+    run_dependency_aware_topic_tasks,
+)
 
 from app.models import (
     Job,
@@ -22,10 +27,11 @@ from app.openai_client import (
     embed_texts,
     generate_cleaned_text_markdown,
     generate_formatted_sections,
-    generate_mind_map_candidate_graph,
+    generate_knowledge_node_candidates,
     generate_note_group_title_suggestions,
     generate_question_cards,
     generate_study_cards_with_context,
+    generate_topic_tree_candidate_graph,
 )
 from app.source_ranges import find_evidence_ranges
 from app.text_formatter import build_formatted_sections, sections_to_markdown
@@ -37,7 +43,30 @@ JOB_TYPE_NOTE_GROUP_AUTO_GENERATION = "NOTE_GROUP_AUTO_GENERATION"
 JOB_TYPE_MIND_MAP_GENERATION = "MIND_MAP_GENERATION"
 
 
+def generate_mind_map_candidate_graph(
+    module_title: str,
+    note_group_title: str,
+    study_cards: list[dict],
+    existing_concepts: list[dict] | None = None,
+    existing_topics: list[dict] | None = None,
+) -> dict:
+    return generate_topic_tree_candidate_graph(
+        module_title=module_title,
+        note_group_title=note_group_title,
+        study_cards=study_cards,
+        existing_topics=existing_topics,
+    )
+
+
 class AutoJobCancelled(Exception):
+    pass
+
+
+class MindMapJobSuperseded(Exception):
+    pass
+
+
+class TopicKnowledgeNodeNeedsReview(Exception):
     pass
 
 
@@ -63,6 +92,237 @@ def _store_study_card_source_ranges(
                 end_index=end_index,
             )
         )
+
+
+def _study_card_mind_map_payloads(study_cards: list[StudyCard]) -> list[dict]:
+    return [
+        {
+            "study_card_id": card.id,
+            "title": card.title,
+            "content": card.content,
+            "topic_labels": sorted(chip.label for chip in card.topic_chips),
+        }
+        for card in study_cards
+    ]
+
+
+def _existing_concept_payloads(db: Session, module_id: str) -> list[dict]:
+    concepts = (
+        db.query(MindMapConcept)
+        .filter(MindMapConcept.module_id == module_id)
+        .order_by(MindMapConcept.title.asc(), MindMapConcept.id.asc())
+        .all()
+    )
+    return [
+        {
+            "concept_id": concept.id,
+            "title": concept.title,
+            "summary": concept.summary,
+            "concept_type": concept.concept_type,
+            "knowledge_type": concept.knowledge_type,
+            "importance": concept.importance,
+            "topic_id": concept.topic_id,
+        }
+        for concept in concepts
+    ]
+
+
+def _existing_topic_payloads(db: Session, module_id: str) -> list[dict]:
+    topics = (
+        db.query(TopicChip)
+        .filter(TopicChip.module_id == module_id)
+        .order_by(TopicChip.label.asc(), TopicChip.id.asc())
+        .all()
+    )
+    return [
+        {
+            "topic_id": topic.id,
+            "title": topic.label,
+            "summary": topic.description or "",
+            "parent_topic_id": topic.parent_topic_id,
+        }
+        for topic in topics
+    ]
+
+
+def _topic_knowledge_node_candidate_payload(db: Session, topic: TopicChip) -> dict:
+    context = build_topic_knowledge_node_generation_context(db, topic.id)
+    study_card_topic_links = [
+        {
+            "study_card_id": card["study_card_id"],
+            "topic_id": topic.id,
+            "role": "primary",
+        }
+        for card in context["study_cards"]
+    ]
+    existing_concepts = [
+        {
+            "concept_id": node["knowledge_node_id"],
+            "title": node["title"],
+            "summary": node["summary"],
+            "knowledge_type": node["knowledge_type"],
+            "importance": node["importance"],
+            "topic_id": node["topic_id"],
+            "context_role": "selected_topic_existing_knowledge_node",
+        }
+        for node in context["existing_knowledge_nodes"]
+    ]
+    existing_concepts.extend(
+        {
+            "concept_id": node["knowledge_node_id"],
+            "title": node["title"],
+            "summary": node["summary"],
+            "knowledge_type": node["knowledge_type"],
+            "importance": node["importance"],
+            "topic_id": node["topic_id"],
+            "context_role": "immediate_child_topic_definition",
+        }
+        for node in context["child_definition_context"]
+    )
+    existing_topics = [
+        context["topic"],
+        *[
+            {
+                "topic_id": child.id,
+                "title": child.label,
+                "summary": child.description or "",
+                "parent_topic_id": child.parent_topic_id,
+            }
+            for child in topic.child_topics
+        ],
+    ]
+    return generate_knowledge_node_candidates(
+        module_title=topic.module.title,
+        note_group_title=f"Topic: {topic.label}",
+        study_cards=context["study_cards"],
+        topics=[context["topic"]],
+        study_card_topic_links=study_card_topic_links,
+        existing_concepts=existing_concepts,
+        existing_topics=existing_topics,
+    )
+
+
+def _mark_topic_knowledge_nodes_needs_review(topic_id: str, reason: str) -> None:
+    db = SessionLocal()
+    try:
+        topic = db.get(TopicChip, topic_id)
+        if topic:
+            topic.knowledge_node_status = "needs_review"
+            topic.knowledge_node_review_reason = reason
+            db.commit()
+    finally:
+        db.close()
+
+
+def _reconcile_topic_knowledge_nodes(topic_id: str) -> None:
+    db = SessionLocal()
+    try:
+        topic = db.get(TopicChip, topic_id)
+        if not topic:
+            raise ValueError("Topic not found")
+        candidate_payload = _topic_knowledge_node_candidate_payload(db, topic)
+        regenerate_topic_knowledge_nodes(db, topic.id, candidate_payload)
+        db.commit()
+        if topic.knowledge_node_status == "needs_review":
+            raise TopicKnowledgeNodeNeedsReview(
+                topic.knowledge_node_review_reason or "Topic Knowledge Nodes need review"
+            )
+    except TopicKnowledgeNodeNeedsReview:
+        raise
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def _topic_dependencies(topics: list[TopicChip], topic_ids: set[str]) -> dict[str, set[str]]:
+    return {
+        topic.id: {child.id for child in topic.child_topics if child.id in topic_ids}
+        for topic in topics
+        if topic.id in topic_ids
+    }
+
+
+def reconcile_note_group_topic_knowledge_nodes(
+    note_group_id: str,
+    *,
+    only_needs_review: bool = False,
+) -> dict[str, str]:
+    db = SessionLocal()
+    try:
+        note_group = db.get(NoteGroup, note_group_id)
+        if not note_group:
+            raise ValueError("Note group not found")
+        rows = db.execute(
+            note_group_topic_chips.select().where(note_group_topic_chips.c.note_group_id == note_group_id)
+        ).all()
+        topic_ids = {row.chip_id for row in rows}
+        if only_needs_review:
+            review_topic_rows = (
+                db.query(TopicChip.id)
+                .filter(
+                    TopicChip.id.in_(topic_ids),
+                    TopicChip.knowledge_node_status == "needs_review",
+                )
+                .all()
+            )
+            topic_ids = {row[0] for row in review_topic_rows}
+        if not topic_ids:
+            return {}
+        topics = (
+            db.query(TopicChip)
+            .filter(TopicChip.module_id == note_group.module_id, TopicChip.id.in_(topic_ids))
+            .all()
+        )
+        dependencies = _topic_dependencies(topics, topic_ids)
+    finally:
+        db.close()
+
+    return run_dependency_aware_topic_tasks(
+        topic_ids=topic_ids,
+        dependencies_by_topic_id=dependencies,
+        run_topic=_reconcile_topic_knowledge_nodes,
+        mark_needs_review=_mark_topic_knowledge_nodes_needs_review,
+    )
+
+
+def generate_and_persist_note_group_mind_map(
+    db: Session,
+    note_group: NoteGroup,
+    module,
+    study_cards: list[StudyCard],
+    ensure_active=None,
+) -> None:
+    candidate_topic_payload = generate_mind_map_candidate_graph(
+        module_title=module.title,
+        note_group_title=note_group.title or "",
+        study_cards=_study_card_mind_map_payloads(study_cards),
+        existing_concepts=_existing_concept_payloads(db, module.id),
+        existing_topics=_existing_topic_payloads(db, module.id),
+    )
+    if "concepts" in candidate_topic_payload or "knowledge_nodes" in candidate_topic_payload:
+        regenerate_note_group_mind_map(db, note_group.id, candidate_topic_payload)
+        if ensure_active:
+            ensure_active()
+        db.commit()
+        return
+
+    regenerate_note_group_mind_map(
+        db,
+        note_group.id,
+        {
+            "topics": candidate_topic_payload.get("topics") or [],
+            "knowledge_nodes": [],
+            "relations": [],
+            "study_card_topic_links": candidate_topic_payload.get("study_card_topic_links") or [],
+            "study_card_knowledge_node_links": [],
+        },
+    )
+    if ensure_active:
+        ensure_active()
+    db.commit()
+    reconcile_note_group_topic_knowledge_nodes(note_group.id)
 
 
 def _raise_if_cancelled(db: Session, job: Job) -> None:
@@ -408,65 +668,20 @@ def run_mind_map_generation(job_id: str) -> None:
         if not study_cards:
             raise ValueError("No Study Cards available for Concept Mind Map generation")
 
-        study_card_payloads = [
-            {
-                "study_card_id": card.id,
-                "title": card.title,
-                "content": card.content,
-                "topic_labels": sorted(chip.label for chip in card.topic_chips),
-            }
-            for card in study_cards
-        ]
-        existing_concepts = (
-            db.query(MindMapConcept)
-            .filter(MindMapConcept.module_id == module.id)
-            .order_by(MindMapConcept.title.asc(), MindMapConcept.id.asc())
-            .all()
-        )
-        existing_concept_payloads = [
-            {
-                "concept_id": concept.id,
-                "title": concept.title,
-                "summary": concept.summary,
-                "concept_type": concept.concept_type,
-                "knowledge_type": concept.knowledge_type,
-                "importance": concept.importance,
-                "topic_id": concept.topic_id,
-            }
-            for concept in existing_concepts
-        ]
-        existing_topics = (
-            db.query(TopicChip)
-            .filter(TopicChip.module_id == module.id)
-            .order_by(TopicChip.label.asc(), TopicChip.id.asc())
-            .all()
-        )
-        existing_topic_payloads = [
-            {
-                "topic_id": topic.id,
-                "title": topic.label,
-                "summary": topic.description or "",
-                "parent_topic_id": topic.parent_topic_id,
-            }
-            for topic in existing_topics
-        ]
+        def ensure_current_job_active() -> None:
+            db.expire_all()
+            if not current_running_job_for_update():
+                raise MindMapJobSuperseded()
 
-        candidate_payload = generate_mind_map_candidate_graph(
-            module_title=module.title,
-            note_group_title=note_group.title or "",
-            study_cards=study_card_payloads,
-            existing_concepts=existing_concept_payloads,
-            existing_topics=existing_topic_payloads,
+        ensure_current_job_active()
+        generate_and_persist_note_group_mind_map(
+            db,
+            note_group,
+            module,
+            study_cards,
+            ensure_active=ensure_current_job_active,
         )
-
         db.expire_all()
-        current_job = current_running_job_for_update()
-        if not current_job:
-            return
-
-        regenerate_note_group_mind_map(db, note_group.id, candidate_payload)
-        db.flush()
-        db.expire(current_job)
         current_job = current_running_job_for_update()
         if not current_job:
             db.rollback()
@@ -475,6 +690,9 @@ def run_mind_map_generation(job_id: str) -> None:
         current_job.status = "completed"
         current_job.error = None
         db.commit()
+    except MindMapJobSuperseded:
+        db.rollback()
+        return
     except Exception as exc:
         db.rollback()
         job = current_running_job_for_update()
@@ -686,53 +904,7 @@ def run_auto_note_group_generation(job_id: str) -> None:
                 .order_by(StudyCard.created_at.asc(), StudyCard.id.asc())
                 .all()
             )
-            existing_concepts = (
-                db.query(MindMapConcept)
-                .filter(MindMapConcept.module_id == module.id)
-                .order_by(MindMapConcept.title.asc(), MindMapConcept.id.asc())
-                .all()
-            )
-            existing_topics = (
-                db.query(TopicChip)
-                .filter(TopicChip.module_id == module.id)
-                .order_by(TopicChip.label.asc(), TopicChip.id.asc())
-                .all()
-            )
-            candidate_payload = generate_mind_map_candidate_graph(
-                module_title=module.title,
-                note_group_title=note_group.title or "",
-                study_cards=[
-                    {
-                        "study_card_id": card.id,
-                        "title": card.title,
-                        "content": card.content,
-                        "topic_labels": sorted(chip.label for chip in card.topic_chips),
-                    }
-                    for card in mind_map_study_cards
-                ],
-                existing_concepts=[
-                    {
-                        "concept_id": concept.id,
-                        "title": concept.title,
-                        "summary": concept.summary,
-                        "concept_type": concept.concept_type,
-                        "knowledge_type": concept.knowledge_type,
-                        "importance": concept.importance,
-                        "topic_id": concept.topic_id,
-                    }
-                    for concept in existing_concepts
-                ],
-                existing_topics=[
-                    {
-                        "topic_id": topic.id,
-                        "title": topic.label,
-                        "summary": topic.description or "",
-                        "parent_topic_id": topic.parent_topic_id,
-                    }
-                    for topic in existing_topics
-                ],
-            )
-            regenerate_note_group_mind_map(db, note_group.id, candidate_payload)
+            generate_and_persist_note_group_mind_map(db, note_group, module, mind_map_study_cards)
         job = db.get(Job, job_id)
         if job:
             job.status = "completed"

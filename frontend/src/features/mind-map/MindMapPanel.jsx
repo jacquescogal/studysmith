@@ -22,6 +22,7 @@ export function MindMapNode({ data }) {
   const className = [
     "mind-map-node",
     data.nodeType ? `mind-map-node-${data.nodeType}` : "",
+    data.status ? `mind-map-node-status-${data.status}` : "",
     data.importance ? `mind-map-node-${data.importance}` : ""
   ]
     .filter(Boolean)
@@ -32,6 +33,7 @@ export function MindMapNode({ data }) {
       <Handle className="mind-map-node-handle" type="target" position={Position.Left} />
       <div className="mind-map-node-title">{data.title}</div>
       {data.summary ? <div className="mind-map-node-summary">{data.summary}</div> : null}
+      {data.reviewReason ? <div className="mind-map-node-warning">{data.reviewReason}</div> : null}
       {data.badges?.length ? (
         <div className="mind-map-node-badges">
           {data.badges.slice(0, 4).map((badge) => (
@@ -82,7 +84,10 @@ export function MindMapPanel({
   onGenerate,
   canRegenerateTopicKnowledgeNodes = false,
   regeneratingTopicId = "",
-  onRegenerateTopicKnowledgeNodes
+  onRegenerateTopicKnowledgeNodes,
+  canRegenerateNeedsReview = false,
+  regeneratingNeedsReview = false,
+  onRegenerateNeedsReview
 }) {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -98,6 +103,13 @@ export function MindMapPanel({
     [canRegenerateTopicKnowledgeNodes, graph, onRegenerateTopicKnowledgeNodes, regeneratingTopicId, title]
   );
   const hasGraph = elementInput.nodes.length > 0;
+  const needsReviewCount = useMemo(
+    () =>
+      Array.isArray(graph?.nodes)
+        ? graph.nodes.filter((node) => node.node_type === "topic" && node.knowledge_node_status === "needs_review").length
+        : 0,
+    [graph]
+  );
 
   useEffect(() => {
     let active = true;
@@ -148,6 +160,18 @@ export function MindMapPanel({
               <Button type="button" variant="outline" size="sm" onClick={onGenerate} disabled={generating || loading}>
                 {generating ? <Loader2 className="animate-spin" /> : <RefreshCw />}
                 {graph?.status === "complete" ? "Regenerate" : "Generate"}
+              </Button>
+            ) : null}
+            {canRegenerateNeedsReview && needsReviewCount ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onRegenerateNeedsReview}
+                disabled={regeneratingNeedsReview || loading}
+              >
+                {regeneratingNeedsReview ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                Regenerate Needs Review
               </Button>
             ) : null}
           </div>

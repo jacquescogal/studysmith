@@ -56,6 +56,7 @@ function countBadge(count, singular, plural) {
 function topicBadges(topic) {
   return [
     "Topic",
+    topic.knowledge_node_status === "needs_review" ? "Needs review" : null,
     countBadge(topic.study_card_count, "card", "cards"),
     topic.note_group_count > 1 ? `${topic.note_group_count} Note Groups` : null
   ].filter(Boolean);
@@ -130,6 +131,8 @@ export function buildMindMapElements(
           title: compactTitle(item.title, isTopic ? "Untitled Topic" : "Untitled Knowledge Node"),
           summary: item.summary || "",
           nodeType: isTopic ? "topic" : isKnowledgeNode ? "knowledge_node" : "concept",
+          status: isTopic ? item.knowledge_node_status : undefined,
+          reviewReason: isTopic ? item.knowledge_node_review_reason : undefined,
           importance: item.importance || (isKnowledgeNode ? "supporting" : undefined),
           badges: isTopic ? topicBadges(item) : knowledgeNodeBadges(item),
           studyCardIds: item.study_card_ids || [],
