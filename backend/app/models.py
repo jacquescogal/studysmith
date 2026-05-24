@@ -71,6 +71,7 @@ SUBJECT_ACTIVITY_ENTITY_TYPES = {
 }
 
 MIND_MAP_CONCEPT_TYPES = {"topic", "subtopic", "term", "process", "principle", "example"}
+KNOWLEDGE_NODE_TYPES = {"definition", "mechanism", "rule", "fact"}
 MIND_MAP_IMPORTANCE_LEVELS = {"core", "supporting", "detail"}
 MIND_MAP_RELATION_TYPES = {
     "contains",
@@ -473,21 +474,25 @@ class MindMapConcept(Base):
         UniqueConstraint("module_id", "slug", name="uq_mind_map_concepts_module_slug"),
         UniqueConstraint("module_id", "id", name="uq_mind_map_concepts_module_id"),
         CheckConstraint(_check_values("concept_type", MIND_MAP_CONCEPT_TYPES), name="ck_mind_map_concepts_type"),
+        CheckConstraint(_check_values("knowledge_type", KNOWLEDGE_NODE_TYPES), name="ck_mind_map_concepts_knowledge_type"),
         CheckConstraint(_check_values("importance", MIND_MAP_IMPORTANCE_LEVELS), name="ck_mind_map_concepts_importance"),
     )
 
     id = Column(String, primary_key=True, default=_uuid)
     module_id = Column(String, ForeignKey("modules.id", ondelete="CASCADE"), nullable=False, index=True)
+    topic_id = Column(String, ForeignKey("topic_chips.id", ondelete="SET NULL"), nullable=True, index=True)
     slug = Column(String, nullable=False)
     title = Column(String, nullable=False)
     summary = Column(Text, nullable=False)
     concept_type = Column(String, nullable=False)
+    knowledge_type = Column(String, nullable=True)
     importance = Column(String, nullable=False)
     source_quote = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     module = relationship("Module", back_populates="mind_map_concepts")
+    topic = relationship("TopicChip")
     note_groups = relationship(
         "NoteGroup",
         secondary="note_group_mind_map_concepts",

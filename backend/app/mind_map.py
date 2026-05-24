@@ -21,6 +21,7 @@ from app.models import (
 from app.schemas import MindMapResponse
 
 CONCEPT_TYPES = {"topic", "subtopic", "term", "process", "principle", "example"}
+KNOWLEDGE_NODE_TYPES = {"definition", "mechanism", "rule", "fact"}
 IMPORTANCE_LEVELS = {"core", "supporting", "detail"}
 RELATION_TYPES = {
     "contains",
@@ -48,9 +49,22 @@ def slugify_concept_title(title: str) -> str:
     return normalized or "concept"
 
 
-def validate_candidate_graph(payload: dict, study_card_ids: set[str], existing_concept_ids: set[str]) -> dict:
+def validate_candidate_graph(
+    payload: dict,
+    study_card_ids: set[str],
+    existing_concept_ids: set[str],
+    existing_topic_ids: set[str] | None = None,
+) -> dict:
     if not isinstance(payload, dict):
         raise MindMapValidationError("Candidate graph payload must be an object.")
+
+    if "topics" in payload or "knowledge_nodes" in payload:
+        return _validate_topic_tree_candidate_graph(
+            payload,
+            study_card_ids,
+            existing_concept_ids,
+            existing_topic_ids or set(),
+        )
 
     concepts = payload.get("concepts")
     relations = payload.get("relations")
@@ -199,6 +213,163 @@ def validate_candidate_graph(payload: dict, study_card_ids: set[str], existing_c
         "concepts": normalized_concepts,
         "relations": normalized_relations,
         "links": normalized_links,
+    }
+
+
+def _validate_topic_tree_candidate_graph(
+    payload: dict,
+    study_card_ids: set[str],
+    existing_knowledge_node_ids: set[str],
+    existing_topic_ids: set[str],
+) -> dict:
+    topics = payload.get("topics")
+    knowledge_nodes = payload.get("knowledge_nodes")
+    relations = payload.get("relations")
+    study_card_topic_links = payload.get("study_card_topic_links")
+    study_card_knowledge_node_links = payload.get("study_card_knowledge_node_links", [])
+    if not isinstance(topics, list):
+        raise MindMapValidationError("Candidate graph topics must be a list.")
+    if not isinstance(knowledge_nodes, list):
+        raise MindMapValidationError("Candidate graph knowledge_nodes must be a list.")
+    if not isinstance(relations, list):
+        raise MindMapValidationError("Candidate graph relations must be a list.")
+    if not isinstance(study_card_topic_links, list):
+        raise MindMapValidationError("Candidate graph study_card_topic_links must be a list.")
+    if not isinstance(study_card_knowledge_node_links, list):
+        raise MindMapValidationError("Candidate graph study_card_knowledge_node_links must be a list.")
+
+    topic_temp_ids: set[str] = set()
+    topic_slugs: set[str] = set()
+    valid_topic_refs = set(existing_topic_ids)
+    topic_temp_to_canonical: dict[str, str] = {}
+    normalized_topics = []
+    for index, topic in enumerate(topics):
+        if not isinstance(topic, dict):
+            raise MindMapValidationError(f"Topic at index {index} must be an object.")
+        temp_id = _required_string(topic, "temp_id", f"Topic at index {index} is missing a temp_id.")
+        if temp_id in topic_temp_ids:
+            raise MindMapValidationError(f"Duplicate topic temp_id: {temp_id}.")
+        topic_temp_ids.add(temp_id)
+
+        title = _required_string(topic, "title", f"Topic {temp_id} is missing a title.")
+        summary = _required_string(topic, "summary", f"Topic {temp_id} is missing a summary.")
+        matched_existing_topic_id = _optional_string_field(topic, "matched_existing_topic_id")
+        if matched_existing_topic_id and matched_existing_topic_id not in existing_topic_ids:
+            raise MindMapValidationError(f"Unknown matched_existing_topic_id: {matched_existing_topic_id}.")
+
+        slug = slugify_concept_title(title)
+        if slug in topic_slugs:
+            raise MindMapValidationError(f"Duplicate topic slug: {slug}.")
+        topic_slugs.add(slug)
+        canonical_ref = matched_existing_topic_id or temp_id
+        valid_topic_refs.add(temp_id)
+        topic_temp_to_canonical[temp_id] = canonical_ref
+        normalized_topics.append(
+            {
+                "temp_id": temp_id,
+                "matched_existing_topic_id": matched_existing_topic_id,
+                "parent_topic_id": _optional_string_field(topic, "parent_topic_id"),
+                "title": title,
+                "summary": summary,
+                "slug": slug,
+            }
+        )
+
+    for topic in normalized_topics:
+        parent_topic_id = topic["parent_topic_id"]
+        if not parent_topic_id:
+            continue
+        if parent_topic_id not in valid_topic_refs:
+            raise MindMapValidationError(f"Topic parent does not resolve: {parent_topic_id}.")
+        if _canonical_ref(parent_topic_id, topic_temp_to_canonical) == _canonical_ref(
+            topic["temp_id"],
+            topic_temp_to_canonical,
+        ):
+            raise MindMapValidationError("Topic cannot be its own parent.")
+
+    knowledge_node_temp_ids: set[str] = set()
+    knowledge_node_slugs: set[str] = set()
+    valid_knowledge_node_refs = set(existing_knowledge_node_ids)
+    knowledge_node_temp_to_canonical: dict[str, str] = {}
+    normalized_knowledge_nodes = []
+    for index, node in enumerate(knowledge_nodes):
+        if not isinstance(node, dict):
+            raise MindMapValidationError(f"Knowledge Node at index {index} must be an object.")
+        temp_id = _required_string(node, "temp_id", f"Knowledge Node at index {index} is missing a temp_id.")
+        if temp_id in knowledge_node_temp_ids:
+            raise MindMapValidationError(f"Duplicate knowledge node temp_id: {temp_id}.")
+        knowledge_node_temp_ids.add(temp_id)
+
+        topic_ref = _candidate_ref(
+            node,
+            ("topic_id", "topic_temp_or_existing_id", "parent_topic_id"),
+            f"Knowledge Node {temp_id} is missing a topic_id.",
+        )
+        if topic_ref not in valid_topic_refs:
+            raise MindMapValidationError(f"Knowledge Node topic does not resolve: {topic_ref}.")
+        title = _required_string(node, "title", f"Knowledge Node {temp_id} is missing a title.")
+        summary = _required_string(node, "summary", f"Knowledge Node {temp_id} is missing a summary.")
+        knowledge_type = _required_string(
+            node,
+            "knowledge_type",
+            f"Knowledge Node {temp_id} is missing a knowledge_type.",
+        )
+        importance = _required_string(node, "importance", f"Knowledge Node {temp_id} is missing an importance.")
+        if knowledge_type not in KNOWLEDGE_NODE_TYPES:
+            raise MindMapValidationError(f"Invalid knowledge_type for Knowledge Node {temp_id}: {knowledge_type}.")
+        if importance not in IMPORTANCE_LEVELS:
+            raise MindMapValidationError(f"Invalid importance for Knowledge Node {temp_id}: {importance}.")
+
+        matched_existing_knowledge_node_id = _optional_string_field(node, "matched_existing_knowledge_node_id")
+        if matched_existing_knowledge_node_id and matched_existing_knowledge_node_id not in existing_knowledge_node_ids:
+            raise MindMapValidationError(
+                f"Unknown matched_existing_knowledge_node_id: {matched_existing_knowledge_node_id}."
+            )
+        slug = slugify_concept_title(title)
+        if slug in knowledge_node_slugs:
+            raise MindMapValidationError(f"Duplicate knowledge node slug: {slug}.")
+        knowledge_node_slugs.add(slug)
+        canonical_ref = matched_existing_knowledge_node_id or temp_id
+        valid_knowledge_node_refs.add(temp_id)
+        knowledge_node_temp_to_canonical[temp_id] = canonical_ref
+        normalized_knowledge_nodes.append(
+            {
+                "temp_id": temp_id,
+                "matched_existing_knowledge_node_id": matched_existing_knowledge_node_id,
+                "topic_id": topic_ref,
+                "title": title,
+                "summary": summary,
+                "knowledge_type": knowledge_type,
+                "importance": importance,
+                "source_quote": _optional_string_field(node, "source_quote"),
+                "slug": slug,
+            }
+        )
+
+    normalized_topic_links = _validate_study_card_links(
+        study_card_topic_links,
+        study_card_ids,
+        valid_topic_refs,
+        topic_temp_to_canonical,
+        "topic_id",
+        "Topic",
+    )
+    normalized_knowledge_node_links = _validate_study_card_links(
+        study_card_knowledge_node_links,
+        study_card_ids,
+        valid_knowledge_node_refs,
+        knowledge_node_temp_to_canonical,
+        "knowledge_node_id",
+        "Knowledge Node",
+        require_every_card=False,
+    )
+
+    return {
+        "topics": normalized_topics,
+        "knowledge_nodes": normalized_knowledge_nodes,
+        "relations": relations,
+        "study_card_topic_links": normalized_topic_links,
+        "study_card_knowledge_node_links": normalized_knowledge_node_links,
     }
 
 
@@ -589,6 +760,74 @@ def _relation_ref(relation: dict[str, Any], allowed_keys: tuple[str, ...], displ
     if not isinstance(value, str) or not value.strip():
         raise MindMapValidationError(f"Relation at index {index} is missing {display_key}.")
     return value.strip()
+
+
+def _candidate_ref(payload: dict[str, Any], allowed_keys: tuple[str, ...], message: str) -> str:
+    value = None
+    for key in allowed_keys:
+        if key in payload:
+            value = payload[key]
+            break
+    if not isinstance(value, str) or not value.strip():
+        raise MindMapValidationError(message)
+    return value.strip()
+
+
+def _validate_study_card_links(
+    links: list,
+    study_card_ids: set[str],
+    valid_refs: set[str],
+    temp_to_canonical: dict[str, str],
+    ref_key: str,
+    ref_label: str,
+    require_every_card: bool = True,
+) -> list[dict[str, str]]:
+    normalized_links = []
+    links_by_study_card_id: dict[str, list[dict]] = {study_card_id: [] for study_card_id in study_card_ids}
+    seen_links: set[tuple[str, str]] = set()
+    for index, link in enumerate(links):
+        if not isinstance(link, dict):
+            raise MindMapValidationError(f"{ref_label} link at index {index} must be an object.")
+        study_card_id = _required_string(
+            link,
+            "study_card_id",
+            f"{ref_label} link at index {index} is missing a study_card_id.",
+        )
+        if study_card_id not in study_card_ids:
+            raise MindMapValidationError(f"{ref_label} link points to an unknown Study Card: {study_card_id}.")
+        ref = _required_string(link, ref_key, f"{ref_label} link at index {index} is missing a {ref_key}.")
+        if ref not in valid_refs:
+            raise MindMapValidationError(f"{ref_label} link does not resolve: {ref}.")
+        role = _optional_string_field(link, "role") or "supporting"
+        if role not in LINK_ROLES:
+            raise MindMapValidationError(f"Invalid {ref_label} link role: {role}.")
+
+        dedupe_key = (study_card_id, _canonical_ref(ref, temp_to_canonical))
+        if dedupe_key in seen_links:
+            continue
+        seen_links.add(dedupe_key)
+
+        normalized_link = {
+            "study_card_id": study_card_id,
+            ref_key: ref,
+            "role": role,
+        }
+        normalized_links.append(normalized_link)
+        links_by_study_card_id[study_card_id].append(normalized_link)
+
+    missing_link_ids = sorted(
+        study_card_id for study_card_id, card_links in links_by_study_card_id.items() if not card_links
+    )
+    if require_every_card and missing_link_ids:
+        raise MindMapValidationError(
+            f"Every Study Card must have at least one {ref_label} link: {', '.join(missing_link_ids)}."
+        )
+
+    for card_links in links_by_study_card_id.values():
+        if card_links and not any(link["role"] == "primary" for link in card_links):
+            card_links[0]["role"] = "primary"
+
+    return normalized_links
 
 
 def _confidence_value(value: Any, message: str) -> float:
