@@ -16,6 +16,7 @@ import { LegacyDialog } from "@/components/common/LegacyDialog";
 import { ModuleIndex } from "@/features/modules/ModuleIndex";
 import { AdminPanel } from "@/features/admin/AdminPanel";
 import { ModuleOverview } from "@/features/modules/ModuleOverview";
+import { MindMapPanel } from "@/features/mind-map/MindMapPanel";
 import { NoteGroupCreate } from "@/features/note-groups/NoteGroupCreate";
 import { NoteGroupOverview } from "@/features/note-groups/NoteGroupOverview";
 import { NoteGroupProgress } from "@/features/note-groups/NoteGroupProgress";
@@ -66,13 +67,16 @@ import {
   deleteSubject,
   deleteTopic,
   detachTopicChip,
+  generateNoteGroupMindMap,
   generateQuestionCards,
   getCurrentUser,
   getNoteGroupCardTable,
   getJob,
   getModule,
+  getModuleMindMap,
   getModuleOverview,
   getModuleQuestionTimeline,
+  getNoteGroupMindMap,
   getNoteGroupProgress,
   getNoteGroupQuestionTimeline,
   getNoteGroup,
@@ -249,6 +253,9 @@ export default function App() {
   });
   const [moduleStatsLoading, setModuleStatsLoading] = useState(false);
   const [moduleStatsError, setModuleStatsError] = useState("");
+  const [moduleMindMap, setModuleMindMap] = useState(null);
+  const [moduleMindMapLoading, setModuleMindMapLoading] = useState(false);
+  const [moduleMindMapError, setModuleMindMapError] = useState("");
   const [selectedNoteGroupId, setSelectedNoteGroupId] = useState("");
   const [selectedTopicId, setSelectedTopicId] = useState("");
   const [sidebarScope, setSidebarScope] = useState("note-groups");
@@ -285,6 +292,11 @@ export default function App() {
   });
   const [noteGroupCardTableLoading, setNoteGroupCardTableLoading] = useState(false);
   const [noteGroupCardTableError, setNoteGroupCardTableError] = useState("");
+  const [noteGroupMindMap, setNoteGroupMindMap] = useState(null);
+  const [noteGroupMindMapLoading, setNoteGroupMindMapLoading] = useState(false);
+  const [noteGroupMindMapError, setNoteGroupMindMapError] = useState("");
+  const [noteGroupMindMapGenerating, setNoteGroupMindMapGenerating] = useState(false);
+  const [mindMapRefreshToken, setMindMapRefreshToken] = useState(0);
   const [isReadingOpen, setIsReadingOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [isMetadataOpen, setIsMetadataOpen] = useState(false);
@@ -396,6 +408,7 @@ export default function App() {
   const confirmResolverRef = useRef(null);
   const selectedSubjectIdRef = useRef(selectedSubjectId);
   const selectedModuleIdRef = useRef(selectedModuleId);
+  const selectedNoteGroupIdRef = useRef(selectedNoteGroupId);
   const activeAutoJobsRef = useRef(new Set());
   const reviewDKeyTimeRef = useRef(0);
   const location = useLocation();
@@ -647,6 +660,7 @@ export default function App() {
     if (!selectedNoteGroupId && !selectedTopicId) {
       return [
         { id: "module-overview", label: "Module overview" },
+        { id: "module-mind-map", label: "Mind Map" },
         { id: "module-review", label: "Review queue" },
         { id: "module-timeline", label: "Question timeline" },
         { id: "module-note-groups", label: "Note groups" }
@@ -666,7 +680,13 @@ export default function App() {
         { id: "question-generate", label: "Generate" }
       ];
     }
-    return [{ id: isTopicScope ? "topic-overview" : "note-group-overview", label: "Overview" }];
+    if (isTopicScope) {
+      return [{ id: "topic-overview", label: "Overview" }];
+    }
+    return [
+      { id: "note-group-overview", label: "Overview" },
+      { id: "note-group-mind-map", label: "Mind Map" }
+    ];
   }, [
     noteGroupMode,
     selectedModuleId,
@@ -1264,6 +1284,41 @@ export default function App() {
   }, [selectedModuleId, chipFilterIds, reviewRefreshToken]);
 
   useEffect(() => {
+    let cancelled = false;
+    if (!selectedModuleId || selectedNoteGroupId || selectedTopicId || noteGroupMode === "auto") {
+      setModuleMindMap(null);
+      setModuleMindMapError("");
+      setModuleMindMapLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    const loadModuleMindMap = async () => {
+      setModuleMindMapLoading(true);
+      setModuleMindMapError("");
+      try {
+        const data = await getModuleMindMap(selectedModuleId);
+        if (!cancelled) {
+          setModuleMindMap(data);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setModuleMindMap(null);
+          setModuleMindMapError(error.message || "Failed to load module Mind Map");
+        }
+      } finally {
+        if (!cancelled) {
+          setModuleMindMapLoading(false);
+        }
+      }
+    };
+    loadModuleMindMap();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedModuleId, selectedNoteGroupId, selectedTopicId, noteGroupMode, mindMapRefreshToken]);
+
+  useEffect(() => {
     if (!routeNoteGroupId || !selectedModuleId || selectedNoteGroupId === routeNoteGroupId) {
       return;
     }
@@ -1396,6 +1451,42 @@ export default function App() {
       cancelled = true;
     };
   }, [selectedNoteGroupId, selectedTopicId, routeNoteGroupId, routeTopicId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedNoteGroupId || selectedTopicId) {
+      setNoteGroupMindMap(null);
+      setNoteGroupMindMapError("");
+      setNoteGroupMindMapLoading(false);
+      setNoteGroupMindMapGenerating(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    const loadNoteGroupMindMap = async () => {
+      setNoteGroupMindMapLoading(true);
+      setNoteGroupMindMapError("");
+      try {
+        const data = await getNoteGroupMindMap(selectedNoteGroupId);
+        if (!cancelled) {
+          setNoteGroupMindMap(data);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setNoteGroupMindMap(null);
+          setNoteGroupMindMapError(error.message || "Failed to load Note Group Mind Map");
+        }
+      } finally {
+        if (!cancelled) {
+          setNoteGroupMindMapLoading(false);
+        }
+      }
+    };
+    loadNoteGroupMindMap();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedNoteGroupId, selectedTopicId, mindMapRefreshToken]);
 
   useEffect(() => {
     if (!isReadingOpen) {
@@ -1613,6 +1704,10 @@ export default function App() {
   }, [selectedModuleId]);
 
   useEffect(() => {
+    selectedNoteGroupIdRef.current = selectedNoteGroupId;
+  }, [selectedNoteGroupId]);
+
+  useEffect(() => {
     if (!reviewFeedback || !currentReviewCard) {
       return;
     }
@@ -1827,6 +1922,53 @@ export default function App() {
     throw new Error("Job timed out");
   };
 
+  const handleGenerateNoteGroupMindMap = async () => {
+    if (!canManageSelectedSubject) {
+      setNoteGroupMindMapError(
+        canUseProtectedActions ? "Maintainer access is required to generate a Mind Map." : "Sign in to generate a Mind Map."
+      );
+      return;
+    }
+    if (!selectedNoteGroupId || noteGroupMindMapGenerating) {
+      return;
+    }
+    const noteGroupId = selectedNoteGroupId;
+    setNoteGroupMindMapGenerating(true);
+    setNoteGroupMindMapError("");
+    try {
+      const job = await generateNoteGroupMindMap(noteGroupId);
+      setNoteGroupMindMap((prev) => ({
+        ...(prev || {
+          scope: "note_group",
+          module_id: selectedModuleId,
+          note_group_id: noteGroupId,
+          nodes: [],
+          edges: [],
+          study_cards: [],
+          question_cards: [],
+          note_groups: selectedNoteGroup ? [{ id: noteGroupId, title: selectedNoteGroup.title }] : []
+        }),
+        status: job.status === "completed" ? prev?.status || "complete" : "queued",
+        stale: false
+      }));
+      await pollJob(job.id, () => null, { maxAttempts: 120, intervalMs: 2000 });
+      const graph = await getNoteGroupMindMap(noteGroupId);
+      if (selectedNoteGroupIdRef.current === noteGroupId) {
+        setNoteGroupMindMap(graph);
+        setMindMapRefreshToken((prev) => prev + 1);
+      }
+      toast.success("Mind Map generated.");
+    } catch (error) {
+      if (selectedNoteGroupIdRef.current === noteGroupId) {
+        setNoteGroupMindMapError(error.message || "Mind Map generation failed");
+      }
+    } finally {
+      if (selectedNoteGroupIdRef.current === noteGroupId) {
+        setNoteGroupMindMapGenerating(false);
+      }
+    }
+  };
+
   const trackAutoNoteGroupJob = (jobId, moduleId) => {
     if (activeAutoJobsRef.current.has(jobId)) {
       return;
@@ -1859,6 +2001,7 @@ export default function App() {
           }
         }
         setReviewRefreshToken((prev) => prev + 1);
+        setMindMapRefreshToken((prev) => prev + 1);
         if (resolvedModuleId) {
           loadAutoJobs(resolvedModuleId).catch(() => null);
         }
@@ -3119,6 +3262,7 @@ export default function App() {
       setNewStudyCardContent("");
       setNewStudyCardChipIds([]);
       setIsStudyCreateOpen(false);
+      setMindMapRefreshToken((prev) => prev + 1);
     } catch (error) {
       setStudyCardError(error.message || "Failed to create study card");
     }
@@ -3180,6 +3324,7 @@ export default function App() {
         ),
       }));
       setEditingStudyCardId("");
+      setMindMapRefreshToken((prev) => prev + 1);
       return true;
     } catch (error) {
       setStudyCardError(error.message || "Failed to update study card");
@@ -3210,6 +3355,7 @@ export default function App() {
         ...prev,
         rows: prev.rows.filter((row) => row.study_card.id !== cardId),
       }));
+      setMindMapRefreshToken((prev) => prev + 1);
       return true;
     } catch (error) {
       setStudyCardError(error.message || "Failed to delete study card");
@@ -3238,6 +3384,7 @@ export default function App() {
       const response = await listQuestionCards(selectedNoteGroupId);
       setQuestionCards(response.question_cards || []);
       setQuestionJobStatus("completed");
+      setMindMapRefreshToken((prev) => prev + 1);
     } catch (error) {
       setQuestionCardError(error.message || "Question generation failed");
       setQuestionJobStatus("failed");
@@ -3535,6 +3682,7 @@ export default function App() {
       setNewQuestionCorrectIndices("");
       setNewQuestionRefs([]);
       setIsQuestionCreateOpen(false);
+      setMindMapRefreshToken((prev) => prev + 1);
     } catch (error) {
       setQuestionCardError(error.message || "Failed to create question card");
     }
@@ -3617,6 +3765,7 @@ export default function App() {
         };
       });
       setEditingQuestionCardId("");
+      setMindMapRefreshToken((prev) => prev + 1);
       return true;
     } catch (error) {
       setQuestionCardError(error.message || "Failed to update question card");
@@ -3652,6 +3801,7 @@ export default function App() {
           ),
         })),
       }));
+      setMindMapRefreshToken((prev) => prev + 1);
       return true;
     } catch (error) {
       setQuestionCardError(error.message || "Failed to delete question card");
@@ -5494,6 +5644,15 @@ export default function App() {
                         </>
                       }
                     />
+                      <section id="module-mind-map">
+                        <MindMapPanel
+                          graph={moduleMindMap}
+                          title={`${selectedModule?.title || "Module"} Mind Map`}
+                          description="Concepts across generated Note Group Mind Maps in this module."
+                          loading={moduleMindMapLoading}
+                          error={moduleMindMapError}
+                        />
+                      </section>
                       <section className={panelClass} id="module-review">
                         <h2>Review question cards</h2>
                         <div className="results-meta">
@@ -5886,6 +6045,18 @@ export default function App() {
                                 </>
                               }
                             />
+                            <section id="note-group-mind-map">
+                              <MindMapPanel
+                                graph={noteGroupMindMap}
+                                title={`${selectedNoteGroup?.title || "Note Group"} Mind Map`}
+                                description="Concepts and relationships extracted from this Note Group."
+                                loading={noteGroupMindMapLoading}
+                                error={noteGroupMindMapError}
+                                canGenerate={canManageSelectedSubject}
+                                generating={noteGroupMindMapGenerating}
+                                onGenerate={handleGenerateNoteGroupMindMap}
+                              />
+                            </section>
                             <section className={panelClass} id="note-group-content">
                               <div className="mb-4">
                                 <h3 className="text-base font-semibold">Content</h3>
