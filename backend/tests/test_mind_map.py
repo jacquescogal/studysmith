@@ -1,5 +1,6 @@
 import unittest
 from datetime import datetime
+from unittest.mock import patch
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.exc import IntegrityError
@@ -7,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db import Base
+from app.jobs import JOB_TYPE_MIND_MAP_GENERATION, run_mind_map_generation
 from app.mind_map import (
     MindMapValidationError,
     build_module_mind_map_response,
@@ -21,6 +23,7 @@ from app.models import (
     Module,
     NoteGroup,
     NoteGroupMindMapConcept,
+    Job,
     QuestionCard,
     StudyCard,
     StudyCardMindMapConcept,
@@ -102,6 +105,23 @@ class MindMapServiceTests(unittest.TestCase):
 
     def _owner(self) -> User:
         return User(id="owner-1", supabase_user_id="owner-sub", email="owner@example.com", app_role="creator")
+
+    def seed_graph_scope(self, db):
+        owner = User(id="owner-1", supabase_user_id="owner-sub", email="owner@example.com", app_role="creator")
+        subject = Subject(id="subject-1", title="Subject", owner_user_id="owner-1")
+        module = Module(id="module-1", subject_id="subject-1", title="Module")
+        note_group = NoteGroup(id="note-a", module_id="module-1", title="Note A", raw_text="target")
+        topic = TopicChip(id="topic-a", module_id="module-1", label="Security")
+        study_card = StudyCard(
+            id="card-a",
+            note_group_id="note-a",
+            title="RLS",
+            content="Row-level security content",
+        )
+        db.add_all([owner, subject, module, note_group, topic, study_card])
+        db.commit()
+        db.execute(study_card_topic_chips.insert().values(study_card_id="card-a", chip_id="topic-a"))
+        db.commit()
 
     def _seed_mind_map_workspace(self, db):
         owner = User(id="owner-1", supabase_user_id="owner-sub", email="owner@example.com", app_role="creator")
@@ -1026,5 +1046,145 @@ class MindMapServiceTests(unittest.TestCase):
             with self.assertRaises(IntegrityError):
                 db.commit()
             db.rollback()
+        finally:
+            db.close()
+
+
+class MindMapJobTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+
+        @event.listens_for(self.engine, "connect")
+        def _set_sqlite_pragma(dbapi_connection, connection_record) -> None:
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
+        Base.metadata.create_all(bind=self.engine)
+        self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
+
+    def tearDown(self):
+        Base.metadata.drop_all(bind=self.engine)
+
+    def test_run_mind_map_generation_marks_complete(self):
+        db = self.SessionLocal()
+        try:
+            MindMapServiceTests.seed_graph_scope(self, db)
+            db.add(Job(id="job-1", type=JOB_TYPE_MIND_MAP_GENERATION, note_group_id="note-a"))
+            db.commit()
+        finally:
+            db.close()
+
+        candidate_payload = {
+            "concepts": [
+                {
+                    "temp_id": "concept-a",
+                    "title": "Row-Level Security",
+                    "summary": "Restricts visible rows by policy.",
+                    "concept_type": "term",
+                    "importance": "core",
+                }
+            ],
+            "relations": [],
+            "study_card_concept_links": [
+                {
+                    "study_card_id": "card-a",
+                    "concept_id": "concept-a",
+                    "role": "primary",
+                }
+            ],
+        }
+
+        with patch("app.jobs.SessionLocal", self.SessionLocal), patch(
+            "app.jobs.generate_mind_map_candidate_graph",
+            return_value=candidate_payload,
+        ):
+            run_mind_map_generation("job-1")
+
+        db = self.SessionLocal()
+        try:
+            job = db.get(Job, "job-1")
+            note_group = db.get(NoteGroup, "note-a")
+            concepts = db.query(MindMapConcept).filter(MindMapConcept.module_id == "module-1").all()
+
+            self.assertEqual(job.status, "completed")
+            self.assertIsNone(job.error)
+            self.assertEqual(note_group.mind_map_status, "complete")
+            self.assertEqual(len(concepts), 1)
+        finally:
+            db.close()
+
+    def test_run_mind_map_generation_keeps_previous_graph_on_failure(self):
+        db = self.SessionLocal()
+        try:
+            MindMapServiceTests.seed_graph_scope(self, db)
+            existing_concept = MindMapConcept(
+                id="concept-existing",
+                module_id="module-1",
+                slug="existing_security",
+                title="Existing Security",
+                summary="Existing security summary.",
+                concept_type="topic",
+                importance="core",
+            )
+            db.add(existing_concept)
+            db.commit()
+            db.add_all(
+                [
+                    NoteGroupMindMapConcept(
+                        module_id="module-1",
+                        note_group_id="note-a",
+                        concept_id="concept-existing",
+                    ),
+                    StudyCardMindMapConcept(
+                        module_id="module-1",
+                        note_group_id="note-a",
+                        study_card_id="card-a",
+                        concept_id="concept-existing",
+                        role="primary",
+                    ),
+                    Job(id="job-1", type=JOB_TYPE_MIND_MAP_GENERATION, note_group_id="note-a"),
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        with patch("app.jobs.SessionLocal", self.SessionLocal), patch(
+            "app.jobs.generate_mind_map_candidate_graph",
+            side_effect=RuntimeError("LLM failed"),
+        ):
+            run_mind_map_generation("job-1")
+
+        db = self.SessionLocal()
+        try:
+            job = db.get(Job, "job-1")
+            note_group = db.get(NoteGroup, "note-a")
+            note_group_links = (
+                db.query(NoteGroupMindMapConcept)
+                .filter(NoteGroupMindMapConcept.note_group_id == "note-a")
+                .all()
+            )
+            study_card_links = (
+                db.query(StudyCardMindMapConcept)
+                .filter(StudyCardMindMapConcept.note_group_id == "note-a")
+                .all()
+            )
+
+            self.assertEqual(job.status, "failed")
+            self.assertEqual(job.error, "LLM failed")
+            self.assertEqual(note_group.mind_map_status, "failed")
+            self.assertEqual(
+                [(link.note_group_id, link.concept_id) for link in note_group_links],
+                [("note-a", "concept-existing")],
+            )
+            self.assertEqual(
+                [(link.study_card_id, link.concept_id, link.role) for link in study_card_links],
+                [("card-a", "concept-existing", "primary")],
+            )
         finally:
             db.close()

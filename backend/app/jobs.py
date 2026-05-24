@@ -5,9 +5,11 @@ from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
 from app.fsrs_utils import initialize_question_card
+from app.mind_map import regenerate_note_group_mind_map
 
 from app.models import (
     Job,
+    MindMapConcept,
     NoteGroup,
     QuestionCard,
     StudyCard,
@@ -20,6 +22,7 @@ from app.openai_client import (
     embed_texts,
     generate_cleaned_text_markdown,
     generate_formatted_sections,
+    generate_mind_map_candidate_graph,
     generate_note_group_title_suggestions,
     generate_question_cards,
     generate_study_cards_with_context,
@@ -32,6 +35,7 @@ from app.vector_store import delete_study_card_embeddings, upsert_study_card_emb
 
 JOB_TYPE_NOTE_GROUP_QUESTION_GENERATION = "NOTE_GROUP_QUESTION_GENERATION"
 JOB_TYPE_NOTE_GROUP_AUTO_GENERATION = "NOTE_GROUP_AUTO_GENERATION"
+JOB_TYPE_MIND_MAP_GENERATION = "MIND_MAP_GENERATION"
 
 
 class AutoJobCancelled(Exception):
@@ -339,6 +343,99 @@ def run_question_card_generation(job_id: str, count: int, difficulty: str) -> No
             job.status = "failed"
             job.error = str(exc)
         db.commit()
+    finally:
+        db.close()
+
+
+def run_mind_map_generation(job_id: str) -> None:
+    db: Session = SessionLocal()
+    try:
+        job = db.get(Job, job_id)
+        if not job:
+            return
+
+        job.status = "running"
+        job.error = None
+        note_group = job.note_group
+        if note_group:
+            note_group.mind_map_status = "generating"
+        db.commit()
+
+        if not note_group:
+            job = db.get(Job, job_id)
+            if job:
+                job.status = "failed"
+                job.error = "Note group not found"
+                db.commit()
+            return
+
+        module = note_group.module
+        if not module:
+            raise ValueError("Module not found")
+
+        study_cards = (
+            db.query(StudyCard)
+            .filter(StudyCard.note_group_id == note_group.id)
+            .order_by(StudyCard.created_at.asc(), StudyCard.id.asc())
+            .all()
+        )
+        if not study_cards:
+            raise ValueError("No Study Cards available for Concept Mind Map generation")
+
+        study_card_payloads = [
+            {
+                "study_card_id": card.id,
+                "title": card.title,
+                "content": card.content,
+                "topic_labels": sorted(chip.label for chip in card.topic_chips),
+            }
+            for card in study_cards
+        ]
+        existing_concepts = (
+            db.query(MindMapConcept)
+            .filter(MindMapConcept.module_id == module.id)
+            .order_by(MindMapConcept.title.asc(), MindMapConcept.id.asc())
+            .all()
+        )
+        existing_concept_payloads = [
+            {
+                "concept_id": concept.id,
+                "title": concept.title,
+                "summary": concept.summary,
+                "concept_type": concept.concept_type,
+                "importance": concept.importance,
+            }
+            for concept in existing_concepts
+        ]
+
+        candidate_payload = generate_mind_map_candidate_graph(
+            module_title=module.title,
+            note_group_title=note_group.title or "",
+            study_cards=study_card_payloads,
+            existing_concepts=existing_concept_payloads,
+        )
+        if "links" not in candidate_payload and "study_card_concept_links" in candidate_payload:
+            candidate_payload = {
+                **candidate_payload,
+                "links": candidate_payload["study_card_concept_links"],
+            }
+
+        regenerate_note_group_mind_map(db, note_group.id, candidate_payload)
+        job = db.get(Job, job_id)
+        if job:
+            job.status = "completed"
+            job.error = None
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        job = db.get(Job, job_id)
+        if job:
+            job.status = "failed"
+            job.error = str(exc)
+            note_group = job.note_group
+            if note_group:
+                note_group.mind_map_status = "failed"
+            db.commit()
     finally:
         db.close()
 
