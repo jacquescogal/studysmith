@@ -5,7 +5,10 @@ import {
   approvePublicSubject,
   createSubject,
   deleteSubjectAccess,
+  generateNoteGroupMindMap,
   getCurrentUser,
+  getModuleMindMap,
+  getNoteGroupMindMap,
   keepSubjectPrivate,
   listAdminUsers,
   listPublicSubjects,
@@ -120,6 +123,26 @@ describe("admin and access API calls", () => {
       6,
       "/subjects/subject-1/access/user-1",
       expect.objectContaining({ method: "DELETE" })
+    );
+  });
+});
+
+describe("mind map API calls", () => {
+  test("mind map helpers call module and note group endpoints", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(() => Promise.resolve(jsonResponse({})));
+
+    await getModuleMindMap("module-1");
+    await getNoteGroupMindMap("note-1");
+    await generateNoteGroupMindMap("note-1");
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/modules/module-1/mind-map", expect.any(Object));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/note-groups/note-1/mind-map", expect.any(Object));
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/note-groups/note-1/mind-map/generate",
+      expect.objectContaining({ method: "POST" })
     );
   });
 });
