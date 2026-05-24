@@ -236,6 +236,10 @@ export function getModuleOverview(moduleId, chipIds = []) {
   return request(`/modules/${moduleId}/overview${suffix}`);
 }
 
+export function getModuleMindMap(moduleId) {
+  return request(`/modules/${moduleId}/mind-map`);
+}
+
 export function checkNoteGroupSource(payload) {
   return request("/note-groups/source-check", {
     method: "POST",
@@ -352,6 +356,16 @@ export function listStudyCards(noteGroupId) {
 
 export function getNoteGroupCardTable(noteGroupId) {
   return request(`/note-groups/${noteGroupId}/card-table`);
+}
+
+export function getNoteGroupMindMap(noteGroupId) {
+  return request(`/note-groups/${noteGroupId}/mind-map`);
+}
+
+export function generateNoteGroupMindMap(noteGroupId) {
+  return request(`/note-groups/${noteGroupId}/mind-map/generate`, {
+    method: "POST"
+  });
 }
 
 export function listTopicStudyCards(topicId) {
