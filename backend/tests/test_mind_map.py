@@ -275,6 +275,26 @@ class MindMapServiceTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_mark_note_group_mind_map_stale_leaves_never_generated_map_unchanged(self):
+        db = self.SessionLocal()
+        try:
+            self.seed_graph_scope(db)
+            note_group = db.get(NoteGroup, "note-a")
+            note_group.mind_map_status = "not_generated"
+            note_group.mind_map_stale = False
+            note_group.mind_map_generated_at = None
+            db.commit()
+
+            mark_note_group_mind_map_stale(db, "note-a")
+            db.commit()
+
+            stored = db.get(NoteGroup, "note-a")
+            self.assertEqual(stored.mind_map_status, "not_generated")
+            self.assertFalse(stored.mind_map_stale)
+            self.assertIsNone(stored.mind_map_generated_at)
+        finally:
+            db.close()
+
     def test_validate_candidate_graph_rejects_unresolved_relation_endpoint(self):
         payload = {
             "concepts": [
@@ -1725,7 +1745,54 @@ class MindMapJobTests(unittest.TestCase):
                 type=JOB_TYPE_NOTE_GROUP_AUTO_GENERATION,
                 note_group_id="note-a",
             )
-            db.add_all([owner, subject, module, note_group, job])
+            study_card = StudyCard(
+                id="old-card",
+                note_group_id="note-a",
+                title="Old Card",
+                content="Old card content",
+            )
+            concept = MindMapConcept(
+                id="old-concept",
+                module_id="module-1",
+                slug="old_concept",
+                title="Old Concept",
+                summary="Old concept summary.",
+                concept_type="topic",
+                importance="core",
+            )
+            related_concept = MindMapConcept(
+                id="related-concept",
+                module_id="module-1",
+                slug="related_concept",
+                title="Related Concept",
+                summary="Related concept summary.",
+                concept_type="term",
+                importance="supporting",
+            )
+            relation = MindMapRelation(
+                id="old-relation",
+                module_id="module-1",
+                source_concept_id="old-concept",
+                target_concept_id="related-concept",
+                relation_type="related_to",
+                confidence=0.8,
+                source_note_group_id="note-a",
+            )
+            note_group_link = NoteGroupMindMapConcept(
+                module_id="module-1",
+                note_group_id="note-a",
+                concept_id="old-concept",
+            )
+            study_card_link = StudyCardMindMapConcept(
+                module_id="module-1",
+                note_group_id="note-a",
+                study_card_id="old-card",
+                concept_id="old-concept",
+                role="primary",
+            )
+            db.add_all([owner, subject, module, note_group, study_card, concept, related_concept, job])
+            db.commit()
+            db.add_all([relation, note_group_link, study_card_link])
             db.commit()
         finally:
             db.close()
@@ -1768,13 +1835,29 @@ class MindMapJobTests(unittest.TestCase):
             job = db.get(Job, "job-auto")
             note_group = db.get(NoteGroup, "note-a")
             study_cards = db.query(StudyCard).filter(StudyCard.note_group_id == "note-a").all()
+            old_links = (
+                db.query(NoteGroupMindMapConcept)
+                .filter(NoteGroupMindMapConcept.note_group_id == "note-a")
+                .all()
+            )
+            old_relations = (
+                db.query(MindMapRelation)
+                .filter(MindMapRelation.source_note_group_id == "note-a")
+                .all()
+            )
+            old_concept = db.get(MindMapConcept, "old-concept")
+            related_concept = db.get(MindMapConcept, "related-concept")
 
             self.assertEqual(job.status, "completed")
             self.assertEqual(note_group.generation_status, "complete")
-            self.assertEqual(len(study_cards), 1)
+            self.assertTrue(any(card.title == "Generated Study Card" for card in study_cards))
             self.assertEqual(note_group.mind_map_status, "not_generated")
             self.assertFalse(note_group.mind_map_stale)
             self.assertIsNone(note_group.mind_map_generated_at)
+            self.assertEqual(old_links, [])
+            self.assertEqual(old_relations, [])
+            self.assertIsNone(old_concept)
+            self.assertIsNone(related_concept)
         finally:
             db.close()
 
