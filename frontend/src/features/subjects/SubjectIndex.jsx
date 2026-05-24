@@ -9,7 +9,10 @@ export function SubjectIndex({
   subjects,
   error,
   canCreate = true,
-  canEdit = true,
+  showCreate = canCreate,
+  showEditControls = true,
+  canEditSubject = () => true,
+  canDeleteSubject = canEditSubject,
   onOpenWizard,
   onSelect,
   onEdit,
@@ -32,8 +35,8 @@ export function SubjectIndex({
             <Badge variant="outline" className="h-9 px-3">
               {subjects.length} subject{subjects.length === 1 ? "" : "s"}
             </Badge>
-            {canCreate ? (
-              <Button type="button" onClick={onOpenWizard}>
+            {showCreate ? (
+              <Button type="button" onClick={onOpenWizard} disabled={!canCreate}>
                 <Plus className="size-4" /> Create new subject
               </Button>
             ) : null}
@@ -65,12 +68,26 @@ export function SubjectIndex({
                 <Button type="button" className="min-w-32" onClick={() => onSelect(subject)}>
                   Open
                 </Button>
-                {canEdit ? (
+                {showEditControls ? (
                   <>
-                    <Button type="button" variant="ghost" size="icon" aria-label={`Edit ${subject.title}`} onClick={() => onEdit(subject)}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Edit ${subject.title}`}
+                      onClick={() => onEdit(subject)}
+                      disabled={!canEditSubject(subject)}
+                    >
                       <Edit className="size-4" />
                     </Button>
-                    <Button type="button" variant="ghost" size="icon" aria-label={`Delete ${subject.title}`} onClick={() => onDelete(subject)}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Delete ${subject.title}`}
+                      onClick={() => onDelete(subject)}
+                      disabled={!canDeleteSubject(subject)}
+                    >
                       <Trash2 className="size-4" />
                     </Button>
                   </>

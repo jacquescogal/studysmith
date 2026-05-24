@@ -4,8 +4,15 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+REPO_ROOT = BASE_DIR.parent
 
-load_dotenv(BASE_DIR / ".env")
+
+def _load_env_files(load=load_dotenv) -> None:
+    load(REPO_ROOT / ".env", override=False)
+    load(BASE_DIR / ".env", override=False)
+
+
+_load_env_files()
 
 
 def _get_env(name: str, default: str) -> str:
@@ -34,6 +41,7 @@ class Settings:
     embedding_dimension = int(_get_env("EMBEDDING_DIMENSION", "1536"))
     database_url = _normalize_database_url(_get_env("DATABASE_URL", "sqlite:///./study.db"))
     supabase_url = _get_env("SUPABASE_URL", "")
+    supabase_secret_key = _get_env("SUPABASE_SECRET_KEY", "")
     supabase_jwks_url = _get_env("SUPABASE_JWKS_URL", "")
     supabase_jwt_issuer = _get_env("SUPABASE_JWT_ISSUER", "")
     supabase_jwt_audience = _get_env("SUPABASE_JWT_AUDIENCE", "authenticated")

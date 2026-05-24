@@ -33,6 +33,7 @@ export function NoteGroupViewCards({
   questionCards = [],
   topicChips = [],
   canEdit = false,
+  showEditControls = canEdit,
   editingStudyCardId = "",
   editingStudyCard = { title: "", content: "" },
   editingQuestionCardId = "",
@@ -774,16 +775,22 @@ export function NoteGroupViewCards({
               </>
             ) : (
               <>
-                {canEdit ? (
+                {showEditControls ? (
                   <>
                     <Button
                       type="button"
                       variant="outline"
                       onClick={() => selectedStudyCard && onEditStudyCard?.(selectedStudyCard)}
+                      disabled={!canEdit}
                     >
                       <Edit className="size-4" /> Edit
                     </Button>
-                    <Button type="button" variant="destructive" onClick={deleteSelectedStudyCard}>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      onClick={deleteSelectedStudyCard}
+                      disabled={!canEdit}
+                    >
                       <Trash2 className="size-4" /> Delete
                     </Button>
                   </>
@@ -936,7 +943,7 @@ export function NoteGroupViewCards({
               </>
             ) : (
               <>
-                {canEdit ? (
+                {showEditControls ? (
                   <>
                     <Button
                       type="button"
@@ -944,10 +951,16 @@ export function NoteGroupViewCards({
                       onClick={() =>
                         selectedQuestionCard && onEditQuestionCard?.(selectedQuestionCard)
                       }
+                      disabled={!canEdit}
                     >
                       <Edit className="size-4" /> Edit
                     </Button>
-                    <Button type="button" variant="destructive" onClick={deleteSelectedQuestionCard}>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      onClick={deleteSelectedQuestionCard}
+                      disabled={!canEdit}
+                    >
                       <Trash2 className="size-4" /> Delete
                     </Button>
                   </>

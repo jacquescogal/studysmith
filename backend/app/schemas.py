@@ -31,6 +31,21 @@ class SubjectAccessGrantUpdate(BaseModel):
     access_level: str
 
 
+class SubjectActivityEventOut(BaseModel):
+    id: str
+    subject_id: str
+    actor_user_id: Optional[str] = None
+    actor_email: Optional[str] = None
+    event_type: str
+    entity_type: str
+    entity_id: str
+    entity_title: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class SubjectCreate(BaseModel):
     title: str
     description: Optional[str] = None
@@ -58,6 +73,7 @@ class SubjectOut(BaseModel):
     scope: Optional[str] = None
     owner_user_id: Optional[str] = None
     visibility: str = "private"
+    current_user_access_level: Optional[str] = None
 
     class Config:
         from_attributes = True

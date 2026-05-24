@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: run run-backend run-frontend build run-prod docker-up docker-down stop status open
+.PHONY: run run-backend run-frontend build run-prod docker-up docker-down supabase-start supabase-stop supabase-status stop status open
 
 run:
 	@echo "Starting backend (http://localhost:8000) and frontend (http://localhost:5173)."
@@ -24,6 +24,15 @@ docker-up:
 
 docker-down:
 	@docker compose down
+
+supabase-start:
+	@npx supabase@latest start
+
+supabase-stop:
+	@npx supabase@latest stop
+
+supabase-status:
+	@npx supabase@latest status
 
 run-backend:
 	@cd backend && if [ -f .venv/bin/activate ]; then . .venv/bin/activate; fi && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000

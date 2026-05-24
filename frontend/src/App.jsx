@@ -5,6 +5,7 @@ import { toast } from "sonner";
 
 import { Toaster } from "@/components/ui/sonner";
 import { useAuth } from "@/auth/AuthProvider";
+import { getLocalMailpitUrl } from "@/auth/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { AppShell } from "@/components/layout/AppShell";
 import { ContextSidebar } from "@/components/layout/ContextSidebar";
@@ -23,9 +24,11 @@ import { QuestionCardList } from "@/features/question-cards/QuestionCardList";
 import { ReadingDialog } from "@/features/reading/ReadingDialog";
 import { ReviewDialog } from "@/features/review/ReviewDialog";
 import { SubjectIndex } from "@/features/subjects/SubjectIndex";
+import { SubjectManagementPanel } from "@/features/subjects/SubjectManagementPanel";
 import { StudyCardList } from "@/features/study-cards/StudyCardList";
 import { TopicOverview } from "@/features/topics/TopicOverview";
 import { TutorChatDialog } from "@/features/chat/TutorChatDialog";
+import { isAuthReadyForRouteRestore } from "@/routes/routeRestore";
 import {
   createNoteGroupPath,
   matchAppRoute,
@@ -186,6 +189,7 @@ export default function App() {
   const [currentUserProfile, setCurrentUserProfile] = useState(null);
   const [currentUserError, setCurrentUserError] = useState("");
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
+  const [isSubjectManagementOpen, setIsSubjectManagementOpen] = useState(false);
 
   const [subjects, setSubjects] = useState([]);
   const [selectedSubjectId, setSelectedSubjectId] = useState("");
@@ -452,6 +456,27 @@ export default function App() {
     () => subjects.find((subject) => subject.id === selectedSubjectId),
     [subjects, selectedSubjectId]
   );
+  const isAdmin = currentUserProfile?.app_role === "admin";
+  const canCreateSubjects = Boolean(
+    auth.isAuthenticated && (isAdmin || currentUserProfile?.app_role === "creator")
+  );
+  const canMaintainSubject = (subject) =>
+    Boolean(
+      auth.isAuthenticated &&
+        subject &&
+        (isAdmin ||
+          subject.current_user_access_level === "owner" ||
+          subject.current_user_access_level === "maintainer")
+    );
+  const canDeleteSubject = (subject) =>
+    Boolean(
+      auth.isAuthenticated &&
+        subject &&
+        (isAdmin || subject.current_user_access_level === "owner")
+    );
+  const canManageSelectedSubject = Boolean(
+    canMaintainSubject(selectedSubject)
+  );
 
   useEffect(() => {
     if (!selectedSubjectId || subjects.some((subject) => subject.id === selectedSubjectId)) {
@@ -464,6 +489,14 @@ export default function App() {
     setNoteGroupMode("overview");
     navigate("/");
   }, [navigate, selectedSubjectId, subjects]);
+
+  useEffect(() => {
+    if (!canManageSelectedSubject) {
+      setIsSubjectManagementOpen(false);
+      setAutoJobsByNoteGroupId({});
+    }
+  }, [canManageSelectedSubject]);
+
   const selectedModule = useMemo(
     () => modules.find((module) => module.id === selectedModuleId),
     [modules, selectedModuleId]
@@ -485,7 +518,7 @@ export default function App() {
     : selectedNoteGroup?.title || "Untitled note group";
   const isTopicScope = Boolean(selectedTopicId);
   const canEditCurrentCards = Boolean(
-    canUseProtectedActions && selectedNoteGroupId && !selectedTopicId
+    canManageSelectedSubject && selectedNoteGroupId && !selectedTopicId
   );
   const focusQuestionCard = useMemo(
     () => questionCards.find((card) => card.id === focusQuestionCardId),
@@ -817,6 +850,7 @@ export default function App() {
   const isSourceReady = sourceConfirmed;
   const canReorderNoteGroups = Boolean(
     selectedModuleId &&
+      canManageSelectedSubject &&
       !selectedNoteGroupId &&
       !selectedTopicId &&
       !chipFilterIds.length &&
@@ -854,8 +888,6 @@ export default function App() {
     (focusQuestionCard.correct_option_indices || []).length > 1
       ? "multi"
       : focusQuestionCard?.type || "mcq";
-  const isAdmin = currentUserProfile?.app_role === "admin";
-
   useEffect(() => {
     if (auth.loading) {
       return;
@@ -864,6 +896,7 @@ export default function App() {
       setCurrentUserProfile(null);
       setCurrentUserError("");
       setIsAdminPanelOpen(false);
+      setIsSubjectManagementOpen(false);
       return;
     }
 
@@ -883,6 +916,7 @@ export default function App() {
           setCurrentUserProfile(null);
           setCurrentUserError(error.message || "Failed to load user profile");
           setIsAdminPanelOpen(false);
+          setIsSubjectManagementOpen(false);
         }
       });
     return () => {
@@ -917,6 +951,9 @@ export default function App() {
   }, [routeSubjectCode, routeModuleCode, routeNoteGroupCode, routeTopicCode, routeCreateNoteGroup]);
 
   useEffect(() => {
+    if (!isAuthReadyForRouteRestore(auth)) {
+      return;
+    }
     if (!routeSubjectPageCode) {
       return;
     }
@@ -953,9 +990,12 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [routeSubjectPageCode]);
+  }, [auth.loading, routeSubjectPageCode]);
 
   useEffect(() => {
+    if (!isAuthReadyForRouteRestore(auth)) {
+      return;
+    }
     if (!routeModuleCode || routeNoteGroupCode || routeTopicCode) {
       return;
     }
@@ -992,9 +1032,19 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [routeSubjectCode, routeModuleCode, routeNoteGroupCode, routeTopicCode, routeCreateNoteGroup]);
+  }, [
+    auth.loading,
+    routeSubjectCode,
+    routeModuleCode,
+    routeNoteGroupCode,
+    routeTopicCode,
+    routeCreateNoteGroup
+  ]);
 
   useEffect(() => {
+    if (!isAuthReadyForRouteRestore(auth)) {
+      return;
+    }
     if (!routeTopicCode) {
       return;
     }
@@ -1032,7 +1082,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [routeSubjectCode, routeModuleCode, routeTopicCode]);
+  }, [auth.loading, routeSubjectCode, routeModuleCode, routeTopicCode]);
 
   useEffect(() => {
     if (!selectedSubjectId) {
@@ -1245,7 +1295,7 @@ export default function App() {
   }, [routeTopicId, selectedModuleId, selectedTopicId, topicChips]);
 
   useEffect(() => {
-    if (!selectedModuleId) {
+    if (!selectedModuleId || !canManageSelectedSubject) {
       return;
     }
     loadAutoJobs(selectedModuleId).catch((error) => {
@@ -1254,7 +1304,7 @@ export default function App() {
       }
       toast.error(error.message || "Failed to check note group creation jobs.");
     });
-  }, [selectedModuleId]);
+  }, [selectedModuleId, canManageSelectedSubject]);
 
   useEffect(() => {
     if (!selectedNoteGroupId && !selectedTopicId) {
@@ -1710,6 +1760,9 @@ export default function App() {
   }, [isReviewing, reviewSummary, currentReviewCard, reviewStartTime, reviewFeedback, reviewDeleteLoading]);
 
   useEffect(() => {
+    if (!isAuthReadyForRouteRestore(auth)) {
+      return;
+    }
     if (!routeNoteGroupCode) {
       return;
     }
@@ -1739,7 +1792,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [routeSubjectCode, routeModuleCode, routeNoteGroupCode]);
+  }, [auth.loading, routeSubjectCode, routeModuleCode, routeNoteGroupCode]);
 
   useEffect(() => {
     if (routePanel) {
@@ -1857,6 +1910,16 @@ export default function App() {
     try {
       await auth.signInWithEmail(authEmail);
       setAuthMessage("Check your email for the sign-in link.");
+      const mailpitUrl = getLocalMailpitUrl();
+      if (mailpitUrl) {
+        toast.info("Open Mailpit to finish local sign in.", {
+          description: "Local Supabase captures magic-link emails in Mailpit.",
+          action: {
+            label: "Open Mailpit",
+            onClick: () => window.open(mailpitUrl, "_blank", "noopener,noreferrer")
+          }
+        });
+      }
     } catch (error) {
       setAuthUiError(error.message || "Failed to start sign in");
     } finally {
@@ -1881,6 +1944,7 @@ export default function App() {
       setIsModuleMetadataOpen(false);
       setCurrentUserProfile(null);
       setIsAdminPanelOpen(false);
+      setIsSubjectManagementOpen(false);
       navigate("/");
     } catch (error) {
       setAuthUiError(error.message || "Failed to sign out");
@@ -1889,7 +1953,7 @@ export default function App() {
     }
   };
 
-  const handleAdminSubjectUpdated = (updatedSubject) => {
+  const handleSubjectUpdated = (updatedSubject) => {
     setSubjects((current) =>
       current.map((subject) => (subject.id === updatedSubject.id ? updatedSubject : subject))
     );
@@ -1909,6 +1973,7 @@ export default function App() {
     setIsChatOpen(false);
     setIsMetadataOpen(false);
     setIsModuleMetadataOpen(false);
+    setIsSubjectManagementOpen(false);
     navigate(subject?.short_code ? subjectPath(subject.short_code) : "/");
   };
 
@@ -1935,8 +2000,10 @@ export default function App() {
   };
 
   const handleCreateSubject = async () => {
-    if (!canUseProtectedActions) {
-      setSidebarError("Sign in to create subjects.");
+    if (!canCreateSubjects) {
+      setSidebarError(
+        canUseProtectedActions ? "Creator access is required to create subjects." : "Sign in to create subjects."
+      );
       return;
     }
     if (!newSubjectTitle.trim()) {
@@ -1968,8 +2035,10 @@ export default function App() {
   };
 
   const handleOpenSubjectWizard = () => {
-    if (!canUseProtectedActions) {
-      setSidebarError("Sign in to create subjects.");
+    if (!canCreateSubjects) {
+      setSidebarError(
+        canUseProtectedActions ? "Creator access is required to create subjects." : "Sign in to create subjects."
+      );
       return;
     }
     setSubjectWizardMessages([]);
@@ -2022,8 +2091,10 @@ export default function App() {
   };
 
   const handleCreateSubjectFromWizard = async () => {
-    if (!canUseProtectedActions) {
-      setSubjectWizardError("Sign in to create subjects.");
+    if (!canCreateSubjects) {
+      setSubjectWizardError(
+        canUseProtectedActions ? "Creator access is required to create subjects." : "Sign in to create subjects."
+      );
       return;
     }
     if (!subjectWizardTitle.trim() || subjectWizardCreating) {
@@ -2058,11 +2129,13 @@ export default function App() {
   };
 
   const openSubjectMetadataModal = (subject) => {
-    if (!canUseProtectedActions) {
-      setSidebarError("Sign in to edit subjects.");
+    if (!subject) {
       return;
     }
-    if (!subject) {
+    if (!canMaintainSubject(subject)) {
+      setSidebarError(
+        canUseProtectedActions ? "Maintainer access is required to edit subjects." : "Sign in to edit subjects."
+      );
       return;
     }
     setEditingSubjectId(subject.id);
@@ -2074,6 +2147,12 @@ export default function App() {
   };
 
   const handleSaveSubjectMetadata = async (subjectId) => {
+    if (!canMaintainSubject(subjects.find((subject) => subject.id === subjectId))) {
+      setSubjectMetadataError(
+        canUseProtectedActions ? "Maintainer access is required to edit subjects." : "Sign in to edit subjects."
+      );
+      return;
+    }
     if (!subjectId) {
       return;
     }
@@ -2100,12 +2179,15 @@ export default function App() {
   };
 
   const handleDeleteSubject = async (subjectOverride) => {
-    if (!canUseProtectedActions) {
-      setSidebarError("Sign in to delete subjects.");
-      return;
-    }
     const subjectId = subjectOverride?.id || selectedSubjectId;
     if (!subjectId) {
+      return;
+    }
+    const subject = subjectOverride || selectedSubject;
+    if (!canDeleteSubject(subject)) {
+      setSidebarError(
+        canUseProtectedActions ? "Owner access is required to delete subjects." : "Sign in to delete subjects."
+      );
       return;
     }
     const subjectLabel =
@@ -2139,8 +2221,10 @@ export default function App() {
   };
 
   const handleOpenModuleWizard = () => {
-    if (!canUseProtectedActions) {
-      setSidebarError("Sign in to create modules.");
+    if (!canManageSelectedSubject) {
+      setSidebarError(
+        canUseProtectedActions ? "Maintainer access is required to create modules." : "Sign in to create modules."
+      );
       return;
     }
     setModuleWizardMessages([]);
@@ -2196,6 +2280,12 @@ export default function App() {
   };
 
   const handleCreateModuleFromWizard = async () => {
+    if (!canManageSelectedSubject) {
+      setModuleWizardError(
+        canUseProtectedActions ? "Maintainer access is required to create modules." : "Sign in to create modules."
+      );
+      return;
+    }
     if (!selectedSubjectId || !moduleWizardTitle.trim() || moduleWizardCreating) {
       return;
     }
@@ -2229,6 +2319,12 @@ export default function App() {
   };
 
   const handleDeleteModule = async (moduleOverride) => {
+    if (!canManageSelectedSubject) {
+      setSidebarError(
+        canUseProtectedActions ? "Maintainer access is required to delete modules." : "Sign in to delete modules."
+      );
+      return;
+    }
     const moduleId = moduleOverride?.id || selectedModuleId;
     if (!moduleId) {
       return;
@@ -2488,8 +2584,10 @@ export default function App() {
   };
 
   const handleStartAutoNoteGroup = () => {
-    if (!canUseProtectedActions) {
-      setSidebarError("Sign in to create note groups.");
+    if (!canManageSelectedSubject) {
+      setSidebarError(
+        canUseProtectedActions ? "Maintainer access is required to create note groups." : "Sign in to create note groups."
+      );
       return;
     }
     setNoteGroupMode("auto");
@@ -2509,6 +2607,12 @@ export default function App() {
   };
 
   const handleAutoCreateNoteGroup = async () => {
+    if (!canManageSelectedSubject) {
+      setAutoCreateError(
+        canUseProtectedActions ? "Maintainer access is required to create note groups." : "Sign in to create note groups."
+      );
+      return;
+    }
     const trimmedSource = noteGroupSource.trim();
     if (!trimmedSource) {
       setAutoCreateError("Unique ID is required before continuing.");
@@ -2559,6 +2663,12 @@ export default function App() {
   };
 
   const handleCreateModuleChip = async () => {
+    if (!canManageSelectedSubject) {
+      setSidebarError(
+        canUseProtectedActions ? "Maintainer access is required to create topics." : "Sign in to create topics."
+      );
+      return;
+    }
     const trimmed = moduleChipLabel.trim();
     if (!selectedModuleId || !trimmed) {
       return;
@@ -2586,6 +2696,12 @@ export default function App() {
   };
 
   const handleToggleNoteGroupChip = async (chipId, isChecked) => {
+    if (!canManageSelectedSubject) {
+      setStudyCardError(
+        canUseProtectedActions ? "Maintainer access is required to update topics." : "Sign in to update topics."
+      );
+      return;
+    }
     if (!selectedNoteGroupId) {
       return;
     }
@@ -2600,6 +2716,12 @@ export default function App() {
   };
 
   const handleNoteGroupChipSelectChange = async (selected) => {
+    if (!canManageSelectedSubject) {
+      setStudyCardError(
+        canUseProtectedActions ? "Maintainer access is required to update topics." : "Sign in to update topics."
+      );
+      return;
+    }
     if (!selectedNoteGroupId) {
       return;
     }
@@ -2703,6 +2825,10 @@ export default function App() {
   };
 
   const handleCancelAutoJob = async (jobId) => {
+    if (!canManageSelectedSubject) {
+      toast.error("Maintainer access is required to manage note group creation jobs.");
+      return;
+    }
     if (!jobId) {
       return;
     }
@@ -2722,6 +2848,10 @@ export default function App() {
   };
 
   const handleRetryAutoJob = async (jobId) => {
+    if (!canManageSelectedSubject) {
+      toast.error("Maintainer access is required to manage note group creation jobs.");
+      return;
+    }
     if (!jobId) {
       return;
     }
@@ -2744,8 +2874,10 @@ export default function App() {
   };
 
   const openModuleMetadataModal = () => {
-    if (!canUseProtectedActions) {
-      setModuleMetadataError("Sign in to edit module settings.");
+    if (!canManageSelectedSubject) {
+      setModuleMetadataError(
+        canUseProtectedActions ? "Maintainer access is required to edit module settings." : "Sign in to edit module settings."
+      );
       return;
     }
     if (!selectedModuleId) {
@@ -2763,6 +2895,12 @@ export default function App() {
   };
 
   const handleSaveModuleMetadata = async () => {
+    if (!canManageSelectedSubject) {
+      setModuleMetadataError(
+        canUseProtectedActions ? "Maintainer access is required to edit module settings." : "Sign in to edit module settings."
+      );
+      return;
+    }
     if (!selectedModuleId) {
       return;
     }
@@ -2805,8 +2943,10 @@ export default function App() {
   };
 
   const openMetadataModal = () => {
-    if (!canUseProtectedActions) {
-      setMetadataError("Sign in to edit note group metadata.");
+    if (!canManageSelectedSubject) {
+      setMetadataError(
+        canUseProtectedActions ? "Maintainer access is required to edit note group metadata." : "Sign in to edit note group metadata."
+      );
       return;
     }
     if (!selectedNoteGroupId) {
@@ -2818,6 +2958,12 @@ export default function App() {
   };
 
   const handleSaveMetadataTitle = async () => {
+    if (!canManageSelectedSubject) {
+      setMetadataError(
+        canUseProtectedActions ? "Maintainer access is required to edit note group metadata." : "Sign in to edit note group metadata."
+      );
+      return;
+    }
     if (!selectedNoteGroupId) {
       return;
     }
@@ -2842,6 +2988,12 @@ export default function App() {
   };
 
   const handleDeleteNoteGroup = async () => {
+    if (!canManageSelectedSubject) {
+      setSidebarError(
+        canUseProtectedActions ? "Maintainer access is required to delete note groups." : "Sign in to delete note groups."
+      );
+      return;
+    }
     if (!selectedNoteGroupId) {
       return;
     }
@@ -2874,6 +3026,12 @@ export default function App() {
   };
 
   const handleSaveTopic = async () => {
+    if (!canManageSelectedSubject) {
+      setTopicError(
+        canUseProtectedActions ? "Maintainer access is required to edit topics." : "Sign in to edit topics."
+      );
+      return;
+    }
     if (!selectedTopicId) {
       return;
     }
@@ -2902,6 +3060,12 @@ export default function App() {
   };
 
   const handleDeleteTopic = async () => {
+    if (!canManageSelectedSubject) {
+      setSidebarError(
+        canUseProtectedActions ? "Maintainer access is required to delete topics." : "Sign in to delete topics."
+      );
+      return;
+    }
     if (!selectedTopicId) {
       return;
     }
@@ -2934,6 +3098,12 @@ export default function App() {
   };
 
   const handleCreateStudyCard = async () => {
+    if (!canManageSelectedSubject) {
+      setStudyCardError(
+        canUseProtectedActions ? "Maintainer access is required to create study cards." : "Sign in to create study cards."
+      );
+      return;
+    }
     if (!selectedNoteGroupId || !newStudyCardContent.trim()) {
       return;
     }
@@ -2955,11 +3125,23 @@ export default function App() {
   };
 
   const openStudyCreateModal = () => {
+    if (!canManageSelectedSubject) {
+      setStudyCardError(
+        canUseProtectedActions ? "Maintainer access is required to create study cards." : "Sign in to create study cards."
+      );
+      return;
+    }
     setStudyCardError("");
     setIsStudyCreateOpen(true);
   };
 
   const handleEditStudyCard = (card) => {
+    if (!canManageSelectedSubject) {
+      setStudyCardError(
+        canUseProtectedActions ? "Maintainer access is required to edit study cards." : "Sign in to edit study cards."
+      );
+      return;
+    }
     setEditingStudyCardId(card.id);
     setEditingStudyCard({
       title: card.title || "",
@@ -2969,6 +3151,12 @@ export default function App() {
   };
 
   const handleSaveStudyCard = async (cardId) => {
+    if (!canManageSelectedSubject) {
+      setStudyCardError(
+        canUseProtectedActions ? "Maintainer access is required to edit study cards." : "Sign in to edit study cards."
+      );
+      return false;
+    }
     setStudyCardError("");
     try {
       const updated = await updateStudyCard(cardId, {
@@ -3000,6 +3188,12 @@ export default function App() {
   };
 
   const handleDeleteStudyCard = async (cardId) => {
+    if (!canManageSelectedSubject) {
+      setStudyCardError(
+        canUseProtectedActions ? "Maintainer access is required to delete study cards." : "Sign in to delete study cards."
+      );
+      return false;
+    }
     const confirmed = await requestConfirm({
       title: "Delete this study card?",
       description: "This removes the study card from the current note group.",
@@ -3024,6 +3218,12 @@ export default function App() {
   };
 
   const handleGenerateQuestions = async () => {
+    if (!canManageSelectedSubject) {
+      setQuestionCardError(
+        canUseProtectedActions ? "Maintainer access is required to generate question cards." : "Sign in to generate question cards."
+      );
+      return;
+    }
     if (!selectedNoteGroupId || studyCards.length === 0) {
       return;
     }
@@ -3305,6 +3505,12 @@ export default function App() {
   };
 
   const handleCreateQuestionCard = async () => {
+    if (!canManageSelectedSubject) {
+      setQuestionCardError(
+        canUseProtectedActions ? "Maintainer access is required to create question cards." : "Sign in to create question cards."
+      );
+      return;
+    }
     if (!selectedNoteGroupId || !newQuestionPrompt.trim()) {
       return;
     }
@@ -3335,8 +3541,10 @@ export default function App() {
   };
 
   const openQuestionCreateModal = () => {
-    if (!canUseProtectedActions) {
-      setQuestionCardError("Sign in to create question cards.");
+    if (!canManageSelectedSubject) {
+      setQuestionCardError(
+        canUseProtectedActions ? "Maintainer access is required to create question cards." : "Sign in to create question cards."
+      );
       return;
     }
     setQuestionCardError("");
@@ -3344,6 +3552,12 @@ export default function App() {
   };
 
   const handleEditQuestionCard = (card) => {
+    if (!canManageSelectedSubject) {
+      setQuestionCardError(
+        canUseProtectedActions ? "Maintainer access is required to edit question cards." : "Sign in to edit question cards."
+      );
+      return;
+    }
     setEditingQuestionCardId(card.id);
     setEditingQuestionCard({
       type: card.type,
@@ -3355,6 +3569,12 @@ export default function App() {
   };
 
   const handleSaveQuestionCard = async (cardId) => {
+    if (!canManageSelectedSubject) {
+      setQuestionCardError(
+        canUseProtectedActions ? "Maintainer access is required to edit question cards." : "Sign in to edit question cards."
+      );
+      return false;
+    }
     const options = parseOptions(editingQuestionCard.optionsText);
     const indices = parseIndices(editingQuestionCard.correctIndicesText);
     if (options.length < 2 || indices.length === 0 || editingQuestionCard.refs.length === 0) {
@@ -3405,6 +3625,12 @@ export default function App() {
   };
 
   const handleDeleteQuestionCard = async (cardId) => {
+    if (!canManageSelectedSubject) {
+      setQuestionCardError(
+        canUseProtectedActions ? "Maintainer access is required to delete question cards." : "Sign in to delete question cards."
+      );
+      return false;
+    }
     const confirmed = await requestConfirm({
       title: "Delete this question card?",
       description: "This cannot be undone.",
@@ -3759,7 +3985,8 @@ export default function App() {
       topics={filteredTopicOptions}
       selectedNoteGroupId={selectedNoteGroupId}
       selectedTopicId={selectedTopicId}
-      canCreateNoteGroup={canUseProtectedActions}
+      canCreateNoteGroup={canManageSelectedSubject}
+      showCreateNoteGroup={canUseProtectedActions}
       onSelectNoteGroup={handleSelectNoteGroup}
       onSelectTopic={handleSelectTopic}
       onCreateNoteGroup={handleStartAutoNoteGroup}
@@ -3777,9 +4004,25 @@ export default function App() {
                 type="button"
                 variant={isAdminPanelOpen ? "default" : "outline"}
                 size="sm"
-                onClick={() => setIsAdminPanelOpen((open) => !open)}
+                onClick={() => {
+                  setIsAdminPanelOpen((open) => !open);
+                  setIsSubjectManagementOpen(false);
+                }}
               >
                 Admin
+              </Button>
+            ) : null}
+            {canManageSelectedSubject ? (
+              <Button
+                type="button"
+                variant={isSubjectManagementOpen ? "default" : "outline"}
+                size="sm"
+                onClick={() => {
+                  setIsSubjectManagementOpen((open) => !open);
+                  setIsAdminPanelOpen(false);
+                }}
+              >
+                Subject
               </Button>
             ) : null}
             <Button
@@ -4493,14 +4736,14 @@ export default function App() {
                 value={newStudyCardTitle}
                 onChange={(event) => setNewStudyCardTitle(event.target.value)}
                 placeholder="New study card title"
-                disabled={!canUseProtectedActions || !selectedNoteGroupId}
+                disabled={!canManageSelectedSubject || !selectedNoteGroupId}
               />
               <textarea
                 value={newStudyCardContent}
                 onChange={(event) => setNewStudyCardContent(event.target.value)}
                 placeholder="New study card content"
                 rows={4}
-                disabled={!canUseProtectedActions || !selectedNoteGroupId}
+                disabled={!canManageSelectedSubject || !selectedNoteGroupId}
               />
               {chipOptions.length > 0 ? (
                 <Select
@@ -4532,7 +4775,7 @@ export default function App() {
                   className={primaryButtonClass}
                   type="button"
                   onClick={handleCreateStudyCard}
-                  disabled={!canUseProtectedActions || !selectedNoteGroupId || !newStudyCardContent.trim()}
+                  disabled={!canManageSelectedSubject || !selectedNoteGroupId || !newStudyCardContent.trim()}
                 >
                   Add study card
                 </button>
@@ -4618,7 +4861,7 @@ export default function App() {
                   className={primaryButtonClass}
                   type="button"
                   onClick={handleCreateQuestionCard}
-                  disabled={!canUseProtectedActions || !selectedNoteGroupId || !newQuestionPrompt.trim()}
+                  disabled={!canManageSelectedSubject || !selectedNoteGroupId || !newQuestionPrompt.trim()}
                 >
                   Add question card
                 </button>
@@ -5074,11 +5317,19 @@ export default function App() {
         sectionNav={sectionNavItems.length ? <SectionNav items={sectionNavItems} /> : null}
       >
         <>
-            {isAdminPanelOpen && isAdmin ? (
+            {isSubjectManagementOpen && selectedSubject && canManageSelectedSubject ? (
+              <SubjectManagementPanel
+                subject={selectedSubject}
+                currentUser={currentUserProfile}
+                isAdmin={isAdmin}
+                onSubjectUpdated={handleSubjectUpdated}
+                onClose={() => setIsSubjectManagementOpen(false)}
+              />
+            ) : isAdminPanelOpen && isAdmin ? (
               <AdminPanel
                 subjects={subjects}
                 selectedSubjectId={selectedSubjectId}
-                onSubjectUpdated={handleAdminSubjectUpdated}
+                onSubjectUpdated={handleSubjectUpdated}
                 onClose={() => setIsAdminPanelOpen(false)}
               />
             ) : routeRestoreError ? (
@@ -5093,8 +5344,11 @@ export default function App() {
               <SubjectIndex
                 subjects={subjects}
                 error={sidebarError}
-                canCreate={canUseProtectedActions}
-                canEdit={canUseProtectedActions}
+                canCreate={canCreateSubjects}
+                showCreate={canUseProtectedActions}
+                showEditControls={canUseProtectedActions}
+                canEditSubject={canMaintainSubject}
+                canDeleteSubject={canDeleteSubject}
                 onOpenWizard={handleOpenSubjectWizard}
                 onSelect={(subject) =>
                   handleSelectSubject({
@@ -5116,8 +5370,10 @@ export default function App() {
                 dueCounts={moduleDueCounts}
                 subjectDescription={selectedSubject?.description}
                 error={sidebarError}
-                canCreate={canUseProtectedActions}
-                canEdit={canUseProtectedActions}
+                canCreate={canManageSelectedSubject}
+                showCreate={canUseProtectedActions}
+                canEdit={canManageSelectedSubject}
+                showEditControls={canUseProtectedActions}
                 onOpenWizard={handleOpenModuleWizard}
                 onBack={handleBreadcrumbHome}
                 onSelect={(module) =>
@@ -5142,7 +5398,7 @@ export default function App() {
                 autoCreateLoading={autoCreateLoading}
                 rawTextDisabled={!selectedModuleId}
                 createDisabled={
-                  !canUseProtectedActions || !selectedModuleId || !isSourceReady || !autoRawText.trim()
+                  !canManageSelectedSubject || !selectedModuleId || !isSourceReady || !autoRawText.trim()
                 }
                 additionalInstructionsMeta={`Word count: ${countWords(autoAdditionalInstructions)}/500`}
                 onUniqueIdChange={handleUniqueIdChange}
@@ -5223,7 +5479,7 @@ export default function App() {
                             type="button"
                             variant="outline"
                             onClick={openModuleMetadataModal}
-                            disabled={!canUseProtectedActions || !selectedModuleId || isReviewOverlayVisible}
+                            disabled={!canManageSelectedSubject || !selectedModuleId || isReviewOverlayVisible}
                           >
                             Module settings
                           </Button>
@@ -5231,7 +5487,7 @@ export default function App() {
                             type="button"
                             variant="destructive"
                             onClick={handleDeleteModule}
-                            disabled={!canUseProtectedActions || !selectedModuleId || isReviewOverlayVisible}
+                            disabled={!canManageSelectedSubject || !selectedModuleId || isReviewOverlayVisible}
                           >
                             Delete module
                           </Button>
@@ -5526,7 +5782,7 @@ export default function App() {
                                   className={primaryButtonClass}
                                   type="button"
                                   onClick={handleSaveTopic}
-                                  disabled={!canUseProtectedActions || topicSaving || !topicTitleDraft.trim()}
+                                  disabled={!canManageSelectedSubject || topicSaving || !topicTitleDraft.trim()}
                                 >
                                   {topicSaving ? "Saving..." : "Rename topic"}
                                 </button>
@@ -5534,7 +5790,7 @@ export default function App() {
                                   className={destructiveOutlineButtonClass}
                                   type="button"
                                   onClick={handleDeleteTopic}
-                                  disabled={!canUseProtectedActions || topicSaving || isReviewOverlayVisible}
+                                  disabled={!canManageSelectedSubject || topicSaving || isReviewOverlayVisible}
                                 >
                                   Delete topic
                                 </button>
@@ -5615,7 +5871,7 @@ export default function App() {
                                     className={outlineButtonClass}
                                     type="button"
                                     onClick={openMetadataModal}
-                                    disabled={!canUseProtectedActions || !selectedNoteGroupId || isReviewOverlayVisible}
+                                    disabled={!canManageSelectedSubject || !selectedNoteGroupId || isReviewOverlayVisible}
                                   >
                                     Edit metadata
                                   </button>
@@ -5623,7 +5879,7 @@ export default function App() {
                                     className={destructiveOutlineButtonClass}
                                     type="button"
                                     onClick={handleDeleteNoteGroup}
-                                    disabled={!canUseProtectedActions || !selectedNoteGroupId || isReviewOverlayVisible}
+                                    disabled={!canManageSelectedSubject || !selectedNoteGroupId || isReviewOverlayVisible}
                                   >
                                     Delete note group
                                   </button>
@@ -5731,6 +5987,7 @@ export default function App() {
                           questionCards={questionCards}
                           topicChips={topicChips}
                           canEdit={canEditCurrentCards}
+                          showEditControls={canUseProtectedActions}
                           editingStudyCardId={editingStudyCardId}
                           editingStudyCard={editingStudyCard}
                           editingQuestionCardId={editingQuestionCardId}
@@ -5772,9 +6029,10 @@ export default function App() {
                             </p>
                           </div>
                         </section>
-                        <StudyCardList
+                      <StudyCardList
                           cards={filteredStudyCards}
                           canEdit={canEditCurrentCards}
+                          showEditControls={canUseProtectedActions}
                           topicChips={topicChips}
                           editingStudyCardId={editingStudyCardId}
                           editingStudyCard={editingStudyCard}
@@ -5841,13 +6099,14 @@ export default function App() {
                           </p>
                         </section>
 
-                        <QuestionCardList
+                      <QuestionCardList
                           cards={questionCardsForDisplay}
                           masteryFilter={masteryFilter}
                           reviewCount={reviewCount}
                           generationStatus={questionJobStatus}
                           generating={isGeneratingQuestions}
                           canEdit={canEditCurrentCards}
+                          showEditControls={canUseProtectedActions}
                           canReview={canUseProtectedActions}
                           editingQuestionCardId={editingQuestionCardId}
                           editingQuestionCard={editingQuestionCard}

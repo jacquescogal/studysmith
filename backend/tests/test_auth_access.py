@@ -2,6 +2,7 @@ import os
 import unittest
 from datetime import datetime, timedelta, timezone
 from importlib import reload
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -16,10 +17,26 @@ from sqlalchemy.pool import StaticPool
 import app.config as config
 from app.db import Base
 from app.models import Subject
-from app.schemas import SubjectAccessOut, UserOut
+from app.schemas import SubjectAccessOut, SubjectActivityEventOut, UserOut
 
 
 class AuthConfigTests(unittest.TestCase):
+    def test_env_files_load_from_root_then_backend_without_overrides(self):
+        calls = []
+
+        def fake_load_dotenv(path, override=False):
+            calls.append((Path(path), override))
+
+        config._load_env_files(load=fake_load_dotenv)
+
+        self.assertEqual(
+            calls,
+            [
+                (config.REPO_ROOT / ".env", False),
+                (config.BASE_DIR / ".env", False),
+            ],
+        )
+
     def test_admin_emails_are_normalized(self):
         try:
             with patch.dict(
@@ -27,6 +44,7 @@ class AuthConfigTests(unittest.TestCase):
                 {
                     "ADMIN_EMAILS": " Admin@Example.com,second@example.com ,,,",
                     "SUPABASE_URL": "https://example.supabase.co",
+                    "SUPABASE_SECRET_KEY": "sb_secret_test",
                     "SUPABASE_JWKS_URL": "https://example.supabase.co/auth/v1/.well-known/jwks.json",
                     "SUPABASE_JWT_ISSUER": "https://example.supabase.co/auth/v1",
                     "SUPABASE_JWT_AUDIENCE": "authenticated",
@@ -36,6 +54,7 @@ class AuthConfigTests(unittest.TestCase):
                 reload(config)
 
                 self.assertEqual(config.settings.admin_emails, {"admin@example.com", "second@example.com"})
+                self.assertEqual(config.settings.supabase_secret_key, "sb_secret_test")
                 self.assertEqual(config.settings.supabase_jwt_audience, "authenticated")
         finally:
             reload(config)
@@ -153,7 +172,7 @@ class AccessModelTests(unittest.TestCase):
                     id="access-2",
                     subject_id="subject-1",
                     user_id="user-1",
-                    access_level="edit",
+                    access_level="maintainer",
                 )
             )
 
@@ -215,7 +234,7 @@ class AccessModelTests(unittest.TestCase):
                     id="access-1",
                     subject_id="subject-1",
                     user_id="user-1",
-                    access_level="admin",
+                    access_level="edit",
                 )
             )
 
@@ -225,12 +244,26 @@ class AccessModelTests(unittest.TestCase):
             db.close()
 
     def test_user_and_subject_access_schemas_serialize_orm_models(self):
+        from app.models import SubjectActivityEvent
+
         db = self.SessionLocal()
         try:
             user, _, grant = self._add_owner_subject_and_grant(db)
+            event = SubjectActivityEvent(
+                id="event-1",
+                subject_id="subject-1",
+                actor_user_id="user-1",
+                event_type="created",
+                entity_type="module",
+                entity_id="module-1",
+                entity_title="Module",
+            )
+            db.add(event)
+            db.commit()
 
             user_out = UserOut.model_validate(user)
             grant_out = SubjectAccessOut.model_validate(grant)
+            event_out = SubjectActivityEventOut.model_validate(event)
 
             self.assertEqual(user_out.id, "user-1")
             self.assertEqual(user_out.email, "owner@example.com")
@@ -239,6 +272,11 @@ class AccessModelTests(unittest.TestCase):
             self.assertEqual(grant_out.subject_id, "subject-1")
             self.assertEqual(grant_out.user_id, "user-1")
             self.assertEqual(grant_out.access_level, "owner")
+            self.assertEqual(event_out.id, "event-1")
+            self.assertEqual(event_out.actor_user_id, "user-1")
+            self.assertEqual(event_out.actor_email, "owner@example.com")
+            self.assertEqual(event_out.event_type, "created")
+            self.assertEqual(event_out.entity_type, "module")
         finally:
             db.close()
 
@@ -309,6 +347,27 @@ class AuthResolutionTests(unittest.TestCase):
 
         self.assertEqual(exc.exception.status_code, 401)
         self.assertEqual(exc.exception.detail, "Invalid authentication token")
+
+    def test_jwt_validation_allows_supabase_es256_signing_keys(self):
+        from app.auth import validate_supabase_jwt
+
+        expected_claims = {"sub": "supabase-user", "email": "user@example.com"}
+
+        def fake_decode(token, key, algorithms, audience, issuer, options):
+            if "ES256" not in algorithms:
+                raise jwt.InvalidAlgorithmError("The specified alg value is not allowed")
+            return expected_claims
+
+        with (
+            patch("app.auth.settings.supabase_jwks_url", "https://example.supabase.co/jwks.json"),
+            patch("app.auth.PyJWKClient") as jwks_client,
+            patch("app.auth.jwt.decode", side_effect=fake_decode),
+        ):
+            jwks_client.return_value.get_signing_key_from_jwt.return_value = SimpleNamespace(key="ec-key")
+
+            claims = validate_supabase_jwt("es256-token")
+
+        self.assertEqual(claims, expected_claims)
 
     def test_created_profile_persists_after_session_closes(self):
         from app.auth import get_or_create_user_from_claims
@@ -653,25 +712,25 @@ class SubjectAccessTests(unittest.TestCase):
         try:
             owner = User(id="owner", supabase_user_id="owner-sub", email="owner@example.com", app_role="creator")
             reader = User(id="reader", supabase_user_id="reader-sub", email="reader@example.com", app_role="reader")
-            editor = User(id="editor", supabase_user_id="editor-sub", email="editor@example.com", app_role="reader")
+            maintainer = User(id="maintainer", supabase_user_id="maintainer-sub", email="maintainer@example.com", app_role="reader")
             outsider = User(id="outsider", supabase_user_id="out-sub", email="out@example.com", app_role="reader")
             subject = Subject(id="subject-1", title="Private", owner_user_id="owner", visibility="private")
             db.add_all(
                 [
                     owner,
                     reader,
-                    editor,
+                    maintainer,
                     outsider,
                     subject,
-                    SubjectAccess(id="grant-read", subject_id="subject-1", user_id="reader", access_level="read"),
-                    SubjectAccess(id="grant-edit", subject_id="subject-1", user_id="editor", access_level="edit"),
+                    SubjectAccess(id="grant-reader", subject_id="subject-1", user_id="reader", access_level="reader"),
+                    SubjectAccess(id="grant-maintainer", subject_id="subject-1", user_id="maintainer", access_level="maintainer"),
                 ]
             )
             db.commit()
             stored = db.get(Subject, "subject-1")
             self.assertTrue(can_read_subject(owner, stored))
             self.assertTrue(can_read_subject(reader, stored))
-            self.assertTrue(can_edit_subject(editor, stored))
+            self.assertTrue(can_edit_subject(maintainer, stored))
             self.assertFalse(can_edit_subject(reader, stored))
             self.assertFalse(can_read_subject(outsider, stored))
         finally:
@@ -697,14 +756,14 @@ class SubjectAccessTests(unittest.TestCase):
         reader = User(id="reader", supabase_user_id="reader-sub", email="reader@example.com", app_role="reader")
         subject = Subject(id="subject-1", title="Private", visibility="private")
         subject.access_grants = [
-            SubjectAccess(id="grant-read", subject_id="subject-1", user_id="reader", access_level="read")
+            SubjectAccess(id="grant-reader", subject_id="subject-1", user_id="reader", access_level="reader")
         ]
 
         with self.assertRaises(HTTPException) as exc:
             require_subject_edit(reader, subject)
 
         self.assertEqual(exc.exception.status_code, 403)
-        self.assertEqual(exc.exception.detail, "Edit access required")
+        self.assertEqual(exc.exception.detail, "Maintainer access required")
 
     def test_grant_owner_access_creates_owner_grant(self):
         from app.access import grant_owner_access
@@ -728,7 +787,7 @@ class SubjectAccessTests(unittest.TestCase):
         finally:
             db.close()
 
-    def test_grant_owner_access_updates_existing_read_grant_to_owner(self):
+    def test_grant_owner_access_updates_existing_reader_grant_to_owner(self):
         from app.access import grant_owner_access
         from app.models import SubjectAccess, User
 
@@ -736,7 +795,7 @@ class SubjectAccessTests(unittest.TestCase):
         try:
             user = User(id="user-1", supabase_user_id="user-sub", email="user@example.com", app_role="reader")
             subject = Subject(id="subject-1", title="Private", visibility="private")
-            existing = SubjectAccess(id="grant-read", subject_id="subject-1", user_id="user-1", access_level="read")
+            existing = SubjectAccess(id="grant-reader", subject_id="subject-1", user_id="user-1", access_level="reader")
             db.add_all([user, subject, existing])
             db.commit()
 
@@ -745,7 +804,7 @@ class SubjectAccessTests(unittest.TestCase):
 
             stored_grants = db.query(SubjectAccess).filter(SubjectAccess.subject_id == "subject-1").all()
             stored_subject = db.get(Subject, "subject-1")
-            self.assertEqual(grant.id, "grant-read")
+            self.assertEqual(grant.id, "grant-reader")
             self.assertEqual(len(stored_grants), 1)
             self.assertEqual(stored_grants[0].access_level, "owner")
             self.assertIsNone(stored_subject.owner_user_id)
@@ -930,21 +989,21 @@ class SubjectRouteAuthorizationTests(unittest.TestCase):
             grant = upsert_subject_access(
                 "subject-1",
                 "reader",
-                SubjectAccessGrantUpdate(access_level="read"),
+                SubjectAccessGrantUpdate(access_level="reader"),
                 db=db,
                 current_user=owner,
             )
             self.assertEqual(grant.user_id, reader.id)
-            self.assertEqual(grant.access_level, "read")
+            self.assertEqual(grant.access_level, "reader")
 
             updated = upsert_subject_access(
                 "subject-1",
                 "reader",
-                SubjectAccessGrantUpdate(access_level="edit"),
+                SubjectAccessGrantUpdate(access_level="maintainer"),
                 db=db,
                 current_user=owner,
             )
-            self.assertEqual(updated.access_level, "edit")
+            self.assertEqual(updated.access_level, "maintainer")
 
             result = delete_subject_access("subject-1", "reader", db=db, current_user=owner)
             self.assertEqual(result, {"deleted": True})
@@ -952,7 +1011,7 @@ class SubjectRouteAuthorizationTests(unittest.TestCase):
         finally:
             db.close()
 
-    def test_edit_grant_cannot_manage_subject_access(self):
+    def test_maintainer_can_manage_non_owner_subject_access(self):
         from app.main import upsert_subject_access
         from app.models import SubjectAccess, User
         from app.schemas import SubjectAccessGrantUpdate
@@ -960,23 +1019,111 @@ class SubjectRouteAuthorizationTests(unittest.TestCase):
         db = self.SessionLocal()
         try:
             owner = User(id="owner", supabase_user_id="owner-sub", email="owner@example.com", app_role="creator")
-            editor = User(id="editor", supabase_user_id="editor-sub", email="editor@example.com", app_role="reader")
+            maintainer = User(id="maintainer", supabase_user_id="maintainer-sub", email="maintainer@example.com", app_role="reader")
             reader = User(id="reader", supabase_user_id="reader-sub", email="reader@example.com", app_role="reader")
             subject = Subject(id="subject-1", title="Subject", owner_user_id=owner.id, visibility="private")
-            grant = SubjectAccess(id="editor-grant", subject_id=subject.id, user_id=editor.id, access_level="edit")
-            db.add_all([owner, editor, reader, subject, grant])
+            grant = SubjectAccess(id="maintainer-grant", subject_id=subject.id, user_id=maintainer.id, access_level="maintainer")
+            db.add_all([owner, maintainer, reader, subject, grant])
             db.commit()
+
+            updated = upsert_subject_access(
+                "subject-1",
+                "reader",
+                SubjectAccessGrantUpdate(access_level="reader"),
+                db=db,
+                current_user=maintainer,
+            )
+            self.assertEqual(updated.access_level, "reader")
 
             with self.assertRaises(HTTPException) as exc:
                 upsert_subject_access(
                     "subject-1",
                     "reader",
-                    SubjectAccessGrantUpdate(access_level="read"),
+                    SubjectAccessGrantUpdate(access_level="owner"),
                     db=db,
-                    current_user=editor,
+                    current_user=maintainer,
                 )
 
             self.assertEqual(exc.exception.status_code, 403)
+        finally:
+            db.close()
+
+    def test_owner_transfer_demotes_previous_owner_to_maintainer(self):
+        from app.main import upsert_subject_access
+        from app.models import SubjectAccess, User
+        from app.schemas import SubjectAccessGrantUpdate
+        from sqlalchemy import text
+
+        db = self.SessionLocal()
+        try:
+            db.execute(
+                text(
+                    "CREATE UNIQUE INDEX uq_test_subject_access_single_owner "
+                    "ON subject_access(subject_id) WHERE access_level = 'owner'"
+                )
+            )
+            owner = User(id="owner", supabase_user_id="owner-sub", email="owner@example.com", app_role="creator")
+            next_owner = User(id="next-owner", supabase_user_id="next-owner-sub", email="next@example.com", app_role="creator")
+            subject = Subject(id="subject-1", title="Subject", owner_user_id=owner.id, visibility="private")
+            owner_grant = SubjectAccess(id="owner-grant", subject_id=subject.id, user_id=owner.id, access_level="owner")
+            next_owner_grant = SubjectAccess(
+                id="next-owner-grant",
+                subject_id=subject.id,
+                user_id=next_owner.id,
+                access_level="reader",
+            )
+            db.add_all([owner, next_owner, subject, owner_grant, next_owner_grant])
+            db.commit()
+
+            grant = upsert_subject_access(
+                "subject-1",
+                "next-owner",
+                SubjectAccessGrantUpdate(access_level="owner"),
+                db=db,
+                current_user=owner,
+            )
+
+            db.refresh(subject)
+            self.assertEqual(subject.owner_user_id, "next-owner")
+            self.assertEqual(grant.access_level, "owner")
+            self.assertEqual(owner_grant.access_level, "maintainer")
+            self.assertEqual(next_owner_grant.access_level, "owner")
+        finally:
+            db.close()
+
+    def test_owner_cannot_downgrade_their_own_owner_grant(self):
+        from app.main import upsert_subject_access
+        from app.models import SubjectAccess, User
+        from app.schemas import SubjectAccessGrantUpdate
+
+        db = self.SessionLocal()
+        try:
+            owner = User(id="owner", supabase_user_id="owner-sub", email="owner@example.com", app_role="creator")
+            subject = Subject(id="subject-1", title="Subject", owner_user_id=owner.id, visibility="private")
+            owner_grant = SubjectAccess(
+                id="owner-grant",
+                subject_id=subject.id,
+                user_id=owner.id,
+                access_level="owner",
+            )
+            db.add_all([owner, subject, owner_grant])
+            db.commit()
+
+            with self.assertRaises(HTTPException) as exc:
+                upsert_subject_access(
+                    "subject-1",
+                    "owner",
+                    SubjectAccessGrantUpdate(access_level="maintainer"),
+                    db=db,
+                    current_user=owner,
+                )
+
+            db.refresh(subject)
+            db.refresh(owner_grant)
+            self.assertEqual(exc.exception.status_code, 400)
+            self.assertEqual(exc.exception.detail, "Transfer ownership before changing the owner role")
+            self.assertEqual(subject.owner_user_id, "owner")
+            self.assertEqual(owner_grant.access_level, "owner")
         finally:
             db.close()
 
@@ -1059,12 +1206,22 @@ class RouteAccessEnforcementTests(unittest.TestCase):
             QuestionCard,
             StudyCard,
             SubjectAccess,
+            SubjectShortCode,
+            ModuleShortCode,
+            NoteGroupShortCode,
+            TopicChip,
+            TopicChipShortCode,
             User,
         )
 
         owner = User(id="owner", supabase_user_id="owner-sub", email="owner@example.com", app_role="creator")
         reader = User(id="reader", supabase_user_id="reader-sub", email="reader@example.com", app_role="reader")
-        editor = User(id="editor", supabase_user_id="editor-sub", email="editor@example.com", app_role="reader")
+        maintainer = User(
+            id="maintainer",
+            supabase_user_id="maintainer-sub",
+            email="maintainer@example.com",
+            app_role="reader",
+        )
         outsider = User(
             id="outsider",
             supabase_user_id="outsider-sub",
@@ -1087,6 +1244,7 @@ class RouteAccessEnforcementTests(unittest.TestCase):
         module = Module(id="module-1", subject_id="private-subject", title="Private Module")
         public_module = Module(id="public-module", subject_id="public-subject", title="Public Module")
         outsider_module = Module(id="outsider-module", subject_id="outsider-subject", title="Outsider Module")
+        public_topic = TopicChip(id="public-topic", module_id="public-module", label="Public Topic")
         note_group = NoteGroup(
             id="note-group-1",
             module_id="module-1",
@@ -1115,12 +1273,12 @@ class RouteAccessEnforcementTests(unittest.TestCase):
             study_card_refs_json='["study-card-1"]',
             stale=False,
         )
-        job = Job(id="job-1", type="note_group_auto_generation", status="queued", note_group_id="note-group-1")
+        job = Job(id="job-1", type="NOTE_GROUP_AUTO_GENERATION", status="queued", note_group_id="note-group-1")
         db.add_all(
             [
                 owner,
                 reader,
-                editor,
+                maintainer,
                 outsider,
                 private_subject,
                 public_subject,
@@ -1128,6 +1286,7 @@ class RouteAccessEnforcementTests(unittest.TestCase):
                 module,
                 public_module,
                 outsider_module,
+                public_topic,
                 note_group,
                 inaccessible_duplicate,
                 study_card,
@@ -1137,20 +1296,26 @@ class RouteAccessEnforcementTests(unittest.TestCase):
                     id="reader-grant",
                     subject_id="private-subject",
                     user_id="reader",
-                    access_level="read",
+                    access_level="reader",
                 ),
                 SubjectAccess(
-                    id="editor-grant",
+                    id="maintainer-grant",
                     subject_id="private-subject",
-                    user_id="editor",
-                    access_level="edit",
+                    user_id="maintainer",
+                    access_level="maintainer",
                 ),
+                SubjectShortCode(subject_id="private-subject", short_code="priv"),
+                SubjectShortCode(subject_id="public-subject", short_code="pub"),
+                ModuleShortCode(module_id="public-module", short_code="mod"),
+                NoteGroupShortCode(note_group_id="note-group-1", short_code="ng"),
+                TopicChipShortCode(topic_chip_id="public-topic", short_code="topic"),
             ]
         )
         db.commit()
-        return owner, reader, editor, outsider
+        return owner, reader, maintainer, outsider
 
-    def _client(self, db):
+    def _client(self, db, user=None):
+        from app.auth import AuthContext, get_auth_context
         from app.db import get_db
         from app.main import app
 
@@ -1158,6 +1323,8 @@ class RouteAccessEnforcementTests(unittest.TestCase):
             yield db
 
         app.dependency_overrides[get_db] = override_db
+        if user is not None:
+            app.dependency_overrides[get_auth_context] = lambda: AuthContext(user=user)
         self.addCleanup(app.dependency_overrides.clear)
         return TestClient(app)
 
@@ -1179,6 +1346,26 @@ class RouteAccessEnforcementTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_anonymous_user_can_restore_public_subject_route_only(self):
+        db = self.SessionLocal()
+        try:
+            self._seed_private_course(db)
+            client = self._client(db)
+
+            public_response = client.get("/routes/app/subject/pub")
+            private_response = client.get("/routes/app/subject/priv")
+            public_modules_response = client.get("/subjects/public-subject/modules")
+            private_modules_response = client.get("/subjects/private-subject/modules")
+
+            self.assertEqual(public_response.status_code, 200)
+            self.assertEqual(public_response.json()["subject_id"], "public-subject")
+            self.assertEqual(private_response.status_code, 404)
+            self.assertEqual(public_modules_response.status_code, 200)
+            self.assertEqual(public_modules_response.json()[0]["id"], "public-module")
+            self.assertEqual(private_modules_response.status_code, 404)
+        finally:
+            db.close()
+
     def test_list_subjects_returns_only_readable_subjects(self):
         from app.main import list_subjects
 
@@ -1189,19 +1376,22 @@ class RouteAccessEnforcementTests(unittest.TestCase):
             subjects = list_subjects(db=db, current_user=reader)
 
             self.assertEqual({subject.id for subject in subjects}, {"private-subject", "public-subject"})
+            levels_by_id = {subject.id: subject.current_user_access_level for subject in subjects}
+            self.assertEqual(levels_by_id["private-subject"], "reader")
+            self.assertEqual(levels_by_id["public-subject"], "reader")
         finally:
             db.close()
 
-    def test_subject_modules_require_read_and_module_creation_requires_edit(self):
+    def test_subject_modules_require_read_and_module_creation_requires_maintainer(self):
         from app.main import create_subject_module, list_subject_modules
         from app.schemas import ModuleCreate
 
         db = self.SessionLocal()
         try:
-            _, reader, editor, outsider = self._seed_private_course(db)
+            _, reader, maintainer, outsider = self._seed_private_course(db)
             client = self._client(db)
 
-            self.assertEqual(client.get("/subjects/private-subject/modules").status_code, 401)
+            self.assertEqual(client.get("/subjects/private-subject/modules").status_code, 404)
             with self.assertRaises(HTTPException) as exc:
                 list_subject_modules("private-subject", db=db, current_user=outsider)
             self.assertEqual(exc.exception.status_code, 404)
@@ -1218,11 +1408,45 @@ class RouteAccessEnforcementTests(unittest.TestCase):
 
             module = create_subject_module(
                 "private-subject",
-                ModuleCreate(title="Editor Module"),
+                ModuleCreate(title="Maintainer Module"),
                 db=db,
-                current_user=editor,
+                current_user=maintainer,
             )
             self.assertEqual(module.subject_id, "private-subject")
+        finally:
+            db.close()
+
+    def test_module_creation_records_subject_activity_for_maintainers(self):
+        from app.main import create_subject_module, list_subject_activity
+        from app.models import SubjectActivityEvent
+        from app.schemas import ModuleCreate
+
+        db = self.SessionLocal()
+        try:
+            _, reader, maintainer, _ = self._seed_private_course(db)
+
+            create_subject_module(
+                "private-subject",
+                ModuleCreate(title="Maintainer Module"),
+                db=db,
+                current_user=maintainer,
+            )
+
+            event = db.query(SubjectActivityEvent).one()
+            self.assertEqual(event.subject_id, "private-subject")
+            self.assertEqual(event.actor_user_id, "maintainer")
+            self.assertEqual(event.event_type, "created")
+            self.assertEqual(event.entity_type, "module")
+            self.assertEqual(event.entity_title, "Maintainer Module")
+
+            with self.assertRaises(HTTPException) as exc:
+                list_subject_activity("private-subject", db=db, current_user=reader)
+            self.assertEqual(exc.exception.status_code, 403)
+
+            activity = list_subject_activity("private-subject", db=db, current_user=maintainer)
+            self.assertEqual(len(activity), 1)
+            self.assertEqual(activity[0]["actor_email"], "maintainer@example.com")
+            self.assertEqual(activity[0]["entity_title"], "Maintainer Module")
         finally:
             db.close()
 
@@ -1234,7 +1458,7 @@ class RouteAccessEnforcementTests(unittest.TestCase):
             _, reader, _, outsider = self._seed_private_course(db)
             client = self._client(db)
 
-            self.assertEqual(client.get("/modules/module-1").status_code, 401)
+            self.assertEqual(client.get("/modules/module-1").status_code, 404)
             for route_call, item_id in (
                 (get_module, "module-1"),
                 (get_note_group, "note-group-1"),
@@ -1247,7 +1471,7 @@ class RouteAccessEnforcementTests(unittest.TestCase):
         finally:
             db.close()
 
-    def test_reader_cannot_mutate_subject_module_note_group_or_cards_but_editor_can(self):
+    def test_reader_cannot_mutate_subject_module_note_group_or_cards_but_maintainer_can(self):
         from app.main import (
             update_module,
             update_note_group_title,
@@ -1259,7 +1483,7 @@ class RouteAccessEnforcementTests(unittest.TestCase):
 
         db = self.SessionLocal()
         try:
-            _, reader, editor, _ = self._seed_private_course(db)
+            _, reader, maintainer, _ = self._seed_private_course(db)
             attempts = (
                 (update_subject, ("private-subject", SubjectUpdate(description="reader"), db, reader)),
                 (update_module, ("module-1", ModuleUpdate(description="reader"), db, reader)),
@@ -1276,12 +1500,28 @@ class RouteAccessEnforcementTests(unittest.TestCase):
                 self.assertEqual(
                     update_study_card(
                         "study-card-1",
-                        StudyCardUpdate(title="Editor"),
+                        StudyCardUpdate(title="Maintainer"),
                         db=db,
-                        current_user=editor,
+                        current_user=maintainer,
                     ).title,
-                    "Editor",
+                    "Maintainer",
                 )
+        finally:
+            db.close()
+
+    def test_maintainer_cannot_delete_subject_but_owner_can(self):
+        from app.main import delete_subject
+
+        db = self.SessionLocal()
+        try:
+            owner, _, maintainer, _ = self._seed_private_course(db)
+
+            with self.assertRaises(HTTPException) as exc:
+                delete_subject("private-subject", db=db, current_user=maintainer)
+            self.assertEqual(exc.exception.status_code, 403)
+            self.assertEqual(exc.exception.detail, "Owner access required")
+
+            self.assertEqual(delete_subject("private-subject", db=db, current_user=owner), {"deleted": True})
         finally:
             db.close()
 
@@ -1376,6 +1616,47 @@ class RouteAccessEnforcementTests(unittest.TestCase):
             client = self._client(db)
 
             self.assertEqual(client.get("/jobs").status_code, 401)
+        finally:
+            db.close()
+
+    def test_maintainers_and_admins_can_list_module_jobs(self):
+        db = self.SessionLocal()
+        try:
+            from app.models import APP_ROLE_ADMIN, User
+
+            owner, reader, maintainer, outsider = self._seed_private_course(db)
+            admin = User(id="admin", supabase_user_id="admin-sub", email="admin@example.com", app_role=APP_ROLE_ADMIN)
+            db.add(admin)
+            db.commit()
+
+            owner_response = self._client(db, owner).get(
+                "/jobs?type=NOTE_GROUP_AUTO_GENERATION&status=queued,running,failed,cancelled&module_id=module-1"
+            )
+            maintainer_response = self._client(db, maintainer).get(
+                "/jobs?type=NOTE_GROUP_AUTO_GENERATION&status=queued,running,failed,cancelled&module_id=module-1"
+            )
+            admin_response = self._client(db, admin).get(
+                "/jobs?type=NOTE_GROUP_AUTO_GENERATION&status=queued,running,failed,cancelled&module_id=module-1"
+            )
+            reader_response = self._client(db, reader).get(
+                "/jobs?type=NOTE_GROUP_AUTO_GENERATION&status=queued&module_id=module-1"
+            )
+            global_response = self._client(db, reader).get("/jobs")
+            outsider_response = self._client(db, outsider).get(
+                "/jobs?type=NOTE_GROUP_AUTO_GENERATION&status=queued&module_id=module-1"
+            )
+            maintainer_job_response = self._client(db, maintainer).get("/jobs/job-1")
+            reader_job_response = self._client(db, reader).get("/jobs/job-1")
+
+            self.assertEqual(owner_response.status_code, 200)
+            self.assertEqual(maintainer_response.status_code, 200)
+            self.assertEqual(admin_response.status_code, 200)
+            self.assertEqual([job["id"] for job in maintainer_response.json()], ["job-1"])
+            self.assertEqual(reader_response.status_code, 403)
+            self.assertEqual(global_response.status_code, 403)
+            self.assertEqual(outsider_response.status_code, 404)
+            self.assertEqual(maintainer_job_response.status_code, 200)
+            self.assertEqual(reader_job_response.status_code, 403)
         finally:
             db.close()
 

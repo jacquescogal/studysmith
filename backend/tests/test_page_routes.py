@@ -330,6 +330,16 @@ class PageRoutesTests(unittest.TestCase):
         self.assertIn("|routes", vite_config.read_text(encoding="utf-8"))
         self.assertIn("|topics", vite_config.read_text(encoding="utf-8"))
 
+    def test_route_restore_waits_for_auth_session_restore(self):
+        app_source = Path(__file__).parents[2] / "frontend" / "src" / "App.jsx"
+        content = app_source.read_text(encoding="utf-8")
+
+        self.assertIn("isAuthReadyForRouteRestore", content)
+        self.assertGreaterEqual(
+            content.count("if (!isAuthReadyForRouteRestore(auth))"),
+            4,
+        )
+
     def test_panel_navigation_keeps_resolved_route_context(self):
         app_source = Path(__file__).parents[2] / "frontend" / "src" / "App.jsx"
         content = app_source.read_text(encoding="utf-8")

@@ -1,9 +1,19 @@
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 
 import { clearAccessTokenProvider, setAccessTokenProvider } from "@/api";
 import { getSupabaseClient, isSupabaseConfigured } from "./supabaseClient";
 
 const AuthContext = createContext(null);
+
+export function createSupabaseAccessTokenProvider(supabase) {
+  return async () => {
+    if (!supabase) {
+      return "";
+    }
+    const { data } = await supabase.auth.getSession();
+    return data?.session?.access_token || "";
+  };
+}
 
 export function AuthProvider({ children }) {
   const isConfigured = isSupabaseConfigured();
@@ -11,16 +21,15 @@ export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(Boolean(supabase));
   const [error, setError] = useState("");
-  const sessionRef = useRef(null);
 
   useEffect(() => {
-    sessionRef.current = session;
-  }, [session]);
-
-  useEffect(() => {
-    setAccessTokenProvider(() => sessionRef.current?.access_token || "");
+    if (!supabase) {
+      clearAccessTokenProvider();
+      return undefined;
+    }
+    setAccessTokenProvider(createSupabaseAccessTokenProvider(supabase));
     return () => clearAccessTokenProvider();
-  }, []);
+  }, [supabase]);
 
   useEffect(() => {
     if (!supabase) {

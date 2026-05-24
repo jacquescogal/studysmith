@@ -122,8 +122,22 @@ export function keepSubjectPrivate(subjectId) {
   });
 }
 
+export function requestSubjectPublic(subjectId) {
+  return request(`/subjects/${subjectId}/request-public`, {
+    method: "POST"
+  });
+}
+
 export function listSubjectAccess(subjectId) {
   return request(`/subjects/${subjectId}/access`);
+}
+
+export function listSubjectSharingUsers(subjectId) {
+  return request(`/subjects/${subjectId}/sharing-users`);
+}
+
+export function listSubjectActivity(subjectId) {
+  return request(`/subjects/${subjectId}/activity`);
 }
 
 export function upsertSubjectAccess(subjectId, userId, accessLevel) {

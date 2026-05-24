@@ -11,6 +11,8 @@ from app.config import settings
 from app.db import get_db
 from app.models import APP_ROLE_ADMIN, APP_ROLE_CREATOR, APP_ROLE_READER, User
 
+SUPABASE_JWT_ALGORITHMS = ["ES256", "RS256"]
+
 
 @dataclass(frozen=True)
 class AuthContext:
@@ -40,7 +42,7 @@ def validate_supabase_jwt(token: str) -> dict:
         return jwt.decode(
             token,
             signing_key.key,
-            algorithms=["RS256"],
+            algorithms=SUPABASE_JWT_ALGORITHMS,
             audience=settings.supabase_jwt_audience or None,
             issuer=settings.supabase_jwt_issuer or None,
             options=options,
@@ -122,6 +124,10 @@ def get_auth_context(
 def require_user(auth: AuthContext = Depends(get_auth_context)) -> User:
     if not auth.user:
         raise HTTPException(status_code=401, detail="Authentication required")
+    return auth.user
+
+
+def optional_user(auth: AuthContext = Depends(get_auth_context)) -> Optional[User]:
     return auth.user
 
 

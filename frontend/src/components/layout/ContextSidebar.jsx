@@ -24,6 +24,7 @@ export function ContextSidebar({
   selectedNoteGroupId,
   selectedTopicId,
   canCreateNoteGroup = true,
+  showCreateNoteGroup = canCreateNoteGroup,
   onSelectNoteGroup,
   onSelectTopic,
   onCreateNoteGroup,
@@ -76,8 +77,15 @@ export function ContextSidebar({
         <CardHeader className="space-y-3">
           <div className="flex items-center justify-between gap-2">
             <CardTitle className="text-base">Browse</CardTitle>
-            {canCreateNoteGroup ? (
-              <Button type="button" size="icon" variant="outline" onClick={onCreateNoteGroup} aria-label="Create note group">
+            {showCreateNoteGroup ? (
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                onClick={onCreateNoteGroup}
+                aria-label="Create note group"
+                disabled={!canCreateNoteGroup}
+              >
                 <Plus className="size-4" />
               </Button>
             ) : null}
