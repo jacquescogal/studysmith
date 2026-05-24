@@ -43,10 +43,13 @@ from app.access import (
 from app.auth import optional_user, require_admin, require_creator, require_user
 from app.auto_queue import enqueue_auto_job, remove_auto_job, resume_auto_jobs, start_auto_worker
 from app.jobs import (
+    JOB_TYPE_MIND_MAP_GENERATION,
     JOB_TYPE_NOTE_GROUP_QUESTION_GENERATION,
     JOB_TYPE_NOTE_GROUP_AUTO_GENERATION,
+    run_mind_map_generation,
     run_question_card_generation,
 )
+from app.mind_map import build_module_mind_map_response, build_note_group_mind_map_response
 from app.models import (
     APP_ROLE_ADMIN,
     APP_ROLE_CREATOR,
@@ -114,6 +117,7 @@ from app.schemas import (
     IntentChatRequest,
     IntentChatResponse,
     JobOut,
+    MindMapResponse,
     ModuleCreate,
     ModuleOut,
     ModuleOverviewResponse,
@@ -1381,6 +1385,16 @@ def get_module(
     return module
 
 
+@app.get("/modules/{module_id}/mind-map", response_model=MindMapResponse)
+def get_module_mind_map(
+    module_id: str,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(optional_user),
+):
+    require_module_read(db, current_user, module_id)
+    return build_module_mind_map_response(db, module_id)
+
+
 @app.put("/modules/{module_id}", response_model=ModuleOut)
 def update_module(
     module_id: str,
@@ -2049,6 +2063,47 @@ def get_note_group(
     ensure_note_group_short_code(db, note_group)
     db.commit()
     return note_group
+
+
+@app.post("/note-groups/{note_group_id}/mind-map/generate", response_model=JobOut)
+def generate_note_group_mind_map(
+    note_group_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    note_group = require_note_group_edit(db, current_user, note_group_id)
+    existing_job = (
+        db.query(Job)
+        .filter(
+            Job.note_group_id == note_group_id,
+            Job.type == JOB_TYPE_MIND_MAP_GENERATION,
+            Job.status.in_(("queued", "running")),
+        )
+        .order_by(Job.created_at.desc())
+        .first()
+    )
+    if existing_job:
+        return existing_job
+
+    job = Job(type=JOB_TYPE_MIND_MAP_GENERATION, note_group_id=note_group_id)
+    db.add(job)
+    note_group.mind_map_status = "queued"
+    db.commit()
+    db.refresh(job)
+
+    background_tasks.add_task(run_mind_map_generation, job.id)
+    return job
+
+
+@app.get("/note-groups/{note_group_id}/mind-map", response_model=MindMapResponse)
+def get_note_group_mind_map(
+    note_group_id: str,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(optional_user),
+):
+    require_note_group_read(db, current_user, note_group_id)
+    return build_note_group_mind_map_response(db, note_group_id)
 
 
 @app.delete("/note-groups/{note_group_id}")

@@ -2,6 +2,8 @@ import unittest
 from datetime import datetime
 from unittest.mock import patch
 
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
@@ -29,6 +31,10 @@ from app.models import (
     StudyCard,
     StudyCardMindMapConcept,
     Subject,
+    SubjectAccess,
+    SUBJECT_ACCESS_MAINTAINER,
+    SUBJECT_ACCESS_READER,
+    SUBJECT_VISIBILITY_PUBLIC,
     TopicChip,
     User,
     study_card_topic_chips,
@@ -1339,5 +1345,189 @@ class MindMapJobTests(unittest.TestCase):
                 [(link.study_card_id, link.concept_id, link.role) for link in study_card_links],
                 [("card-a", "concept-existing", "primary")],
             )
+        finally:
+            db.close()
+
+
+class MindMapRouteTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+
+        @event.listens_for(self.engine, "connect")
+        def _set_sqlite_pragma(dbapi_connection, connection_record) -> None:
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
+        Base.metadata.create_all(bind=self.engine)
+        self.SessionLocal = sessionmaker(
+            autocommit=False,
+            autoflush=False,
+            bind=self.engine,
+            expire_on_commit=False,
+        )
+
+    def tearDown(self):
+        Base.metadata.drop_all(bind=self.engine)
+
+    def seed_graph_scope(self, db):
+        owner = User(id="owner-1", supabase_user_id="owner-sub", email="owner@example.com", app_role="creator")
+        subject = Subject(id="subject-1", title="Subject", owner_user_id="owner-1")
+        module = Module(id="module-1", subject_id="subject-1", title="Module")
+        note_group = NoteGroup(id="note-a", module_id="module-1", title="Note A", raw_text="target")
+        topic = TopicChip(id="topic-a", module_id="module-1", label="Security")
+        study_card = StudyCard(
+            id="card-a",
+            note_group_id="note-a",
+            title="RLS",
+            content="Row-level security content",
+        )
+        concept = MindMapConcept(
+            id="concept-a",
+            module_id="module-1",
+            slug="row_level_security",
+            title="Row-Level Security",
+            summary="Restricts rows by policy.",
+            concept_type="term",
+            importance="core",
+        )
+        db.add_all([owner, subject, module, note_group, topic, study_card, concept])
+        db.commit()
+        db.execute(study_card_topic_chips.insert().values(study_card_id="card-a", chip_id="topic-a"))
+        db.add_all(
+            [
+                NoteGroupMindMapConcept(
+                    module_id="module-1",
+                    note_group_id="note-a",
+                    concept_id="concept-a",
+                ),
+                StudyCardMindMapConcept(
+                    module_id="module-1",
+                    note_group_id="note-a",
+                    study_card_id="card-a",
+                    concept_id="concept-a",
+                    role="primary",
+                ),
+            ]
+        )
+        db.commit()
+
+    def _client(self, user=None):
+        import app.db as db_module
+        from app.auth import optional_user, require_user
+        from app.db import get_db
+
+        with patch.object(db_module, "engine", self.engine):
+            from app.main import app
+
+        def override_db():
+            db = self.SessionLocal()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        def override_optional_user():
+            return user
+
+        def override_require_user():
+            if user is None:
+                raise HTTPException(status_code=401, detail="Authentication required")
+            return user
+
+        app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[optional_user] = override_optional_user
+        app.dependency_overrides[require_user] = override_require_user
+        self.addCleanup(app.dependency_overrides.clear)
+        return TestClient(app)
+
+    def test_reader_can_read_but_cannot_generate(self):
+        db = self.SessionLocal()
+        try:
+            self.seed_graph_scope(db)
+            reader = User(
+                id="reader-1",
+                supabase_user_id="reader-sub",
+                email="reader@example.com",
+                app_role="reader",
+            )
+            db.add_all(
+                [
+                    reader,
+                    SubjectAccess(
+                        id="reader-grant",
+                        subject_id="subject-1",
+                        user_id="reader-1",
+                        access_level=SUBJECT_ACCESS_READER,
+                    ),
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        client = self._client(user=reader)
+
+        self.assertEqual(client.get("/note-groups/note-a/mind-map").status_code, 200)
+        self.assertEqual(client.get("/modules/module-1/mind-map").status_code, 200)
+        self.assertEqual(client.post("/note-groups/note-a/mind-map/generate").status_code, 403)
+
+    def test_public_anonymous_can_read_public_map(self):
+        db = self.SessionLocal()
+        try:
+            self.seed_graph_scope(db)
+            subject = db.get(Subject, "subject-1")
+            subject.visibility = SUBJECT_VISIBILITY_PUBLIC
+            db.commit()
+        finally:
+            db.close()
+
+        client = self._client(user=None)
+
+        self.assertEqual(client.get("/note-groups/note-a/mind-map").status_code, 200)
+        self.assertEqual(client.get("/modules/module-1/mind-map").status_code, 200)
+
+    def test_maintainer_can_start_generation_job(self):
+        db = self.SessionLocal()
+        try:
+            self.seed_graph_scope(db)
+            maintainer = User(
+                id="maintainer-1",
+                supabase_user_id="maintainer-sub",
+                email="maintainer@example.com",
+                app_role="reader",
+            )
+            db.add_all(
+                [
+                    maintainer,
+                    SubjectAccess(
+                        id="maintainer-grant",
+                        subject_id="subject-1",
+                        user_id="maintainer-1",
+                        access_level=SUBJECT_ACCESS_MAINTAINER,
+                    ),
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        client = self._client(user=maintainer)
+
+        with patch("app.main.run_mind_map_generation") as run_generation:
+            response = client.post("/note-groups/note-a/mind-map/generate")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["type"], JOB_TYPE_MIND_MAP_GENERATION)
+        run_generation.assert_called_once()
+
+        db = self.SessionLocal()
+        try:
+            note_group = db.get(NoteGroup, "note-a")
+            self.assertIn(note_group.mind_map_status, {"queued", "generating", "complete", "failed"})
         finally:
             db.close()
