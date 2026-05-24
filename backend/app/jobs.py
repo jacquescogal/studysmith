@@ -349,6 +349,19 @@ def run_question_card_generation(job_id: str, count: int, difficulty: str) -> No
 
 def run_mind_map_generation(job_id: str) -> None:
     db: Session = SessionLocal()
+
+    def current_running_job_for_update() -> Job | None:
+        return (
+            db.query(Job)
+            .filter(
+                Job.id == job_id,
+                Job.type == JOB_TYPE_MIND_MAP_GENERATION,
+                Job.status == "running",
+            )
+            .with_for_update()
+            .first()
+        )
+
     try:
         claimed = (
             db.query(Job)
@@ -426,36 +439,32 @@ def run_mind_map_generation(job_id: str) -> None:
         )
 
         db.expire_all()
-        current_job = db.get(Job, job_id)
-        active_running_job = (
-            db.query(Job)
-            .filter(
-                Job.note_group_id == note_group.id,
-                Job.type == JOB_TYPE_MIND_MAP_GENERATION,
-                Job.status == "running",
-            )
-            .order_by(Job.created_at.desc(), Job.id.desc())
-            .first()
-        )
-        if not current_job or current_job.status != "running" or active_running_job is None or active_running_job.id != job_id:
+        current_job = current_running_job_for_update()
+        if not current_job:
             return
 
         regenerate_note_group_mind_map(db, note_group.id, candidate_payload)
-        job = db.get(Job, job_id)
-        if job:
-            job.status = "completed"
-            job.error = None
+        db.flush()
+        db.expire(current_job)
+        current_job = current_running_job_for_update()
+        if not current_job:
+            db.rollback()
+            return
+
+        current_job.status = "completed"
+        current_job.error = None
         db.commit()
     except Exception as exc:
         db.rollback()
-        job = db.get(Job, job_id)
-        if job:
-            job.status = "failed"
-            job.error = str(exc)
-            note_group = job.note_group
-            if note_group:
-                note_group.mind_map_status = "failed"
-            db.commit()
+        job = current_running_job_for_update()
+        if not job:
+            return
+        job.status = "failed"
+        job.error = str(exc)
+        note_group = job.note_group
+        if note_group:
+            note_group.mind_map_status = "failed"
+        db.commit()
     finally:
         db.close()
 
