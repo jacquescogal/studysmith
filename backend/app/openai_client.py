@@ -5,6 +5,12 @@ from typing import List, Optional
 from openai import OpenAI
 
 from app.config import settings
+from app.models import (
+    MIND_MAP_CONCEPT_TYPES,
+    MIND_MAP_IMPORTANCE_LEVELS,
+    MIND_MAP_RELATION_TYPES,
+    MIND_MAP_STUDY_CARD_ROLES,
+)
 
 SYSTEM_PROMPT = (
     "Convert raw study text into atomic study cards for effective learning and retrieval. "
@@ -87,6 +93,12 @@ CLEANED_TEXT_SYSTEM_PROMPT = (
     "Return JSON only with key cleaned_text_markdown."
 )
 
+MIND_MAP_SYSTEM_PROMPT = (
+    "Extract a learning mind map from Study Cards. Return strict JSON only. "
+    "Use existing module concepts when they represent the same study concept. "
+    "Do not invent facts beyond the Study Cards. Every Study Card must link to at least one primary concept."
+)
+
 
 client = OpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
 
@@ -136,6 +148,15 @@ def _strong_json(system_prompt: str, user_prompt: str) -> dict:
     return _responses_json(
         settings.openai_strong_model,
         "medium",
+        system_prompt,
+        user_prompt,
+    )
+
+
+def _strong_high_json(system_prompt: str, user_prompt: str) -> dict:
+    return _responses_json(
+        settings.openai_strong_model,
+        "high",
         system_prompt,
         user_prompt,
     )
@@ -397,6 +418,44 @@ def generate_formatted_sections(raw_text: str, study_cards: List[dict]) -> List[
     if not isinstance(sections, list):
         raise ValueError("OpenAI response did not include sections list")
     return sections
+
+
+def generate_mind_map_candidate_graph(
+    module_title: str,
+    note_group_title: str,
+    study_cards: List[dict],
+    existing_concepts: List[dict],
+) -> dict:
+    existing_concepts_json = json.dumps(existing_concepts, ensure_ascii=True)
+    study_cards_json = json.dumps(study_cards, ensure_ascii=True)
+    user_prompt = (
+        f"Module title: {module_title}\n"
+        f"Note Group title: {note_group_title}\n\n"
+        "Existing module concepts:\n"
+        f"{existing_concepts_json}\n\n"
+        "Study Cards:\n"
+        f"{study_cards_json}\n\n"
+        "Return strict JSON with exactly these top-level keys: "
+        "concepts, relations, study_card_concept_links.\n"
+        "Allowed concept_type values: "
+        f"{sorted(MIND_MAP_CONCEPT_TYPES)}.\n"
+        "Allowed importance values: "
+        f"{sorted(MIND_MAP_IMPORTANCE_LEVELS)}.\n"
+        "Allowed relation_type values: "
+        f"{sorted(MIND_MAP_RELATION_TYPES)}.\n"
+        "Allowed Study Card link role values: "
+        f"{sorted(MIND_MAP_STUDY_CARD_ROLES)}.\n\n"
+        "Concept objects must include temp_id, title, summary, concept_type, importance, "
+        "optional source_quote, and optional matched_existing_concept_id. "
+        "Set matched_existing_concept_id to an existing concept_id only when it represents the same study concept. "
+        "Relations must include source_concept_id, target_concept_id, relation_type, confidence, and optional label. "
+        "Relation endpoints may reference a concept temp_id or an existing concept_id. "
+        "Study Card concept links must include study_card_id, concept_id, and role. "
+        "Every provided Study Card must have at least one link with role primary. "
+        "Use only provided Study Card IDs in study_card_concept_links. "
+        "Do not create relations that are unsupported by the Study Cards."
+    )
+    return _strong_high_json(MIND_MAP_SYSTEM_PROMPT, user_prompt)
 
 
 def generate_subject_intent_response(
