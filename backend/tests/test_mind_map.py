@@ -857,6 +857,80 @@ class MindMapServiceTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_regenerate_note_group_mind_map_includes_existing_knowledge_nodes_for_touched_topics(self):
+        db = self.SessionLocal()
+        try:
+            owner = self._owner()
+            subject = Subject(id="subject-1", title="Subject", owner_user_id="owner-1")
+            module = Module(id="module-1", subject_id="subject-1", title="Module")
+            note_group = NoteGroup(id="note-group-1", module_id="module-1", title="Auth", raw_text="target")
+            topic = TopicChip(
+                id="topic-existing",
+                module_id="module-1",
+                label="Authentication",
+                description="Authentication topics.",
+            )
+            study_card = StudyCard(
+                id="study-card-1",
+                note_group_id="note-group-1",
+                title="Magic links",
+                content="Magic links are email sign-in links.",
+            )
+            existing_definition = MindMapConcept(
+                id="node-existing-definition",
+                module_id="module-1",
+                topic_id="topic-existing",
+                slug="authentication_definition",
+                title="Authentication definition",
+                summary="Authentication verifies identity.",
+                concept_type="term",
+                knowledge_type="definition",
+                importance="core",
+            )
+            db.add_all([owner, subject, module, note_group, topic, study_card, existing_definition])
+            db.commit()
+
+            payload = {
+                "topics": [
+                    {
+                        "temp_id": "topic-auth",
+                        "matched_existing_topic_id": "topic-existing",
+                        "title": "Authentication",
+                        "summary": "Authentication topics.",
+                    }
+                ],
+                "knowledge_nodes": [],
+                "relations": [],
+                "study_card_topic_links": [
+                    {
+                        "study_card_id": "study-card-1",
+                        "topic_id": "topic-auth",
+                        "role": "primary",
+                    }
+                ],
+                "study_card_knowledge_node_links": [],
+            }
+
+            regenerate_note_group_mind_map(db, "note-group-1", payload)
+            db.commit()
+
+            note_group_links = (
+                db.query(NoteGroupMindMapConcept)
+                .filter(NoteGroupMindMapConcept.note_group_id == "note-group-1")
+                .all()
+            )
+            stored_topic = db.get(TopicChip, "topic-existing")
+            response = build_note_group_mind_map_response(db, "note-group-1")
+
+            self.assertIn("node-existing-definition", {link.concept_id for link in note_group_links})
+            self.assertEqual(stored_topic.knowledge_node_status, "complete")
+            self.assertIsNone(stored_topic.knowledge_node_review_reason)
+            nodes_by_id = {node.id: node for node in response.nodes}
+            self.assertIn("node-existing-definition", nodes_by_id)
+            self.assertEqual(nodes_by_id["node-existing-definition"].node_type, "knowledge_node")
+        finally:
+            db.close()
+
     def test_topic_knowledge_node_context_uses_only_selected_topic_direct_cards_and_child_definitions(self):
         db = self.SessionLocal()
         try:
@@ -2232,7 +2306,7 @@ class MindMapJobTests(unittest.TestCase):
         finally:
             db.close()
 
-    def test_run_auto_note_group_generation_resets_existing_mind_map_metadata(self):
+    def test_run_auto_note_group_generation_regenerates_concept_mind_map(self):
         generated_at = datetime.utcnow() - timedelta(days=1)
         db = self.SessionLocal()
         try:
@@ -2306,12 +2380,49 @@ class MindMapJobTests(unittest.TestCase):
         finally:
             db.close()
 
+        def generated_mind_map_payload(**kwargs):
+            self.assertTrue(all(card["topic_labels"] == [] for card in kwargs["study_cards"]))
+            study_card_ids = [card["study_card_id"] for card in kwargs["study_cards"]]
+            return {
+                "topics": [
+                    {
+                        "temp_id": "topic-generated",
+                        "title": "Generated Topic",
+                        "summary": "Generated Topic summary.",
+                    }
+                ],
+                "knowledge_nodes": [
+                    {
+                        "temp_id": "node-generated-definition",
+                        "topic_id": "topic-generated",
+                        "title": "Generated Topic definition",
+                        "summary": "Generated Topic definition summary.",
+                        "knowledge_type": "definition",
+                        "importance": "core",
+                    }
+                ],
+                "relations": [],
+                "study_card_topic_links": [
+                    {
+                        "study_card_id": study_card_id,
+                        "topic_id": "topic-generated",
+                        "role": "primary",
+                    }
+                    for study_card_id in study_card_ids
+                ],
+                "study_card_knowledge_node_links": [
+                    {
+                        "study_card_id": study_card_id,
+                        "knowledge_node_id": "node-generated-definition",
+                        "role": "primary",
+                    }
+                    for study_card_id in study_card_ids
+                ],
+            }
+
         with patch("app.jobs.SessionLocal", self.SessionLocal), patch(
             "app.jobs.generate_note_group_title_suggestions",
             return_value=["Generated Title"],
-        ), patch(
-            "app.jobs.suggest_topic_chips",
-            return_value={"attach_chip_ids": [], "new_chips": []},
         ), patch(
             "app.jobs.generate_cleaned_text_markdown",
             return_value="Cleaned raw source text for generation.",
@@ -2321,11 +2432,10 @@ class MindMapJobTests(unittest.TestCase):
                 {
                     "title": "Generated Study Card",
                     "content": "Generated Study Card content",
-                    "topic_chips": [],
                     "evidence_snippets": [],
                 }
             ],
-        ), patch(
+        ) as generate_study_cards, patch(
             "app.jobs.generate_formatted_sections",
             return_value=[],
         ), patch(
@@ -2336,7 +2446,10 @@ class MindMapJobTests(unittest.TestCase):
         ), patch(
             "app.jobs.generate_question_cards",
             return_value=[],
-        ):
+        ), patch(
+            "app.jobs.generate_mind_map_candidate_graph",
+            side_effect=generated_mind_map_payload,
+        ) as generate_mind_map:
             run_auto_note_group_generation("job-auto")
 
         db = self.SessionLocal()
@@ -2344,11 +2457,6 @@ class MindMapJobTests(unittest.TestCase):
             job = db.get(Job, "job-auto")
             note_group = db.get(NoteGroup, "note-a")
             study_cards = db.query(StudyCard).filter(StudyCard.note_group_id == "note-a").all()
-            old_links = (
-                db.query(NoteGroupMindMapConcept)
-                .filter(NoteGroupMindMapConcept.note_group_id == "note-a")
-                .all()
-            )
             old_relations = (
                 db.query(MindMapRelation)
                 .filter(MindMapRelation.source_note_group_id == "note-a")
@@ -2356,14 +2464,26 @@ class MindMapJobTests(unittest.TestCase):
             )
             old_concept = db.get(MindMapConcept, "old-concept")
             related_concept = db.get(MindMapConcept, "related-concept")
+            generated_definition = (
+                db.query(MindMapConcept)
+                .filter(MindMapConcept.title == "Generated Topic definition")
+                .one()
+            )
+            generated_links = (
+                db.query(NoteGroupMindMapConcept)
+                .filter(NoteGroupMindMapConcept.note_group_id == "note-a")
+                .all()
+            )
 
             self.assertEqual(job.status, "completed")
             self.assertEqual(note_group.generation_status, "complete")
             self.assertTrue(any(card.title == "Generated Study Card" for card in study_cards))
-            self.assertEqual(note_group.mind_map_status, "not_generated")
+            self.assertEqual(note_group.mind_map_status, "complete")
             self.assertFalse(note_group.mind_map_stale)
-            self.assertIsNone(note_group.mind_map_generated_at)
-            self.assertEqual(old_links, [])
+            self.assertIsNotNone(note_group.mind_map_generated_at)
+            self.assertNotIn("chip_labels", generate_study_cards.call_args.kwargs)
+            self.assertEqual(generate_mind_map.call_count, 1)
+            self.assertEqual({link.concept_id for link in generated_links}, {generated_definition.id})
             self.assertEqual(old_relations, [])
             self.assertIsNone(old_concept)
             self.assertIsNone(related_concept)
