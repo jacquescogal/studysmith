@@ -49,7 +49,11 @@ from app.jobs import (
     run_mind_map_generation,
     run_question_card_generation,
 )
-from app.mind_map import build_module_mind_map_response, build_note_group_mind_map_response
+from app.mind_map import (
+    build_module_mind_map_response,
+    build_note_group_mind_map_response,
+    mark_note_group_mind_map_stale,
+)
 from app.models import (
     APP_ROLE_ADMIN,
     APP_ROLE_CREATOR,
@@ -2464,6 +2468,7 @@ def create_study_card(
             entity_title=card.title or card.content[:120],
         )
         _upsert_study_card_embedding(card, note_group.module_id)
+        mark_note_group_mind_map_stale(db, note_group.id)
         db.commit()
         db.refresh(card)
         return card
@@ -2500,6 +2505,7 @@ def update_study_card(
     try:
         db.flush()
         _upsert_study_card_embedding(card, note_group.module_id)
+        mark_note_group_mind_map_stale(db, note_group.id)
         db.commit()
         db.refresh(card)
     except Exception as exc:
@@ -2531,6 +2537,7 @@ def delete_study_card(
         entity_title=card_title,
     )
     db.delete(card)
+    mark_note_group_mind_map_stale(db, note_group_id)
     db.commit()
     _mark_question_cards_stale(db, note_group_id, card_id)
     return {"deleted": True}
@@ -2566,6 +2573,7 @@ def review_study_cards(
     delete_study_card_embeddings(db, ids_to_delete)
     for card in cards:
         db.delete(card)
+    mark_note_group_mind_map_stale(db, note_group_id)
     db.commit()
 
     return {"deleted": len(ids_to_delete)}

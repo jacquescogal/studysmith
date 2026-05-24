@@ -10,11 +10,17 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db import Base
-from app.jobs import JOB_TYPE_MIND_MAP_GENERATION, run_mind_map_generation
+from app.jobs import (
+    JOB_TYPE_MIND_MAP_GENERATION,
+    JOB_TYPE_NOTE_GROUP_AUTO_GENERATION,
+    run_auto_note_group_generation,
+    run_mind_map_generation,
+)
 from app.mind_map import (
     MindMapValidationError,
     build_module_mind_map_response,
     build_note_group_mind_map_response,
+    mark_note_group_mind_map_stale,
     regenerate_note_group_mind_map,
     slugify_concept_title,
     validate_candidate_graph,
@@ -248,6 +254,26 @@ class MindMapServiceTests(unittest.TestCase):
     def test_slugify_concept_title_normalizes_backend_slugs(self):
         self.assertEqual(slugify_concept_title(" Row-Level Security! "), "row_level_security")
         self.assertEqual(slugify_concept_title("   "), "concept")
+
+    def test_mark_note_group_mind_map_stale_marks_complete_map_stale(self):
+        db = self.SessionLocal()
+        try:
+            self.seed_graph_scope(db)
+            note_group = db.get(NoteGroup, "note-a")
+            note_group.mind_map_status = "complete"
+            note_group.mind_map_stale = False
+            note_group.mind_map_generated_at = datetime.utcnow()
+            db.commit()
+
+            mark_note_group_mind_map_stale(db, "note-a")
+            db.commit()
+
+            stored = db.get(NoteGroup, "note-a")
+            self.assertEqual(stored.mind_map_status, "complete")
+            self.assertTrue(stored.mind_map_stale)
+            self.assertIsNotNone(stored.mind_map_generated_at)
+        finally:
+            db.close()
 
     def test_validate_candidate_graph_rejects_unresolved_relation_endpoint(self):
         payload = {
@@ -1677,6 +1703,81 @@ class MindMapJobTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_run_auto_note_group_generation_resets_existing_mind_map_metadata(self):
+        generated_at = datetime.utcnow() - timedelta(days=1)
+        db = self.SessionLocal()
+        try:
+            owner = User(id="owner-1", supabase_user_id="owner-sub", email="owner@example.com", app_role="creator")
+            subject = Subject(id="subject-1", title="Subject", owner_user_id="owner-1")
+            module = Module(id="module-1", subject_id="subject-1", title="Module")
+            note_group = NoteGroup(
+                id="note-a",
+                module_id="module-1",
+                title="Old Title",
+                raw_text="Raw source text for generation.",
+                generation_status="queued",
+                mind_map_status="complete",
+                mind_map_stale=True,
+                mind_map_generated_at=generated_at,
+            )
+            job = Job(
+                id="job-auto",
+                type=JOB_TYPE_NOTE_GROUP_AUTO_GENERATION,
+                note_group_id="note-a",
+            )
+            db.add_all([owner, subject, module, note_group, job])
+            db.commit()
+        finally:
+            db.close()
+
+        with patch("app.jobs.SessionLocal", self.SessionLocal), patch(
+            "app.jobs.generate_note_group_title_suggestions",
+            return_value=["Generated Title"],
+        ), patch(
+            "app.jobs.suggest_topic_chips",
+            return_value={"attach_chip_ids": [], "new_chips": []},
+        ), patch(
+            "app.jobs.generate_cleaned_text_markdown",
+            return_value="Cleaned raw source text for generation.",
+        ), patch(
+            "app.jobs.generate_study_cards_with_context",
+            return_value=[
+                {
+                    "title": "Generated Study Card",
+                    "content": "Generated Study Card content",
+                    "topic_chips": [],
+                    "evidence_snippets": [],
+                }
+            ],
+        ), patch(
+            "app.jobs.generate_formatted_sections",
+            return_value=[],
+        ), patch(
+            "app.jobs.embed_texts",
+            return_value=[[0.1, 0.2, 0.3]],
+        ), patch(
+            "app.jobs.upsert_study_card_embeddings",
+        ), patch(
+            "app.jobs.generate_question_cards",
+            return_value=[],
+        ):
+            run_auto_note_group_generation("job-auto")
+
+        db = self.SessionLocal()
+        try:
+            job = db.get(Job, "job-auto")
+            note_group = db.get(NoteGroup, "note-a")
+            study_cards = db.query(StudyCard).filter(StudyCard.note_group_id == "note-a").all()
+
+            self.assertEqual(job.status, "completed")
+            self.assertEqual(note_group.generation_status, "complete")
+            self.assertEqual(len(study_cards), 1)
+            self.assertEqual(note_group.mind_map_status, "not_generated")
+            self.assertFalse(note_group.mind_map_stale)
+            self.assertIsNone(note_group.mind_map_generated_at)
+        finally:
+            db.close()
+
 
 class MindMapRouteTests(unittest.TestCase):
     def setUp(self):
@@ -1876,6 +1977,126 @@ class MindMapRouteTests(unittest.TestCase):
             self.assertEqual(note_group.mind_map_status, "queued")
             jobs = db.query(Job).filter(Job.note_group_id == "note-a").all()
             self.assertEqual(len(jobs), 1)
+        finally:
+            db.close()
+
+    def test_creating_study_card_marks_complete_note_group_mind_map_stale(self):
+        db = self.SessionLocal()
+        try:
+            self.seed_graph_scope(db)
+            owner = db.get(User, "owner-1")
+            note_group = db.get(NoteGroup, "note-a")
+            note_group.mind_map_status = "complete"
+            note_group.mind_map_stale = False
+            note_group.mind_map_generated_at = datetime.utcnow()
+            db.commit()
+        finally:
+            db.close()
+
+        client = self._client(user=owner)
+
+        with patch("app.main._upsert_study_card_embedding"):
+            response = client.post(
+                "/note-groups/note-a/study-cards",
+                json={"title": "New Study Card", "content": "New content"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+
+        db = self.SessionLocal()
+        try:
+            note_group = db.get(NoteGroup, "note-a")
+            self.assertTrue(note_group.mind_map_stale)
+            self.assertEqual(note_group.mind_map_status, "complete")
+        finally:
+            db.close()
+
+    def test_updating_study_card_marks_note_group_mind_map_stale(self):
+        db = self.SessionLocal()
+        try:
+            self.seed_graph_scope(db)
+            owner = db.get(User, "owner-1")
+            note_group = db.get(NoteGroup, "note-a")
+            note_group.mind_map_status = "complete"
+            note_group.mind_map_stale = False
+            note_group.mind_map_generated_at = datetime.utcnow()
+            db.commit()
+        finally:
+            db.close()
+
+        client = self._client(user=owner)
+
+        with patch("app.main._upsert_study_card_embedding"):
+            response = client.put(
+                "/study-cards/card-a",
+                json={"content": "Updated Row-level security content"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+
+        db = self.SessionLocal()
+        try:
+            note_group = db.get(NoteGroup, "note-a")
+            self.assertTrue(note_group.mind_map_stale)
+            self.assertEqual(note_group.mind_map_status, "complete")
+        finally:
+            db.close()
+
+    def test_deleting_study_card_marks_note_group_mind_map_stale(self):
+        db = self.SessionLocal()
+        try:
+            self.seed_graph_scope(db)
+            owner = db.get(User, "owner-1")
+            note_group = db.get(NoteGroup, "note-a")
+            note_group.mind_map_status = "complete"
+            note_group.mind_map_stale = False
+            note_group.mind_map_generated_at = datetime.utcnow()
+            db.commit()
+        finally:
+            db.close()
+
+        client = self._client(user=owner)
+
+        response = client.delete("/study-cards/card-a")
+
+        self.assertEqual(response.status_code, 200)
+
+        db = self.SessionLocal()
+        try:
+            note_group = db.get(NoteGroup, "note-a")
+            self.assertTrue(note_group.mind_map_stale)
+            self.assertEqual(note_group.mind_map_status, "complete")
+        finally:
+            db.close()
+
+    def test_review_study_cards_delete_path_marks_note_group_mind_map_stale(self):
+        db = self.SessionLocal()
+        try:
+            self.seed_graph_scope(db)
+            owner = db.get(User, "owner-1")
+            note_group = db.get(NoteGroup, "note-a")
+            note_group.mind_map_status = "complete"
+            note_group.mind_map_stale = False
+            note_group.mind_map_generated_at = datetime.utcnow()
+            db.commit()
+        finally:
+            db.close()
+
+        client = self._client(user=owner)
+
+        response = client.post(
+            "/note-groups/note-a/study-cards/review",
+            json={"irrelevant_ids": ["card-a"]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"deleted": 1})
+
+        db = self.SessionLocal()
+        try:
+            note_group = db.get(NoteGroup, "note-a")
+            self.assertTrue(note_group.mind_map_stale)
+            self.assertEqual(note_group.mind_map_status, "complete")
         finally:
             db.close()
 
