@@ -1,7 +1,7 @@
 import json
 from typing import Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.db import SessionLocal
 from app.fsrs_utils import initialize_question_card
@@ -375,6 +375,7 @@ def run_mind_map_generation(job_id: str) -> None:
 
         study_cards = (
             db.query(StudyCard)
+            .options(selectinload(StudyCard.topic_chips))
             .filter(StudyCard.note_group_id == note_group.id)
             .order_by(StudyCard.created_at.asc(), StudyCard.id.asc())
             .all()
@@ -414,11 +415,6 @@ def run_mind_map_generation(job_id: str) -> None:
             study_cards=study_card_payloads,
             existing_concepts=existing_concept_payloads,
         )
-        if "links" not in candidate_payload and "study_card_concept_links" in candidate_payload:
-            candidate_payload = {
-                **candidate_payload,
-                "links": candidate_payload["study_card_concept_links"],
-            }
 
         regenerate_note_group_mind_map(db, note_group.id, candidate_payload)
         job = db.get(Job, job_id)

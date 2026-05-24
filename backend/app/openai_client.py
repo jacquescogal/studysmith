@@ -436,7 +436,7 @@ def generate_mind_map_candidate_graph(
         "Study Cards:\n"
         f"{study_cards_json}\n\n"
         "Return strict JSON with exactly these top-level keys: "
-        "concepts, relations, study_card_concept_links.\n"
+        "concepts, relations, links.\n"
         "Allowed concept_type values: "
         f"{sorted(MIND_MAP_CONCEPT_TYPES)}.\n"
         "Allowed importance values: "
@@ -450,12 +450,20 @@ def generate_mind_map_candidate_graph(
         "Set matched_existing_concept_id to an existing concept_id only when it represents the same study concept. "
         "Relations must include source_concept_id, target_concept_id, relation_type, confidence, and optional label. "
         "Relation endpoints may reference a concept temp_id or an existing concept_id. "
-        "Study Card concept links must include study_card_id, concept_id, and role. "
+        "Links must include study_card_id, concept_id, and role. "
         "Every provided Study Card must have at least one link with role primary. "
-        "Use only provided Study Card IDs in study_card_concept_links. "
+        "Use only provided Study Card IDs in links. "
         "Do not create relations that are unsupported by the Study Cards."
     )
-    return _strong_high_json(MIND_MAP_SYSTEM_PROMPT, user_prompt)
+    payload = _strong_high_json(MIND_MAP_SYSTEM_PROMPT, user_prompt)
+    links = payload.get("links")
+    if links is None and "study_card_concept_links" in payload:
+        links = payload.get("study_card_concept_links")
+    return {
+        "concepts": payload.get("concepts"),
+        "relations": payload.get("relations"),
+        "links": links,
+    }
 
 
 def generate_subject_intent_response(
