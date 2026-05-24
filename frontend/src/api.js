@@ -240,6 +240,12 @@ export function getModuleMindMap(moduleId) {
   return request(`/modules/${moduleId}/mind-map`);
 }
 
+export function regenerateModuleNeedsReviewKnowledgeNodes(moduleId) {
+  return request(`/modules/${moduleId}/mind-map/regenerate-needs-review`, {
+    method: "POST"
+  });
+}
+
 export function checkNoteGroupSource(payload) {
   return request("/note-groups/source-check", {
     method: "POST",
@@ -370,6 +376,12 @@ export function getNoteGroupMindMap(noteGroupId) {
 
 export function generateNoteGroupMindMap(noteGroupId) {
   return request(`/note-groups/${noteGroupId}/mind-map/generate`, {
+    method: "POST"
+  });
+}
+
+export function regenerateNoteGroupNeedsReviewKnowledgeNodes(noteGroupId) {
+  return request(`/note-groups/${noteGroupId}/mind-map/regenerate-needs-review`, {
     method: "POST"
   });
 }

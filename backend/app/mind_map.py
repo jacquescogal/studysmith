@@ -2,8 +2,9 @@ import json
 import math
 import re
 import uuid
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -39,10 +40,79 @@ RELATION_TYPES = {
 }
 LINK_ROLES = {"primary", "supporting"}
 MIN_RELATION_CONFIDENCE = 0.55
+MAX_TOPIC_KNOWLEDGE_NODE_CONCURRENCY = 5
+TOPIC_KNOWLEDGE_NODE_CHILD_FAILURE_REASON = "Child Topic reconciliation failed"
 
 
 class MindMapValidationError(ValueError):
     pass
+
+
+def run_dependency_aware_topic_tasks(
+    topic_ids: set[str],
+    dependencies_by_topic_id: dict[str, set[str]],
+    run_topic: Callable[[str], None],
+    mark_needs_review: Callable[[str, str], None],
+    max_workers: int = MAX_TOPIC_KNOWLEDGE_NODE_CONCURRENCY,
+) -> dict[str, str]:
+    pending = set(topic_ids)
+    completed: set[str] = set()
+    failed: set[str] = set()
+    blocked: set[str] = set()
+    running = {}
+    statuses = {topic_id: "pending" for topic_id in topic_ids}
+    worker_count = max(1, min(max_workers, max(len(topic_ids), 1)))
+
+    def fail_topic(topic_id: str, reason: str, status: str = "failed") -> None:
+        if topic_id in completed or topic_id in failed or topic_id in blocked:
+            return
+        pending.discard(topic_id)
+        failed.add(topic_id)
+        statuses[topic_id] = status
+        mark_needs_review(topic_id, reason)
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        while pending or running:
+            blocked_this_round = [
+                topic_id
+                for topic_id in pending
+                if dependencies_by_topic_id.get(topic_id, set()).intersection(failed | blocked)
+            ]
+            for topic_id in blocked_this_round:
+                pending.remove(topic_id)
+                blocked.add(topic_id)
+                statuses[topic_id] = "blocked"
+                mark_needs_review(topic_id, TOPIC_KNOWLEDGE_NODE_CHILD_FAILURE_REASON)
+
+            ready = sorted(
+                topic_id
+                for topic_id in pending
+                if dependencies_by_topic_id.get(topic_id, set()).issubset(completed)
+            )
+            while ready and len(running) < worker_count:
+                topic_id = ready.pop(0)
+                pending.remove(topic_id)
+                future = executor.submit(run_topic, topic_id)
+                running[future] = topic_id
+
+            if not running:
+                unresolved = sorted(pending)
+                for topic_id in unresolved:
+                    fail_topic(topic_id, "Topic dependency graph could not be resolved.", status="blocked")
+                break
+
+            done, _not_done = wait(running, return_when=FIRST_COMPLETED)
+            for future in done:
+                topic_id = running.pop(future)
+                try:
+                    future.result()
+                except Exception as exc:
+                    fail_topic(topic_id, f"Topic reconciliation failed: {exc}")
+                else:
+                    completed.add(topic_id)
+                    statuses[topic_id] = "completed"
+
+    return statuses
 
 
 def slugify_concept_title(title: str) -> str:
@@ -816,6 +886,7 @@ def regenerate_topic_knowledge_nodes(db: Session, topic_id: str, candidate_paylo
     db.flush()
 
     resolved_concepts: dict[str, MindMapConcept] = {concept.id: concept for concept in existing_concepts}
+    resolved_topic_concept_ids: set[str] = set()
     definition_found = False
     for node_data in validated["knowledge_nodes"]:
         if node_data["topic_id"] != topic.id:
@@ -853,10 +924,24 @@ def regenerate_topic_knowledge_nodes(db: Session, topic_id: str, candidate_paylo
             concept.source_quote = node_data["source_quote"]
         resolved_concepts[node_data["temp_id"]] = concept
         resolved_concepts[concept.id] = concept
+        resolved_topic_concept_ids.add(concept.id)
         if node_data["knowledge_type"] == "definition":
             definition_found = True
 
     db.flush()
+
+    topic_note_group_rows = db.execute(
+        note_group_topic_chips.select().where(note_group_topic_chips.c.chip_id == topic.id)
+    ).all()
+    for concept_id in sorted(resolved_topic_concept_ids):
+        for row in topic_note_group_rows:
+            db.merge(
+                NoteGroupMindMapConcept(
+                    module_id=topic.module_id,
+                    note_group_id=row.note_group_id,
+                    concept_id=concept_id,
+                )
+            )
 
     cards_by_id = {card.id: card for card in topic.study_cards if card.id in study_card_ids}
     seen_links: set[tuple[str, str]] = set()
@@ -1132,6 +1217,8 @@ def _build_mind_map_response(
             "note_group_ids": sorted(note_group_ids_by_topic_id.get(topic.id, set())),
             "study_card_count": len(study_card_ids_by_topic_id.get(topic.id, set())),
             "note_group_count": len(note_group_ids_by_topic_id.get(topic.id, set())),
+            "knowledge_node_status": topic.knowledge_node_status,
+            "knowledge_node_review_reason": topic.knowledge_node_review_reason,
         }
         for topic in topics
     ]

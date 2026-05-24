@@ -96,6 +96,8 @@ import {
   listTopicQuestionCards,
   listTopicReviewQuestionCards,
   listTopicStudyCards,
+  regenerateModuleNeedsReviewKnowledgeNodes,
+  regenerateNoteGroupNeedsReviewKnowledgeNodes,
   regenerateTopicKnowledgeNodes,
   retryAutoJob,
   resolveAppModuleRoute,
@@ -257,6 +259,7 @@ export default function App() {
   const [moduleMindMap, setModuleMindMap] = useState(null);
   const [moduleMindMapLoading, setModuleMindMapLoading] = useState(false);
   const [moduleMindMapError, setModuleMindMapError] = useState("");
+  const [moduleNeedsReviewRegenerating, setModuleNeedsReviewRegenerating] = useState(false);
   const [selectedNoteGroupId, setSelectedNoteGroupId] = useState("");
   const [selectedTopicId, setSelectedTopicId] = useState("");
   const [sidebarScope, setSidebarScope] = useState("note-groups");
@@ -297,6 +300,7 @@ export default function App() {
   const [noteGroupMindMapLoading, setNoteGroupMindMapLoading] = useState(false);
   const [noteGroupMindMapError, setNoteGroupMindMapError] = useState("");
   const [noteGroupMindMapGenerating, setNoteGroupMindMapGenerating] = useState(false);
+  const [noteGroupNeedsReviewRegenerating, setNoteGroupNeedsReviewRegenerating] = useState(false);
   const [mindMapRefreshToken, setMindMapRefreshToken] = useState(0);
   const [isReadingOpen, setIsReadingOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -3274,6 +3278,84 @@ export default function App() {
     }
   };
 
+  const syncTopicStatusesFromMindMap = (graph) => {
+    const topicNodes = Array.isArray(graph?.nodes)
+      ? graph.nodes.filter((node) => node.node_type === "topic")
+      : [];
+    if (!topicNodes.length) {
+      return;
+    }
+    const topicStatusById = new Map(
+      topicNodes.map((node) => [
+        node.id,
+        {
+          knowledge_node_status: node.knowledge_node_status,
+          knowledge_node_review_reason: node.knowledge_node_review_reason
+        }
+      ])
+    );
+    setTopicChips((prev) =>
+      prev.map((topic) => {
+        const status = topicStatusById.get(topic.id);
+        return status ? { ...topic, ...status } : topic;
+      })
+    );
+  };
+
+  const handleRegenerateNeedsReviewKnowledgeNodes = async () => {
+    if (!canManageSelectedSubject) {
+      setNoteGroupMindMapError(
+        canUseProtectedActions
+          ? "Maintainer access is required to regenerate Knowledge Nodes."
+          : "Sign in to regenerate Knowledge Nodes."
+      );
+      return;
+    }
+    if (!selectedNoteGroupId || noteGroupNeedsReviewRegenerating) {
+      return;
+    }
+    setNoteGroupNeedsReviewRegenerating(true);
+    setNoteGroupMindMapError("");
+    try {
+      const graph = await regenerateNoteGroupNeedsReviewKnowledgeNodes(selectedNoteGroupId);
+      setNoteGroupMindMap(graph);
+      syncTopicStatusesFromMindMap(graph);
+      toast.success("Needs review Knowledge Nodes regenerated.");
+      setMindMapRefreshToken((prev) => prev + 1);
+    } catch (error) {
+      setNoteGroupMindMapError(error.message || "Failed to regenerate needs review Knowledge Nodes");
+    } finally {
+      setNoteGroupNeedsReviewRegenerating(false);
+    }
+  };
+
+  const handleRegenerateModuleNeedsReviewKnowledgeNodes = async () => {
+    if (!canManageSelectedSubject) {
+      setModuleMindMapError(
+        canUseProtectedActions
+          ? "Maintainer access is required to regenerate Knowledge Nodes."
+          : "Sign in to regenerate Knowledge Nodes."
+      );
+      return;
+    }
+    if (!selectedModuleId || moduleNeedsReviewRegenerating) {
+      return;
+    }
+    setModuleNeedsReviewRegenerating(true);
+    setModuleMindMapError("");
+    try {
+      const graph = await regenerateModuleNeedsReviewKnowledgeNodes(selectedModuleId);
+      setModuleMindMap(graph);
+      syncTopicStatusesFromMindMap(graph);
+      toast.success("Needs review Knowledge Nodes regenerated.");
+      setMindMapRefreshToken((prev) => prev + 1);
+    } catch (error) {
+      setModuleMindMapError(error.message || "Failed to regenerate needs review Knowledge Nodes");
+    } finally {
+      setModuleNeedsReviewRegenerating(false);
+    }
+  };
+
   const handleCreateStudyCard = async () => {
     if (!canManageSelectedSubject) {
       setStudyCardError(
@@ -5688,6 +5770,9 @@ export default function App() {
                           canRegenerateTopicKnowledgeNodes={canManageSelectedSubject}
                           regeneratingTopicId={topicKnowledgeNodeRegeneratingId}
                           onRegenerateTopicKnowledgeNodes={handleRegenerateTopicKnowledgeNodes}
+                          canRegenerateNeedsReview={canManageSelectedSubject}
+                          regeneratingNeedsReview={moduleNeedsReviewRegenerating}
+                          onRegenerateNeedsReview={handleRegenerateModuleNeedsReviewKnowledgeNodes}
                         />
                       </section>
                       <section className={panelClass} id="module-review">
@@ -6124,6 +6209,9 @@ export default function App() {
                                 canRegenerateTopicKnowledgeNodes={canManageSelectedSubject}
                                 regeneratingTopicId={topicKnowledgeNodeRegeneratingId}
                                 onRegenerateTopicKnowledgeNodes={handleRegenerateTopicKnowledgeNodes}
+                                canRegenerateNeedsReview={canManageSelectedSubject}
+                                regeneratingNeedsReview={noteGroupNeedsReviewRegenerating}
+                                onRegenerateNeedsReview={handleRegenerateNeedsReviewKnowledgeNodes}
                               />
                             </section>
                             <section className={panelClass} id="note-group-content">

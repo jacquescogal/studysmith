@@ -46,6 +46,7 @@ from app.jobs import (
     JOB_TYPE_MIND_MAP_GENERATION,
     JOB_TYPE_NOTE_GROUP_QUESTION_GENERATION,
     JOB_TYPE_NOTE_GROUP_AUTO_GENERATION,
+    reconcile_note_group_topic_knowledge_nodes,
     run_mind_map_generation,
     run_question_card_generation,
 )
@@ -1414,6 +1415,26 @@ def get_module_mind_map(
     return build_module_mind_map_response(db, module_id)
 
 
+@app.post("/modules/{module_id}/mind-map/regenerate-needs-review", response_model=MindMapResponse)
+def regenerate_module_needs_review_knowledge_nodes(
+    module_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    require_module_edit(db, current_user, module_id)
+    note_group_ids = [
+        row[0]
+        for row in db.query(NoteGroup.id)
+        .filter(NoteGroup.module_id == module_id)
+        .order_by(NoteGroup.sort_order.asc(), NoteGroup.created_at.asc(), NoteGroup.id.asc())
+        .all()
+    ]
+    for note_group_id in note_group_ids:
+        reconcile_note_group_topic_knowledge_nodes(note_group_id, only_needs_review=True)
+    db.expire_all()
+    return build_module_mind_map_response(db, module_id)
+
+
 @app.put("/modules/{module_id}", response_model=ModuleOut)
 def update_module(
     module_id: str,
@@ -2288,6 +2309,18 @@ def get_note_group_mind_map(
     current_user: User | None = Depends(optional_user),
 ):
     require_note_group_read(db, current_user, note_group_id)
+    return build_note_group_mind_map_response(db, note_group_id)
+
+
+@app.post("/note-groups/{note_group_id}/mind-map/regenerate-needs-review", response_model=MindMapResponse)
+def regenerate_note_group_needs_review_knowledge_nodes(
+    note_group_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    require_note_group_edit(db, current_user, note_group_id)
+    reconcile_note_group_topic_knowledge_nodes(note_group_id, only_needs_review=True)
+    db.expire_all()
     return build_note_group_mind_map_response(db, note_group_id)
 
 
