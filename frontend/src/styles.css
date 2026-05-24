@@ -632,6 +632,143 @@ textarea {
   padding-top: 16px;
 }
 
+.mind-map-panel {
+  overflow: hidden;
+  border-radius: 8px;
+  border-color: #cfd8e8;
+  background: #fff;
+}
+
+.mind-map-panel-header {
+  border-bottom: 1px solid #e2e8f4;
+  background: #f8fafc;
+}
+
+.mind-map-panel-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.mind-map-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.mind-map-status-badge {
+  background: #fff;
+  text-transform: capitalize;
+}
+
+.mind-map-panel-content {
+  display: grid;
+  gap: 14px;
+}
+
+.mind-map-flow {
+  height: min(640px, 70vh);
+  min-height: 420px;
+  overflow: hidden;
+  border: 1px solid #dbe5f6;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.mind-map-flow .react-flow__edge-textbg {
+  fill: #fff;
+}
+
+.mind-map-flow .react-flow__edge-text {
+  fill: #334155;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.mind-map-flow .react-flow__edge-path {
+  stroke: #64748b;
+  stroke-width: 1.6;
+}
+
+.mind-map-empty-state {
+  display: flex;
+  min-height: 220px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.mind-map-node {
+  width: 240px;
+  min-height: 96px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+  color: #17213a;
+  padding: 12px;
+}
+
+.mind-map-node-root {
+  border-color: #9db6e2;
+  background: #edf4ff;
+}
+
+.mind-map-node-note_group {
+  border-color: #a7d8c6;
+  background: #f1fbf6;
+}
+
+.mind-map-node-core {
+  border-color: #f0b86d;
+}
+
+.mind-map-node-title {
+  color: #17213a;
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.mind-map-node-summary {
+  display: -webkit-box;
+  margin-top: 7px;
+  overflow: hidden;
+  color: #475569;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.mind-map-node-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 10px;
+}
+
+.mind-map-node-badges span {
+  border-radius: 999px;
+  border: 1px solid #dbe5f6;
+  background: #f8fafc;
+  padding: 2px 6px;
+  color: #475569;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
 .filter-badge {
   min-width: 20px;
   height: 20px;
