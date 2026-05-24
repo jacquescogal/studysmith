@@ -2070,8 +2070,8 @@ def get_note_group(
     return note_group
 
 
-def _active_mind_map_generation_job(db: Session, note_group_id: str) -> Job | None:
-    return (
+def _active_mind_map_generation_job(db: Session, note_group_id: str, *, for_update: bool = False) -> Job | None:
+    query = (
         db.query(Job)
         .filter(
             Job.note_group_id == note_group_id,
@@ -2079,8 +2079,10 @@ def _active_mind_map_generation_job(db: Session, note_group_id: str) -> Job | No
             Job.status.in_(MIND_MAP_ACTIVE_JOB_STATUSES),
         )
         .order_by(Job.created_at.desc(), Job.id.desc())
-        .first()
     )
+    if for_update:
+        query = query.with_for_update()
+    return query.first()
 
 
 def _is_stale_mind_map_generation_job(job: Job) -> bool:
@@ -2100,7 +2102,7 @@ def generate_note_group_mind_map(
     current_user: User = Depends(require_user),
 ):
     note_group = require_note_group_edit(db, current_user, note_group_id)
-    existing_job = _active_mind_map_generation_job(db, note_group_id)
+    existing_job = _active_mind_map_generation_job(db, note_group_id, for_update=True)
     if existing_job:
         if existing_job.status == "queued":
             background_tasks.add_task(run_mind_map_generation, existing_job.id)
@@ -2118,7 +2120,7 @@ def generate_note_group_mind_map(
         db.commit()
     except IntegrityError:
         db.rollback()
-        existing_job = _active_mind_map_generation_job(db, note_group_id)
+        existing_job = _active_mind_map_generation_job(db, note_group_id, for_update=True)
         if existing_job:
             if existing_job.status == "queued":
                 background_tasks.add_task(run_mind_map_generation, existing_job.id)

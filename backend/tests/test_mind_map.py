@@ -1347,6 +1347,128 @@ class MindMapJobTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_run_mind_map_generation_does_not_write_after_final_job_check_is_superseded(self):
+        db = self.SessionLocal()
+        try:
+            MindMapServiceTests.seed_graph_scope(self, db)
+            db.add(Job(id="job-stale", type=JOB_TYPE_MIND_MAP_GENERATION, note_group_id="note-a"))
+            db.commit()
+        finally:
+            db.close()
+
+        candidate_payload = {
+            "concepts": [
+                {
+                    "temp_id": "concept-stale",
+                    "title": "Stale Worker Result",
+                    "summary": "This graph came from a stale worker.",
+                    "concept_type": "topic",
+                    "importance": "supporting",
+                }
+            ],
+            "relations": [],
+            "links": [
+                {
+                    "study_card_id": "card-a",
+                    "concept_id": "concept-stale",
+                    "role": "primary",
+                }
+            ],
+        }
+
+        def mark_job_failed_then_regenerate(worker_db, note_group_id, payload):
+            stale_db = self.SessionLocal()
+            try:
+                stale_job = stale_db.get(Job, "job-stale")
+                note_group = stale_db.get(NoteGroup, "note-a")
+                stale_job.status = "failed"
+                stale_job.error = "Stale Concept Mind Map generation job superseded"
+                note_group.mind_map_status = "queued"
+                stale_db.add(
+                    Job(
+                        id="job-replacement",
+                        type=JOB_TYPE_MIND_MAP_GENERATION,
+                        note_group_id="note-a",
+                    )
+                )
+                stale_db.commit()
+            finally:
+                stale_db.close()
+
+            regenerate_note_group_mind_map(worker_db, note_group_id, payload)
+
+        with patch("app.jobs.SessionLocal", self.SessionLocal), patch(
+            "app.jobs.generate_mind_map_candidate_graph",
+            return_value=candidate_payload,
+        ), patch(
+            "app.jobs.regenerate_note_group_mind_map",
+            side_effect=mark_job_failed_then_regenerate,
+        ):
+            run_mind_map_generation("job-stale")
+
+        db = self.SessionLocal()
+        try:
+            stale_job = db.get(Job, "job-stale")
+            replacement_job = db.get(Job, "job-replacement")
+            note_group = db.get(NoteGroup, "note-a")
+            concepts = db.query(MindMapConcept).filter(MindMapConcept.module_id == "module-1").all()
+
+            self.assertEqual(stale_job.status, "failed")
+            self.assertEqual(stale_job.error, "Stale Concept Mind Map generation job superseded")
+            self.assertEqual(replacement_job.status, "queued")
+            self.assertEqual(note_group.mind_map_status, "queued")
+            self.assertEqual(concepts, [])
+        finally:
+            db.close()
+
+    def test_run_mind_map_generation_does_not_overwrite_superseded_failure_state(self):
+        db = self.SessionLocal()
+        try:
+            MindMapServiceTests.seed_graph_scope(self, db)
+            db.add(Job(id="job-stale", type=JOB_TYPE_MIND_MAP_GENERATION, note_group_id="note-a"))
+            db.commit()
+        finally:
+            db.close()
+
+        def mark_job_failed_as_stale_then_raise(**kwargs):
+            stale_db = self.SessionLocal()
+            try:
+                stale_job = stale_db.get(Job, "job-stale")
+                note_group = stale_db.get(NoteGroup, "note-a")
+                stale_job.status = "failed"
+                stale_job.error = "Stale Concept Mind Map generation job superseded"
+                note_group.mind_map_status = "queued"
+                stale_db.add(
+                    Job(
+                        id="job-replacement",
+                        type=JOB_TYPE_MIND_MAP_GENERATION,
+                        note_group_id="note-a",
+                    )
+                )
+                stale_db.commit()
+            finally:
+                stale_db.close()
+            raise RuntimeError("LLM failed after stale replacement")
+
+        with patch("app.jobs.SessionLocal", self.SessionLocal), patch(
+            "app.jobs.generate_mind_map_candidate_graph",
+            side_effect=mark_job_failed_as_stale_then_raise,
+        ):
+            run_mind_map_generation("job-stale")
+
+        db = self.SessionLocal()
+        try:
+            stale_job = db.get(Job, "job-stale")
+            replacement_job = db.get(Job, "job-replacement")
+            note_group = db.get(NoteGroup, "note-a")
+
+            self.assertEqual(stale_job.status, "failed")
+            self.assertEqual(stale_job.error, "Stale Concept Mind Map generation job superseded")
+            self.assertEqual(replacement_job.status, "queued")
+            self.assertEqual(note_group.mind_map_status, "queued")
+        finally:
+            db.close()
+
     def test_run_mind_map_generation_keeps_previous_graph_on_failure(self):
         db = self.SessionLocal()
         try:
