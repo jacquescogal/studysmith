@@ -17,6 +17,7 @@ export function QuestionCardList({
   generationStatus,
   generating,
   canEdit,
+  showEditControls = canEdit,
   canReview = true,
   editingQuestionCardId,
   editingQuestionCard,
@@ -67,14 +68,22 @@ export function QuestionCardList({
               <SelectItem value="unknown">Unknown</SelectItem>
             </SelectContent>
           </Select>
-          {canEdit ? <Button type="button" onClick={onCreate}><Plus className="size-4" /> Add Question Card</Button> : null}
-          {canEdit ? (
+          {showEditControls ? (
+            <Button type="button" onClick={onCreate} disabled={!canEdit}>
+              <Plus className="size-4" /> Add Question Card
+            </Button>
+          ) : null}
+          {showEditControls ? (
             <>
-              <Button type="button" variant="outline" disabled={generating} onClick={onGenerate}>
+              <Button type="button" variant="outline" disabled={!canEdit || generating} onClick={onGenerate}>
                 <RefreshCcw className="size-4" /> {generating ? "Generating..." : "Generate"}
               </Button>
               {generationStatus !== "idle" ? <Badge variant="secondary">{generationStatus}</Badge> : null}
-              {generating ? <Button type="button" variant="outline" onClick={onCancelGeneration}>Cancel</Button> : null}
+              {generating ? (
+                <Button type="button" variant="outline" onClick={onCancelGeneration} disabled={!canEdit}>
+                  Cancel
+                </Button>
+              ) : null}
             </>
           ) : null}
         </div>
@@ -186,10 +195,24 @@ export function QuestionCardList({
                     <p className="text-xs text-muted-foreground">Refs: {(card.study_card_refs || []).join(", ") || "None"}</p>
                     <div className="flex flex-wrap gap-2">
                       <Button type="button" variant="outline" onClick={(event) => { event.stopPropagation(); onFocus(card.id); }}><Eye className="size-4" /> Details</Button>
-                      {canEdit ? (
+                      {showEditControls ? (
                         <>
-                          <Button type="button" variant="outline" onClick={(event) => { event.stopPropagation(); onEdit(card); }}><Edit className="size-4" /> Edit</Button>
-                          <Button type="button" variant="destructive" onClick={(event) => { event.stopPropagation(); onDelete(card.id); }}><Trash2 className="size-4" /> Delete</Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={(event) => { event.stopPropagation(); onEdit(card); }}
+                            disabled={!canEdit}
+                          >
+                            <Edit className="size-4" /> Edit
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            onClick={(event) => { event.stopPropagation(); onDelete(card.id); }}
+                            disabled={!canEdit}
+                          >
+                            <Trash2 className="size-4" /> Delete
+                          </Button>
                         </>
                       ) : null}
                     </div>

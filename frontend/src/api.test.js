@@ -11,7 +11,10 @@ import {
   listPublicSubjects,
   listPublicSubjectRequests,
   listSubjectAccess,
+  listSubjectActivity,
+  listSubjectSharingUsers,
   listSubjects,
+  requestSubjectPublic,
   setAccessTokenProvider,
   updateAdminUserRole,
   upsertSubjectAccess
@@ -83,20 +86,38 @@ describe("admin and access API calls", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => Promise.resolve(jsonResponse([])));
 
     await listSubjectAccess("subject-1");
-    await upsertSubjectAccess("subject-1", "user-1", "edit");
+    await listSubjectSharingUsers("subject-1");
+    await listSubjectActivity("subject-1");
+    await requestSubjectPublic("subject-1");
+    await upsertSubjectAccess("subject-1", "user-1", "maintainer");
     await deleteSubjectAccess("subject-1", "user-1");
 
     expect(fetchMock).toHaveBeenNthCalledWith(1, "/subjects/subject-1/access", expect.any(Object));
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      "/subjects/subject-1/access/user-1",
-      expect.objectContaining({
-        method: "PUT",
-        body: JSON.stringify({ access_level: "edit" })
-      })
+      "/subjects/subject-1/sharing-users",
+      expect.any(Object)
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       3,
+      "/subjects/subject-1/activity",
+      expect.any(Object)
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      "/subjects/subject-1/request-public",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      5,
+      "/subjects/subject-1/access/user-1",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ access_level: "maintainer" })
+      })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      6,
       "/subjects/subject-1/access/user-1",
       expect.objectContaining({ method: "DELETE" })
     );

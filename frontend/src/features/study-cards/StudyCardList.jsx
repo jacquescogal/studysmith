@@ -12,6 +12,7 @@ import { renderMarkdownBlocks } from "@/lib/text-rendering";
 export function StudyCardList({
   cards,
   canEdit,
+  showEditControls = canEdit,
   topicChips,
   editingStudyCardId,
   editingStudyCard,
@@ -31,8 +32,8 @@ export function StudyCardList({
           <h2 className="text-lg font-semibold">Study Cards</h2>
           <p className="text-sm text-muted-foreground">{cards.length} cards in this scope.</p>
         </div>
-        {canEdit ? (
-          <Button type="button" onClick={onCreate}>
+        {showEditControls ? (
+          <Button type="button" onClick={onCreate} disabled={!canEdit}>
             <Plus className="size-4" /> Add Study Card
           </Button>
         ) : null}
@@ -87,12 +88,12 @@ export function StudyCardList({
                         <Badge key={topic.id} variant="secondary" className="topic-chip">{topic.label}</Badge>
                       ))}
                     </div>
-                    {canEdit ? (
+                    {showEditControls ? (
                       <div className="flex flex-wrap gap-2">
-                        <Button type="button" variant="outline" onClick={() => onEdit(card)}>
+                        <Button type="button" variant="outline" onClick={() => onEdit(card)} disabled={!canEdit}>
                           <Edit className="size-4" /> Edit
                         </Button>
-                        <Button type="button" variant="destructive" onClick={() => onDelete(card.id)}>
+                        <Button type="button" variant="destructive" onClick={() => onDelete(card.id)} disabled={!canEdit}>
                           <Trash2 className="size-4" /> Delete
                         </Button>
                       </div>

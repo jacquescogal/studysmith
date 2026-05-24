@@ -2,7 +2,11 @@ name: studysmith
 
 services:
   app:
-    build: .
+    build:
+      context: .
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
     ports:
       - "8000:8000"
     environment:
@@ -10,10 +14,10 @@ services:
       OPENAI_WEAK_MODEL: ${OPENAI_WEAK_MODEL:-gpt-5.4-mini}
       OPENAI_STRONG_MODEL: ${OPENAI_STRONG_MODEL:-gpt-5.4}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
-      DATABASE_URL: sqlite:////data/study.db
-      CHROMA_PATH: /data/chroma
-    volumes:
-      - study-data:/data
-
-volumes:
-  study-data:
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql://postgres:postgres@host.docker.internal:54322/postgres}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:-}
+      SUPABASE_JWKS_URL: ${SUPABASE_JWKS_URL:-}
+      SUPABASE_JWT_ISSUER: ${SUPABASE_JWT_ISSUER:-}
+      SUPABASE_JWT_AUDIENCE: ${SUPABASE_JWT_AUDIENCE:-authenticated}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}

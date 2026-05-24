@@ -31,14 +31,16 @@ from app.access import (
     require_study_card_edit,
     require_study_card_read,
     require_subject_edit,
+    require_subject_maintainer,
     require_subject_owner,
     require_subject_read,
     require_subject_study,
     require_topic_edit,
     require_topic_read,
     require_topic_study,
+    subject_access_level,
 )
-from app.auth import require_admin, require_creator, require_user
+from app.auth import optional_user, require_admin, require_creator, require_user
 from app.auto_queue import enqueue_auto_job, remove_auto_job, resume_auto_jobs, start_auto_worker
 from app.jobs import (
     JOB_TYPE_NOTE_GROUP_QUESTION_GENERATION,
@@ -62,8 +64,16 @@ from app.models import (
     StudyCardSourceRange,
     Subject,
     SubjectAccess,
+    SubjectActivityEvent,
     SubjectShortCode,
+    SUBJECT_ACTIVITY_CREATED,
+    SUBJECT_ACTIVITY_DELETED,
+    SUBJECT_ACTIVITY_MODULE,
+    SUBJECT_ACTIVITY_NOTE_GROUP,
+    SUBJECT_ACTIVITY_QUESTION_CARD,
+    SUBJECT_ACTIVITY_STUDY_CARD,
     SUBJECT_ACCESS_LEVELS,
+    SUBJECT_ACCESS_MAINTAINER,
     SUBJECT_ACCESS_OWNER,
     SUBJECT_VISIBILITY_PRIVATE,
     SUBJECT_VISIBILITY_PUBLIC,
@@ -126,6 +136,7 @@ from app.schemas import (
     QuestionTimelineResponse,
     SubjectAccessGrantUpdate,
     SubjectAccessOut,
+    SubjectActivityEventOut,
     SubjectCreate,
     SubjectIntentChatPayload,
     SubjectOut,
@@ -302,6 +313,47 @@ def get_current_user_profile(current_user: User = Depends(require_user)):
     return current_user
 
 
+def _apply_current_user_access(subject: Subject, user: User | None) -> Subject:
+    subject.current_user_access_level = subject_access_level(user, subject)
+    return subject
+
+
+def _record_subject_activity(
+    db: Session,
+    *,
+    subject_id: str,
+    actor: User | None,
+    event_type: str,
+    entity_type: str,
+    entity_id: str,
+    entity_title: str | None = None,
+) -> SubjectActivityEvent:
+    event = SubjectActivityEvent(
+        subject_id=subject_id,
+        actor_user_id=actor.id if actor else None,
+        event_type=event_type,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        entity_title=(entity_title or "")[:500] or None,
+    )
+    db.add(event)
+    return event
+
+
+def _serialize_subject_activity(event: SubjectActivityEvent) -> dict:
+    return {
+        "id": event.id,
+        "subject_id": event.subject_id,
+        "actor_user_id": event.actor_user_id,
+        "actor_email": event.actor.email if event.actor else None,
+        "event_type": event.event_type,
+        "entity_type": event.entity_type,
+        "entity_id": event.entity_id,
+        "entity_title": event.entity_title,
+        "created_at": event.created_at,
+    }
+
+
 @app.on_event("startup")
 def _start_auto_worker() -> None:
     start_auto_worker()
@@ -379,10 +431,10 @@ def _get_or_create_question_card_learning_state(
 def _question_card_learning_state_map(
     db: Session,
     cards: list[QuestionCard],
-    user: User,
+    user: User | None,
 ) -> dict[str, QuestionCardLearningState]:
     card_ids = [card.id for card in cards]
-    if not card_ids:
+    if not card_ids or user is None:
         return {}
     states = (
         db.query(QuestionCardLearningState)
@@ -681,7 +733,7 @@ def health_check():
 def resolve_subject_app_route(
     subject_code: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_user),
+    current_user: User | None = Depends(optional_user),
 ):
     subject_record = _get_subject_short_code_record(db, subject_code)
     require_subject_read(current_user, subject_record.subject)
@@ -699,7 +751,7 @@ def resolve_module_app_route(
     subject_code: str,
     module_code: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_user),
+    current_user: User | None = Depends(optional_user),
 ):
     subject_record = _get_subject_short_code_record(db, subject_code)
     require_subject_read(current_user, subject_record.subject)
@@ -724,7 +776,7 @@ def resolve_note_group_app_route(
     module_code: str,
     note_group_code: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_user),
+    current_user: User | None = Depends(optional_user),
 ):
     subject_record = _get_subject_short_code_record(db, subject_code)
     require_subject_read(current_user, subject_record.subject)
@@ -755,7 +807,7 @@ def resolve_topic_app_route(
     module_code: str,
     topic_code: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_user),
+    current_user: User | None = Depends(optional_user),
 ):
     subject_record = _get_subject_short_code_record(db, subject_code)
     require_subject_read(current_user, subject_record.subject)
@@ -836,6 +888,8 @@ def list_public_subject_requests(
     )
     ensure_subject_short_codes(db, subjects)
     db.commit()
+    for subject in subjects:
+        _apply_current_user_access(subject, current_user)
     return subjects
 
 
@@ -854,7 +908,7 @@ def approve_public_subject(
     ensure_subject_short_code(db, subject)
     db.commit()
     db.refresh(subject)
-    return subject
+    return _apply_current_user_access(subject, current_user)
 
 
 @app.post("/admin/subjects/{subject_id}/keep-private", response_model=SubjectOut)
@@ -872,7 +926,7 @@ def keep_subject_private(
     ensure_subject_short_code(db, subject)
     db.commit()
     db.refresh(subject)
-    return subject
+    return _apply_current_user_access(subject, current_user)
 
 
 @app.get("/subjects", response_model=list[SubjectOut])
@@ -888,6 +942,8 @@ def list_subjects(
     )
     ensure_subject_short_codes(db, subjects)
     db.commit()
+    for subject in subjects:
+        _apply_current_user_access(subject, current_user)
     return subjects
 
 
@@ -934,7 +990,7 @@ def create_subject(
         ensure_subject_short_code(db, subject)
         db.commit()
         db.refresh(subject)
-        return subject
+        return _apply_current_user_access(subject, current_user)
     except Exception:
         db.rollback()
         raise
@@ -970,14 +1026,14 @@ def request_subject_public(
     subject = db.get(Subject, subject_id)
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
-    require_subject_owner(current_user, subject)
+    require_subject_maintainer(current_user, subject)
     if subject.visibility == SUBJECT_VISIBILITY_PUBLIC:
         raise HTTPException(status_code=400, detail="Subject is already public")
     subject.visibility = SUBJECT_VISIBILITY_PUBLIC_REQUESTED
     ensure_subject_short_code(db, subject)
     db.commit()
     db.refresh(subject)
-    return subject
+    return _apply_current_user_access(subject, current_user)
 
 
 @app.get("/subjects/{subject_id}/access", response_model=list[SubjectAccessOut])
@@ -989,13 +1045,47 @@ def list_subject_access(
     subject = db.get(Subject, subject_id)
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
-    require_subject_owner(current_user, subject)
+    require_subject_maintainer(current_user, subject)
     return (
         db.query(SubjectAccess)
         .filter(SubjectAccess.subject_id == subject_id)
         .order_by(SubjectAccess.created_at.asc())
         .all()
     )
+
+
+@app.get("/subjects/{subject_id}/sharing-users", response_model=list[UserOut])
+def list_subject_sharing_users(
+    subject_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    subject = db.get(Subject, subject_id)
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    require_subject_maintainer(current_user, subject)
+    return db.query(User).order_by(User.email.asc()).all()
+
+
+@app.get("/subjects/{subject_id}/activity", response_model=list[SubjectActivityEventOut])
+def list_subject_activity(
+    subject_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    subject = db.get(Subject, subject_id)
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    require_subject_maintainer(current_user, subject)
+    events = (
+        db.query(SubjectActivityEvent)
+        .options(joinedload(SubjectActivityEvent.actor))
+        .filter(SubjectActivityEvent.subject_id == subject_id)
+        .order_by(SubjectActivityEvent.created_at.desc())
+        .limit(100)
+        .all()
+    )
+    return [_serialize_subject_activity(event) for event in events]
 
 
 @app.put("/subjects/{subject_id}/access/{user_id}", response_model=SubjectAccessOut)
@@ -1011,7 +1101,16 @@ def upsert_subject_access(
     subject = db.get(Subject, subject_id)
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
-    require_subject_owner(current_user, subject)
+    require_subject_maintainer(current_user, subject)
+    assigning_owner = payload.access_level == SUBJECT_ACCESS_OWNER
+    changing_current_owner_role = subject.owner_user_id == user_id and not assigning_owner
+    if changing_current_owner_role:
+        raise HTTPException(
+            status_code=400,
+            detail="Transfer ownership before changing the owner role",
+        )
+    if assigning_owner:
+        require_subject_owner(current_user, subject)
     target_user = db.get(User, user_id)
     if not target_user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -1020,6 +1119,29 @@ def upsert_subject_access(
         .filter(SubjectAccess.subject_id == subject_id, SubjectAccess.user_id == user_id)
         .one_or_none()
     )
+    if assigning_owner:
+        previous_owner_id = subject.owner_user_id
+        if previous_owner_id and previous_owner_id != user_id:
+            previous_owner_grant = (
+                db.query(SubjectAccess)
+                .filter(
+                    SubjectAccess.subject_id == subject_id,
+                    SubjectAccess.user_id == previous_owner_id,
+                )
+                .one_or_none()
+            )
+            if previous_owner_grant:
+                previous_owner_grant.access_level = SUBJECT_ACCESS_MAINTAINER
+            else:
+                db.add(
+                    SubjectAccess(
+                        subject_id=subject_id,
+                        user_id=previous_owner_id,
+                        access_level=SUBJECT_ACCESS_MAINTAINER,
+                    )
+                )
+            db.flush()
+        subject.owner_user_id = user_id
     if grant:
         grant.access_level = payload.access_level
     else:
@@ -1029,8 +1151,6 @@ def upsert_subject_access(
             access_level=payload.access_level,
         )
         db.add(grant)
-    if payload.access_level == SUBJECT_ACCESS_OWNER and subject.owner_user_id is None:
-        subject.owner_user_id = user_id
     db.commit()
     db.refresh(grant)
     return grant
@@ -1046,7 +1166,7 @@ def delete_subject_access(
     subject = db.get(Subject, subject_id)
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
-    require_subject_owner(current_user, subject)
+    require_subject_maintainer(current_user, subject)
     if subject.owner_user_id == user_id:
         raise HTTPException(status_code=400, detail="Cannot revoke the subject owner")
     grant = (
@@ -1056,6 +1176,8 @@ def delete_subject_access(
     )
     if not grant:
         raise HTTPException(status_code=404, detail="Subject access grant not found")
+    if grant.access_level == SUBJECT_ACCESS_OWNER:
+        raise HTTPException(status_code=400, detail="Cannot revoke the subject owner")
     db.delete(grant)
     db.commit()
     return {"deleted": True}
@@ -1073,7 +1195,7 @@ def get_subject(
     require_subject_read(current_user, subject)
     ensure_subject_short_code(db, subject)
     db.commit()
-    return subject
+    return _apply_current_user_access(subject, current_user)
 
 
 @app.put("/subjects/{subject_id}", response_model=SubjectOut)
@@ -1086,7 +1208,7 @@ def update_subject(
     subject = db.get(Subject, subject_id)
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
-    require_subject_edit(current_user, subject)
+    require_subject_maintainer(current_user, subject)
     if (
         payload.title is None
         and payload.description is None
@@ -1111,7 +1233,7 @@ def update_subject(
         db.refresh(subject)
         ensure_subject_short_code(db, subject)
         db.commit()
-        return subject
+        return _apply_current_user_access(subject, current_user)
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="Subject title must be unique")
@@ -1126,7 +1248,7 @@ def delete_subject(
     subject = db.get(Subject, subject_id)
     if not subject:
         raise HTTPException(status_code=404, detail="Subject not found")
-    require_subject_edit(current_user, subject)
+    require_subject_owner(current_user, subject)
 
     module_rows = db.query(Module.id).filter(Module.subject_id == subject_id).all()
     module_ids = [row[0] for row in module_rows]
@@ -1159,7 +1281,7 @@ def delete_subject(
 def list_subject_modules(
     subject_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_user),
+    current_user: User | None = Depends(optional_user),
 ):
     subject = db.get(Subject, subject_id)
     if not subject:
@@ -1202,6 +1324,15 @@ def create_subject_module(
     try:
         db.flush()
         ensure_module_short_code(db, module)
+        _record_subject_activity(
+            db,
+            subject_id=subject_id,
+            actor=current_user,
+            event_type=SUBJECT_ACTIVITY_CREATED,
+            entity_type=SUBJECT_ACTIVITY_MODULE,
+            entity_id=module.id,
+            entity_title=module.title,
+        )
         db.commit()
         db.refresh(module)
         return module
@@ -1213,7 +1344,7 @@ def create_subject_module(
 @app.get("/modules", response_model=list[ModuleOut])
 def list_modules(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_user),
+    current_user: User | None = Depends(optional_user),
 ):
     modules = (
         db.query(Module)
@@ -1242,7 +1373,7 @@ def create_module(
 def get_module(
     module_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_user),
+    current_user: User | None = Depends(optional_user),
 ):
     module = require_module_read(db, current_user, module_id)
     ensure_module_short_code(db, module)
@@ -1331,6 +1462,8 @@ def delete_module(
     current_user: User = Depends(require_user),
 ):
     module = require_module_edit(db, current_user, module_id)
+    subject_id = module.subject_id
+    module_title = module.title
 
     note_group_rows = db.query(NoteGroup.id).filter(NoteGroup.module_id == module_id).all()
     note_group_ids = [row[0] for row in note_group_rows]
@@ -1341,6 +1474,15 @@ def delete_module(
     )
     db.query(TopicChip).filter(TopicChip.module_id == module_id).delete(
         synchronize_session=False
+    )
+    _record_subject_activity(
+        db,
+        subject_id=subject_id,
+        actor=current_user,
+        event_type=SUBJECT_ACTIVITY_DELETED,
+        entity_type=SUBJECT_ACTIVITY_MODULE,
+        entity_id=module_id,
+        entity_title=module_title,
     )
     db.delete(module)
     db.commit()
@@ -1353,7 +1495,7 @@ def list_note_groups(
     module_id: str,
     chip_ids: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_user),
+    current_user: User | None = Depends(optional_user),
 ):
     require_module_read(db, current_user, module_id)
 
@@ -1386,7 +1528,7 @@ def get_module_overview(
     module_id: str,
     chip_ids: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_user),
+    current_user: User | None = Depends(optional_user),
 ):
     require_module_read(db, current_user, module_id)
 
@@ -1600,6 +1742,15 @@ def auto_create_note_group(
     )
     db.add(job)
     note_group.title = job.id
+    _record_subject_activity(
+        db,
+        subject_id=note_group.module.subject_id,
+        actor=current_user,
+        event_type=SUBJECT_ACTIVITY_CREATED,
+        entity_type=SUBJECT_ACTIVITY_NOTE_GROUP,
+        entity_id=note_group.id,
+        entity_title=source_raw or note_group.title,
+    )
     db.commit()
     db.refresh(job)
 
@@ -1631,7 +1782,7 @@ def update_note_group_title(
 def list_topic_chips(
     module_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_user),
+    current_user: User | None = Depends(optional_user),
 ):
     require_module_read(db, current_user, module_id)
     topics = (
@@ -1670,7 +1821,7 @@ def create_topic_chip(
 def get_topic(
     topic_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_user),
+    current_user: User | None = Depends(optional_user),
 ):
     topic = require_topic_read(db, current_user, topic_id)
     ensure_topic_chip_short_code(db, topic)
@@ -1766,7 +1917,7 @@ def _topic_question_cards(db: Session, topic: TopicChip) -> list[QuestionCard]:
 def list_topic_study_cards(
     topic_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_user),
+    current_user: User | None = Depends(optional_user),
 ):
     topic = require_topic_read(db, current_user, topic_id)
     cards = (
@@ -1791,7 +1942,7 @@ def list_topic_study_cards(
 def list_topic_question_cards(
     topic_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_user),
+    current_user: User | None = Depends(optional_user),
 ):
     topic = require_topic_read(db, current_user, topic_id)
     cards = _topic_question_cards(db, topic)
@@ -1806,7 +1957,7 @@ def list_topic_question_cards(
 def get_topic_question_timeline(
     topic_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_user),
+    current_user: User | None = Depends(optional_user),
 ):
     topic = require_topic_read(db, current_user, topic_id)
     cards = _topic_question_cards(db, topic)
@@ -1884,7 +2035,7 @@ def detach_topic_chip(
 def get_note_group(
     note_group_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_user),
+    current_user: User | None = Depends(optional_user),
 ):
     note_group = (
         db.query(NoteGroup)
@@ -1907,8 +2058,19 @@ def delete_note_group(
     current_user: User = Depends(require_user),
 ):
     note_group = require_note_group_edit(db, current_user, note_group_id)
+    subject_id = note_group.module.subject_id
+    note_group_title = note_group.title or note_group.source or note_group.id
 
     study_card_ids = _delete_note_groups(db, [note_group_id])
+    _record_subject_activity(
+        db,
+        subject_id=subject_id,
+        actor=current_user,
+        event_type=SUBJECT_ACTIVITY_DELETED,
+        entity_type=SUBJECT_ACTIVITY_NOTE_GROUP,
+        entity_id=note_group_id,
+        entity_title=note_group_title,
+    )
     db.commit()
 
     return {"deleted": True}
@@ -1930,13 +2092,17 @@ def list_jobs(
     status: Optional[str] = Query(default=None),
     module_id: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_user),
 ):
     query = db.query(Job)
     if module_id:
+        module = require_module_read(db, current_user, module_id)
+        require_subject_maintainer(current_user, module.subject)
         query = query.join(NoteGroup, Job.note_group_id == NoteGroup.id).filter(
             NoteGroup.module_id == module_id
         )
+    elif current_user.app_role != APP_ROLE_ADMIN:
+        raise HTTPException(status_code=403, detail="Admin access required")
     if type:
         query = query.filter(Job.type == type)
     if status:
@@ -2005,7 +2171,7 @@ def retry_job(
 def list_study_cards(
     note_group_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_user),
+    current_user: User | None = Depends(optional_user),
 ):
     require_note_group_read(db, current_user, note_group_id)
     cards = (
@@ -2021,7 +2187,7 @@ def list_study_cards(
 def get_note_group_card_table(
     note_group_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_user),
+    current_user: User | None = Depends(optional_user),
 ):
     require_note_group_read(db, current_user, note_group_id)
 
@@ -2050,7 +2216,7 @@ def get_note_group_card_table(
             reviewed="all",
             attention=False,
             chip_ids=None,
-            user_id=current_user.id,
+            user_id=current_user.id if current_user else "__anonymous__",
         )["rows"]
     }
 
@@ -2095,7 +2261,7 @@ def get_note_group_card_table(
 def get_study_card(
     study_card_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_user),
+    current_user: User | None = Depends(optional_user),
 ):
     card = require_study_card_read(db, current_user, study_card_id)
     return card
@@ -2130,6 +2296,15 @@ def create_study_card(
     db.add(card)
     try:
         db.flush()
+        _record_subject_activity(
+            db,
+            subject_id=note_group.module.subject_id,
+            actor=current_user,
+            event_type=SUBJECT_ACTIVITY_CREATED,
+            entity_type=SUBJECT_ACTIVITY_STUDY_CARD,
+            entity_id=card.id,
+            entity_title=card.title or card.content[:120],
+        )
         _upsert_study_card_embedding(card, note_group.module_id)
         db.commit()
         db.refresh(card)
@@ -2184,8 +2359,19 @@ def delete_study_card(
 ):
     card = require_study_card_edit(db, current_user, study_card_id)
     note_group_id = card.note_group_id
+    subject_id = card.note_group.module.subject_id
     card_id = card.id
+    card_title = card.title or card.content[:120]
     delete_study_card_embeddings(db, [card_id])
+    _record_subject_activity(
+        db,
+        subject_id=subject_id,
+        actor=current_user,
+        event_type=SUBJECT_ACTIVITY_DELETED,
+        entity_type=SUBJECT_ACTIVITY_STUDY_CARD,
+        entity_id=card_id,
+        entity_title=card_title,
+    )
     db.delete(card)
     db.commit()
     _mark_question_cards_stale(db, note_group_id, card_id)
@@ -2259,7 +2445,7 @@ def generate_question_cards(
 def list_question_cards(
     note_group_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_user),
+    current_user: User | None = Depends(optional_user),
 ):
     require_note_group_read(db, current_user, note_group_id)
     cards = (
@@ -2280,7 +2466,7 @@ def get_note_group_question_timeline(
     note_group_id: str,
     chip_ids: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_user),
+    current_user: User | None = Depends(optional_user),
 ):
     require_note_group_read(db, current_user, note_group_id)
     now = datetime.now(timezone.utc)
@@ -2399,7 +2585,7 @@ def get_module_question_timeline(
     module_id: str,
     chip_ids: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_user),
+    current_user: User | None = Depends(optional_user),
 ):
     require_module_read(db, current_user, module_id)
     now = datetime.now(timezone.utc)
@@ -2473,7 +2659,7 @@ def create_question_card(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_user),
 ):
-    require_note_group_edit(db, current_user, note_group_id)
+    note_group = require_note_group_edit(db, current_user, note_group_id)
     if payload.type not in {"mcq", "multi"}:
         raise HTTPException(status_code=400, detail="Invalid question type")
     if not payload.prompt.strip():
@@ -2510,6 +2696,16 @@ def create_question_card(
     )
     initialize_question_card(card, datetime.now(timezone.utc))
     db.add(card)
+    db.flush()
+    _record_subject_activity(
+        db,
+        subject_id=note_group.module.subject_id,
+        actor=current_user,
+        event_type=SUBJECT_ACTIVITY_CREATED,
+        entity_type=SUBJECT_ACTIVITY_QUESTION_CARD,
+        entity_id=card.id,
+        entity_title=card.prompt[:120],
+    )
     db.commit()
     db.refresh(card)
     return _serialize_question_card(card)
@@ -2644,6 +2840,17 @@ def delete_question_card(
     current_user: User = Depends(require_user),
 ):
     card = require_question_card_edit(db, current_user, question_card_id)
+    subject_id = card.note_group.module.subject_id
+    prompt = card.prompt
+    _record_subject_activity(
+        db,
+        subject_id=subject_id,
+        actor=current_user,
+        event_type=SUBJECT_ACTIVITY_DELETED,
+        entity_type=SUBJECT_ACTIVITY_QUESTION_CARD,
+        entity_id=question_card_id,
+        entity_title=prompt[:120],
+    )
     db.delete(card)
     db.commit()
     return {"deleted": True}

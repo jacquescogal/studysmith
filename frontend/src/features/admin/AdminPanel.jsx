@@ -24,7 +24,7 @@ import {
 } from "@/api";
 
 const APP_ROLES = ["reader", "creator", "admin"];
-const ACCESS_LEVELS = ["read", "edit", "owner"];
+const ACCESS_LEVELS = ["reader", "maintainer", "owner"];
 
 const roleLabel = (role) => role.charAt(0).toUpperCase() + role.slice(1);
 
@@ -34,7 +34,7 @@ export function AdminPanel({ subjects, selectedSubjectId, onSubjectUpdated, onCl
   const [accessGrants, setAccessGrants] = useState([]);
   const [subjectId, setSubjectId] = useState(selectedSubjectId || "");
   const [grantUserId, setGrantUserId] = useState("");
-  const [grantLevel, setGrantLevel] = useState("read");
+  const [grantLevel, setGrantLevel] = useState("reader");
   const [loading, setLoading] = useState(false);
   const [accessLoading, setAccessLoading] = useState(false);
   const [actionId, setActionId] = useState("");
@@ -158,7 +158,7 @@ export function AdminPanel({ subjects, selectedSubjectId, onSubjectUpdated, onCl
         grant
       ]);
       setGrantUserId("");
-      setGrantLevel("read");
+      setGrantLevel("reader");
     } catch (grantError) {
       setError(grantError.message || "Failed to grant Subject access");
     } finally {
@@ -330,7 +330,7 @@ export function AdminPanel({ subjects, selectedSubjectId, onSubjectUpdated, onCl
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold">Subject sharing</h3>
-            <p className="text-sm text-muted-foreground">Grant read, edit, or owner access by Subject.</p>
+            <p className="text-sm text-muted-foreground">Grant reader, maintainer, or owner access by Subject.</p>
           </div>
           <select
             className="h-9 min-w-64 rounded-md border bg-background px-3 text-sm"

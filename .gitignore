@@ -5,6 +5,8 @@ __pycache__/
 
 # Env
 backend/.env
+.env.local
+.env.prod
 
 # DB
 *.db

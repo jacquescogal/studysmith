@@ -9,9 +9,9 @@ from app.models import (
     NoteGroup,
     QuestionCard,
     StudyCard,
-    SUBJECT_ACCESS_EDIT,
+    SUBJECT_ACCESS_MAINTAINER,
     SUBJECT_ACCESS_OWNER,
-    SUBJECT_ACCESS_READ,
+    SUBJECT_ACCESS_READER,
     SUBJECT_VISIBILITY_PUBLIC,
     Subject,
     SubjectAccess,
@@ -20,8 +20,8 @@ from app.models import (
 )
 
 
-READ_LEVELS = {SUBJECT_ACCESS_READ, SUBJECT_ACCESS_EDIT, SUBJECT_ACCESS_OWNER}
-EDIT_LEVELS = {SUBJECT_ACCESS_EDIT, SUBJECT_ACCESS_OWNER}
+READ_LEVELS = {SUBJECT_ACCESS_READER, SUBJECT_ACCESS_MAINTAINER, SUBJECT_ACCESS_OWNER}
+MAINTAIN_LEVELS = {SUBJECT_ACCESS_MAINTAINER, SUBJECT_ACCESS_OWNER}
 
 
 def _access_level(user: User | None, subject: Subject) -> str | None:
@@ -43,12 +43,25 @@ def can_read_subject(user: User | None, subject: Subject) -> bool:
     return _access_level(user, subject) in READ_LEVELS
 
 
+def subject_access_level(user: User | None, subject: Subject) -> str | None:
+    explicit_level = _access_level(user, subject)
+    if explicit_level:
+        return explicit_level
+    if user and subject.visibility == SUBJECT_VISIBILITY_PUBLIC:
+        return SUBJECT_ACCESS_READER
+    return None
+
+
 def can_study_subject(user: User | None, subject: Subject) -> bool:
     return user is not None and can_read_subject(user, subject)
 
 
 def can_edit_subject(user: User | None, subject: Subject) -> bool:
-    return _access_level(user, subject) in EDIT_LEVELS
+    return _access_level(user, subject) in MAINTAIN_LEVELS
+
+
+def can_maintain_subject(user: User | None, subject: Subject) -> bool:
+    return _access_level(user, subject) in MAINTAIN_LEVELS
 
 
 def can_own_subject(user: User | None, subject: Subject) -> bool:
@@ -69,7 +82,12 @@ def require_subject_study(user: User | None, subject: Subject) -> None:
 
 def require_subject_edit(user: User | None, subject: Subject) -> None:
     if not can_edit_subject(user, subject):
-        raise HTTPException(status_code=403, detail="Edit access required")
+        raise HTTPException(status_code=403, detail="Maintainer access required")
+
+
+def require_subject_maintainer(user: User | None, subject: Subject) -> None:
+    if not can_maintain_subject(user, subject):
+        raise HTTPException(status_code=403, detail="Maintainer access required")
 
 
 def require_subject_owner(user: User | None, subject: Subject) -> None:
@@ -77,7 +95,9 @@ def require_subject_owner(user: User | None, subject: Subject) -> None:
         raise HTTPException(status_code=403, detail="Owner access required")
 
 
-def readable_subject_filter(user: User):
+def readable_subject_filter(user: User | None):
+    if user is None:
+        return Subject.visibility == SUBJECT_VISIBILITY_PUBLIC
     if user.app_role == APP_ROLE_ADMIN:
         return Subject.id.isnot(None)
     return or_(
@@ -100,7 +120,7 @@ def editable_subject_filter(user: User):
         Subject.access_grants.any(
             and_(
                 SubjectAccess.user_id == user.id,
-                SubjectAccess.access_level.in_(EDIT_LEVELS),
+                SubjectAccess.access_level.in_(MAINTAIN_LEVELS),
             )
         ),
     )
@@ -218,7 +238,7 @@ def require_job_read(db: Session, user: User | None, job_id: str) -> Job:
         if not user or user.app_role != APP_ROLE_ADMIN:
             raise HTTPException(status_code=403, detail="Admin access required")
         return job
-    require_subject_read(user, job.note_group.module.subject)
+    require_subject_edit(user, job.note_group.module.subject)
     return job
 
 

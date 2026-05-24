@@ -40,10 +40,32 @@ SUBJECT_VISIBILITIES = {
     SUBJECT_VISIBILITY_PUBLIC,
 }
 
-SUBJECT_ACCESS_READ = "read"
-SUBJECT_ACCESS_EDIT = "edit"
+SUBJECT_ACCESS_READER = "reader"
+SUBJECT_ACCESS_MAINTAINER = "maintainer"
 SUBJECT_ACCESS_OWNER = "owner"
-SUBJECT_ACCESS_LEVELS = {SUBJECT_ACCESS_READ, SUBJECT_ACCESS_EDIT, SUBJECT_ACCESS_OWNER}
+SUBJECT_ACCESS_LEVELS = {
+    SUBJECT_ACCESS_READER,
+    SUBJECT_ACCESS_MAINTAINER,
+    SUBJECT_ACCESS_OWNER,
+}
+
+SUBJECT_ACTIVITY_CREATED = "created"
+SUBJECT_ACTIVITY_DELETED = "deleted"
+SUBJECT_ACTIVITY_EVENT_TYPES = {
+    SUBJECT_ACTIVITY_CREATED,
+    SUBJECT_ACTIVITY_DELETED,
+}
+
+SUBJECT_ACTIVITY_MODULE = "module"
+SUBJECT_ACTIVITY_NOTE_GROUP = "note_group"
+SUBJECT_ACTIVITY_STUDY_CARD = "study_card"
+SUBJECT_ACTIVITY_QUESTION_CARD = "question_card"
+SUBJECT_ACTIVITY_ENTITY_TYPES = {
+    SUBJECT_ACTIVITY_MODULE,
+    SUBJECT_ACTIVITY_NOTE_GROUP,
+    SUBJECT_ACTIVITY_STUDY_CARD,
+    SUBJECT_ACTIVITY_QUESTION_CARD,
+}
 
 
 def _uuid() -> str:
@@ -98,6 +120,7 @@ class User(Base):
         cascade="all, delete-orphan",
     )
     question_card_review_events = relationship("QuestionCardReviewEvent", back_populates="user")
+    subject_activity_events = relationship("SubjectActivityEvent", back_populates="actor")
 
 
 class SubjectAccess(Base):
@@ -146,6 +169,11 @@ class Subject(Base):
         back_populates="subject",
         cascade="all, delete-orphan",
     )
+    activity_events = relationship(
+        "SubjectActivityEvent",
+        back_populates="subject",
+        cascade="all, delete-orphan",
+    )
     modules = relationship("Module", back_populates="subject")
     short_code_record = relationship(
         "SubjectShortCode",
@@ -157,6 +185,36 @@ class Subject(Base):
     @property
     def short_code(self) -> str | None:
         return self.short_code_record.short_code if self.short_code_record else None
+
+
+class SubjectActivityEvent(Base):
+    __tablename__ = "subject_activity_events"
+    __table_args__ = (
+        CheckConstraint(
+            _check_values("event_type", SUBJECT_ACTIVITY_EVENT_TYPES),
+            name="ck_subject_activity_events_event_type",
+        ),
+        CheckConstraint(
+            _check_values("entity_type", SUBJECT_ACTIVITY_ENTITY_TYPES),
+            name="ck_subject_activity_events_entity_type",
+        ),
+    )
+
+    id = Column(String, primary_key=True, default=_uuid)
+    subject_id = Column(String, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
+    actor_user_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    event_type = Column(String, nullable=False)
+    entity_type = Column(String, nullable=False)
+    entity_id = Column(String, nullable=False)
+    entity_title = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    subject = relationship("Subject", back_populates="activity_events")
+    actor = relationship("User", back_populates="subject_activity_events")
+
+    @property
+    def actor_email(self) -> str | None:
+        return self.actor.email if self.actor else None
 
 
 class SubjectShortCode(Base):
