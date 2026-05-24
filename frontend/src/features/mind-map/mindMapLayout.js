@@ -73,30 +73,32 @@ export function buildMindMapElements(graph, { title = "Mind Map" } = {}) {
   const edges = [];
   const conceptIds = new Set(graph.nodes.map((node) => node.id));
 
-  noteGroups.forEach((group) => {
-    const noteGroupNodeId = `mind-map-note-group:${group.id}`;
-    nodes.push({
-      id: noteGroupNodeId,
-      type: "mindMapNode",
-      position: { x: 0, y: 0 },
-      data: {
-        title: compactTitle(group.title, "Untitled Note Group"),
-        summary: "Note Group",
-        nodeType: "note_group",
-        badges: ["Note Group"]
-      },
-      width: NODE_WIDTH,
-      height: ROOT_NODE_HEIGHT
+  if (graphScope !== "note_group") {
+    noteGroups.forEach((group) => {
+      const noteGroupNodeId = `mind-map-note-group:${group.id}`;
+      nodes.push({
+        id: noteGroupNodeId,
+        type: "mindMapNode",
+        position: { x: 0, y: 0 },
+        data: {
+          title: compactTitle(group.title, "Untitled Note Group"),
+          summary: "Note Group",
+          nodeType: "note_group",
+          badges: ["Note Group"]
+        },
+        width: NODE_WIDTH,
+        height: ROOT_NODE_HEIGHT
+      });
+      edges.push({
+        id: `mind-map-root-edge:${group.id}`,
+        source: rootId,
+        target: noteGroupNodeId,
+        type: "smoothstep",
+        label: "includes",
+        data: { relationType: "contains" }
+      });
     });
-    edges.push({
-      id: `mind-map-root-edge:${group.id}`,
-      source: rootId,
-      target: noteGroupNodeId,
-      type: "smoothstep",
-      label: graphScope === "note_group" ? "contains" : "includes",
-      data: { relationType: "contains" }
-    });
-  });
+  }
 
   graph.nodes.forEach((concept) => {
     nodes.push({
@@ -116,19 +118,30 @@ export function buildMindMapElements(graph, { title = "Mind Map" } = {}) {
       height: NODE_HEIGHT
     });
 
-    const linkedNoteGroupIds = Array.isArray(concept.note_group_ids) ? concept.note_group_ids : [];
-    linkedNoteGroupIds
-      .filter((noteGroupId) => noteGroupById.has(noteGroupId))
-      .forEach((noteGroupId) => {
-        edges.push({
-          id: `mind-map-note-group-edge:${noteGroupId}:${concept.id}`,
-          source: `mind-map-note-group:${noteGroupId}`,
-          target: concept.id,
-          type: "smoothstep",
-          label: "contains",
-          data: { relationType: "contains" }
-        });
+    if (graphScope === "note_group") {
+      edges.push({
+        id: `mind-map-root-edge:${concept.id}`,
+        source: rootId,
+        target: concept.id,
+        type: "smoothstep",
+        label: "contains",
+        data: { relationType: "contains" }
       });
+    } else {
+      const linkedNoteGroupIds = Array.isArray(concept.note_group_ids) ? concept.note_group_ids : [];
+      linkedNoteGroupIds
+        .filter((noteGroupId) => noteGroupById.has(noteGroupId))
+        .forEach((noteGroupId) => {
+          edges.push({
+            id: `mind-map-note-group-edge:${noteGroupId}:${concept.id}`,
+            source: `mind-map-note-group:${noteGroupId}`,
+            target: concept.id,
+            type: "smoothstep",
+            label: "contains",
+            data: { relationType: "contains" }
+          });
+        });
+    }
   });
 
   graphEdges

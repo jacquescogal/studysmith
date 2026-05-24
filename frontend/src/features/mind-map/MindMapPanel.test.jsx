@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { ReactFlowProvider } from "@xyflow/react";
 import { describe, expect, test } from "vitest";
 
-import { MindMapPanel } from "./MindMapPanel";
+import { MindMapNode, MindMapPanel } from "./MindMapPanel";
 
 describe("MindMapPanel", () => {
   test("renders an empty state with generate control", () => {
@@ -28,5 +29,23 @@ describe("MindMapPanel", () => {
     );
 
     expect(html).toContain("Stale");
+  });
+
+  test("renders source and target handles for edge drawing", () => {
+    const html = renderToStaticMarkup(
+      <ReactFlowProvider>
+        <MindMapNode
+          data={{
+            title: "Magic Links",
+            summary: "Passwordless sign-in links.",
+            nodeType: "concept",
+            badges: ["term"]
+          }}
+        />
+      </ReactFlowProvider>
+    );
+
+    expect(html).toContain("react-flow__handle-left");
+    expect(html).toContain("react-flow__handle-right");
   });
 });
