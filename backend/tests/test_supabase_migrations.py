@@ -86,3 +86,13 @@ def test_knowledge_node_migration_adds_topic_and_type_fields():
     assert "constraint ck_mind_map_concepts_knowledge_type" in sql
     assert "check (knowledge_type in ('definition', 'fact', 'mechanism', 'rule'))" in sql
     assert "ix_mind_map_concepts_module_topic_id" in sql
+
+
+def test_topic_knowledge_node_review_migration_adds_review_status():
+    sql = _migration_sql().lower()
+
+    assert "add column if not exists knowledge_node_status varchar not null default 'not_generated'" in sql
+    assert "add column if not exists knowledge_node_review_reason text" in sql
+    assert "constraint ck_topic_chips_knowledge_node_status" in sql
+    assert "check (knowledge_node_status in ('not_generated', 'complete', 'needs_review'))" in sql
+    assert "ix_topic_chips_module_knowledge_node_status" in sql

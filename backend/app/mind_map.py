@@ -592,6 +592,7 @@ def _regenerate_note_group_topic_tree_mind_map(
 
     resolved_concepts: dict[str, MindMapConcept] = {concept.id: concept for concept in existing_concepts}
     graph_concept_ids: set[str] = set()
+    definition_topic_ids: set[str] = set()
     for node_data in validated["knowledge_nodes"]:
         concept = None
         matched_existing_node_id = node_data["matched_existing_knowledge_node_id"]
@@ -627,6 +628,8 @@ def _regenerate_note_group_topic_tree_mind_map(
         resolved_concepts[node_data["temp_id"]] = concept
         resolved_concepts[concept.id] = concept
         graph_concept_ids.add(concept.id)
+        if node_data["knowledge_type"] == "definition":
+            definition_topic_ids.add(topic.id)
 
     db.flush()
 
@@ -650,6 +653,13 @@ def _regenerate_note_group_topic_tree_mind_map(
         topic_ids_for_note_group.add(resolved_topics[topic_data["temp_id"]].id)
 
     for topic_id in sorted(topic_ids_for_note_group):
+        topic = resolved_topics[topic_id]
+        if topic_id in definition_topic_ids:
+            topic.knowledge_node_status = "complete"
+            topic.knowledge_node_review_reason = None
+        else:
+            topic.knowledge_node_status = "needs_review"
+            topic.knowledge_node_review_reason = "Missing definition Knowledge Node"
         db.execute(
             note_group_topic_chips.insert().values(
                 note_group_id=note_group.id,
@@ -690,6 +700,186 @@ def _regenerate_note_group_topic_tree_mind_map(
     db.flush()
     _prune_orphan_module_concepts(db, note_group.module_id)
     db.flush()
+
+
+def build_topic_knowledge_node_generation_context(db: Session, topic_id: str) -> dict:
+    topic = db.get(TopicChip, topic_id)
+    if not topic:
+        raise MindMapValidationError("Topic not found")
+
+    descendant_topic_ids = _descendant_topic_ids(topic)
+    direct_study_cards = []
+    for study_card in sorted(topic.study_cards, key=lambda card: (card.created_at, card.id)):
+        linked_topic_ids = {linked_topic.id for linked_topic in study_card.topic_chips}
+        if linked_topic_ids.intersection(descendant_topic_ids):
+            continue
+        direct_study_cards.append(study_card)
+
+    child_topic_ids = [child.id for child in topic.child_topics]
+    child_definition_query = db.query(MindMapConcept).filter(MindMapConcept.knowledge_type == "definition")
+    if child_topic_ids:
+        child_definition_context = (
+            child_definition_query.filter(MindMapConcept.topic_id.in_(child_topic_ids))
+            .order_by(MindMapConcept.title.asc(), MindMapConcept.id.asc())
+            .all()
+        )
+    else:
+        child_definition_context = []
+    existing_knowledge_nodes = (
+        db.query(MindMapConcept)
+        .filter(MindMapConcept.topic_id == topic.id)
+        .order_by(MindMapConcept.title.asc(), MindMapConcept.id.asc())
+        .all()
+    )
+    return {
+        "topic": {
+            "topic_id": topic.id,
+            "title": topic.label,
+            "summary": topic.description or "",
+            "parent_topic_id": topic.parent_topic_id,
+        },
+        "study_cards": [
+            {
+                "study_card_id": card.id,
+                "title": card.title,
+                "content": card.content,
+                "note_group_id": card.note_group_id,
+            }
+            for card in direct_study_cards
+        ],
+        "existing_knowledge_nodes": [_knowledge_node_payload(node) for node in existing_knowledge_nodes],
+        "child_definition_context": [_knowledge_node_payload(node) for node in child_definition_context],
+    }
+
+
+def regenerate_topic_knowledge_nodes(db: Session, topic_id: str, candidate_payload: dict) -> TopicChip:
+    topic = db.get(TopicChip, topic_id)
+    if not topic:
+        raise MindMapValidationError("Topic not found")
+
+    context = build_topic_knowledge_node_generation_context(db, topic_id)
+    study_card_ids = {card["study_card_id"] for card in context["study_cards"]}
+    existing_concepts = (
+        db.query(MindMapConcept)
+        .filter(MindMapConcept.topic_id == topic.id)
+        .order_by(MindMapConcept.title.asc(), MindMapConcept.id.asc())
+        .all()
+    )
+    existing_concept_ids = {concept.id for concept in existing_concepts}
+    concepts_by_id = {concept.id: concept for concept in existing_concepts}
+    concepts_by_slug = {concept.slug: concept for concept in existing_concepts}
+    validation_payload = {
+        "topics": [],
+        "knowledge_nodes": candidate_payload.get("knowledge_nodes", []),
+        "relations": candidate_payload.get("relations", []),
+        "study_card_topic_links": [
+            {
+                "study_card_id": study_card_id,
+                "topic_id": topic.id,
+                "role": "primary",
+            }
+            for study_card_id in sorted(study_card_ids)
+        ],
+        "study_card_knowledge_node_links": candidate_payload.get("study_card_knowledge_node_links", []),
+    }
+    validated = validate_candidate_graph(
+        validation_payload,
+        study_card_ids,
+        existing_concept_ids,
+        {topic.id},
+    )
+
+    selected_concept_ids = {concept.id for concept in existing_concepts}
+    if selected_concept_ids and study_card_ids:
+        (
+            db.query(StudyCardMindMapConcept)
+            .filter(
+                StudyCardMindMapConcept.study_card_id.in_(study_card_ids),
+                StudyCardMindMapConcept.concept_id.in_(selected_concept_ids),
+            )
+            .delete(synchronize_session=False)
+        )
+    db.flush()
+
+    resolved_concepts: dict[str, MindMapConcept] = {concept.id: concept for concept in existing_concepts}
+    definition_found = False
+    for node_data in validated["knowledge_nodes"]:
+        if node_data["topic_id"] != topic.id:
+            raise MindMapValidationError("Manual Knowledge Node regeneration can only update the selected Topic.")
+
+        concept = None
+        matched_existing_node_id = node_data["matched_existing_knowledge_node_id"]
+        if matched_existing_node_id:
+            concept = concepts_by_id[matched_existing_node_id]
+        if concept is None:
+            concept = concepts_by_slug.get(node_data["slug"])
+        if concept is None:
+            concept = MindMapConcept(
+                id=str(uuid.uuid4()),
+                module_id=topic.module_id,
+                topic_id=topic.id,
+                slug=_unique_slug(concepts_by_slug, node_data["slug"]),
+                title=node_data["title"],
+                summary=node_data["summary"],
+                concept_type=_legacy_concept_type_for_knowledge_type(node_data["knowledge_type"]),
+                knowledge_type=node_data["knowledge_type"],
+                importance=node_data["importance"],
+                source_quote=node_data["source_quote"],
+            )
+            db.add(concept)
+            concepts_by_id[concept.id] = concept
+            concepts_by_slug[concept.slug] = concept
+        else:
+            concept.topic_id = topic.id
+            concept.title = node_data["title"]
+            concept.summary = node_data["summary"]
+            concept.concept_type = _legacy_concept_type_for_knowledge_type(node_data["knowledge_type"])
+            concept.knowledge_type = node_data["knowledge_type"]
+            concept.importance = node_data["importance"]
+            concept.source_quote = node_data["source_quote"]
+        resolved_concepts[node_data["temp_id"]] = concept
+        resolved_concepts[concept.id] = concept
+        if node_data["knowledge_type"] == "definition":
+            definition_found = True
+
+    db.flush()
+
+    cards_by_id = {card.id: card for card in topic.study_cards if card.id in study_card_ids}
+    seen_links: set[tuple[str, str]] = set()
+    for link in validated["study_card_knowledge_node_links"]:
+        concept = resolved_concepts[link["knowledge_node_id"]]
+        if concept.topic_id != topic.id:
+            raise MindMapValidationError("Study Card Knowledge Node link must target the selected Topic.")
+        card = cards_by_id[link["study_card_id"]]
+        link_key = (card.id, concept.id)
+        if link_key in seen_links:
+            continue
+        seen_links.add(link_key)
+        db.add(
+            StudyCardMindMapConcept(
+                module_id=topic.module_id,
+                note_group_id=card.note_group_id,
+                study_card_id=card.id,
+                concept_id=concept.id,
+                role=link["role"],
+            )
+        )
+        db.merge(
+            NoteGroupMindMapConcept(
+                module_id=topic.module_id,
+                note_group_id=card.note_group_id,
+                concept_id=concept.id,
+            )
+        )
+
+    if definition_found:
+        topic.knowledge_node_status = "complete"
+        topic.knowledge_node_review_reason = None
+    else:
+        topic.knowledge_node_status = "needs_review"
+        topic.knowledge_node_review_reason = "Missing definition Knowledge Node"
+    db.flush()
+    return topic
 
 
 def mark_note_group_mind_map_stale(db: Session, note_group_id: str) -> None:
@@ -1100,6 +1290,30 @@ def _unique_slug(concepts_by_slug: dict[str, MindMapConcept], slug: str) -> str:
     while f"{slug}_{suffix}" in concepts_by_slug:
         suffix += 1
     return f"{slug}_{suffix}"
+
+
+def _descendant_topic_ids(topic: TopicChip) -> set[str]:
+    descendant_ids: set[str] = set()
+    pending = list(topic.child_topics)
+    while pending:
+        child = pending.pop()
+        if child.id in descendant_ids:
+            continue
+        descendant_ids.add(child.id)
+        pending.extend(child.child_topics)
+    return descendant_ids
+
+
+def _knowledge_node_payload(node: MindMapConcept) -> dict:
+    return {
+        "knowledge_node_id": node.id,
+        "topic_id": node.topic_id,
+        "title": node.title,
+        "summary": node.summary,
+        "knowledge_type": node.knowledge_type,
+        "importance": node.importance,
+        "source_quote": node.source_quote,
+    }
 
 
 def _legacy_concept_type_for_knowledge_type(knowledge_type: str) -> str:
