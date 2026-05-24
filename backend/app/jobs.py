@@ -727,6 +727,9 @@ def run_auto_note_group_generation(job_id: str) -> None:
         note_group = db.get(NoteGroup, note_group.id)
         if note_group:
             note_group.generation_status = "complete"
+            note_group.mind_map_status = "not_generated"
+            note_group.mind_map_stale = False
+            note_group.mind_map_generated_at = None
         job = db.get(Job, job_id)
         if job:
             job.status = "completed"
