@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 from fastapi import HTTPException
@@ -1056,6 +1056,34 @@ class MindMapServiceTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_active_mind_map_generation_job_is_unique_per_note_group(self):
+        db = self.SessionLocal()
+        try:
+            self._seed_mind_map_workspace(db)
+            db.add(
+                Job(
+                    id="job-1",
+                    type=JOB_TYPE_MIND_MAP_GENERATION,
+                    status="queued",
+                    note_group_id="note-group-1",
+                )
+            )
+            db.commit()
+
+            db.add(
+                Job(
+                    id="job-2",
+                    type=JOB_TYPE_MIND_MAP_GENERATION,
+                    status="running",
+                    note_group_id="note-group-1",
+                )
+            )
+            with self.assertRaises(IntegrityError):
+                db.commit()
+            db.rollback()
+        finally:
+            db.close()
+
 
 class MindMapOpenAIClientTests(unittest.TestCase):
     def test_generate_mind_map_candidate_graph_returns_validator_ready_links(self):
@@ -1439,10 +1467,25 @@ class MindMapRouteTests(unittest.TestCase):
                 raise HTTPException(status_code=401, detail="Authentication required")
             return user
 
-        app.dependency_overrides[get_db] = override_db
-        app.dependency_overrides[optional_user] = override_optional_user
-        app.dependency_overrides[require_user] = override_require_user
-        self.addCleanup(app.dependency_overrides.clear)
+        overrides = {
+            get_db: override_db,
+            optional_user: override_optional_user,
+            require_user: override_require_user,
+        }
+        previous_overrides = {
+            dependency: app.dependency_overrides.get(dependency)
+            for dependency in overrides
+        }
+        app.dependency_overrides.update(overrides)
+
+        def restore_overrides():
+            for dependency, previous_override in previous_overrides.items():
+                if previous_override is None:
+                    app.dependency_overrides.pop(dependency, None)
+                else:
+                    app.dependency_overrides[dependency] = previous_override
+
+        self.addCleanup(restore_overrides)
         return TestClient(app)
 
     def test_reader_can_read_but_cannot_generate(self):
@@ -1523,11 +1566,131 @@ class MindMapRouteTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["type"], JOB_TYPE_MIND_MAP_GENERATION)
+        self.assertEqual(response.json()["status"], "queued")
         run_generation.assert_called_once()
 
         db = self.SessionLocal()
         try:
             note_group = db.get(NoteGroup, "note-a")
-            self.assertIn(note_group.mind_map_status, {"queued", "generating", "complete", "failed"})
+            self.assertEqual(note_group.mind_map_status, "queued")
+            jobs = db.query(Job).filter(Job.note_group_id == "note-a").all()
+            self.assertEqual(len(jobs), 1)
+        finally:
+            db.close()
+
+    def test_existing_queued_generation_job_is_returned_and_rescheduled(self):
+        db = self.SessionLocal()
+        try:
+            self.seed_graph_scope(db)
+            owner = db.get(User, "owner-1")
+            db.add(
+                Job(
+                    id="job-queued",
+                    type=JOB_TYPE_MIND_MAP_GENERATION,
+                    status="queued",
+                    note_group_id="note-a",
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        client = self._client(user=owner)
+
+        with patch("app.main.run_mind_map_generation") as run_generation:
+            response = client.post("/note-groups/note-a/mind-map/generate")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["id"], "job-queued")
+        self.assertEqual(response.json()["status"], "queued")
+        run_generation.assert_called_once_with("job-queued")
+
+        db = self.SessionLocal()
+        try:
+            jobs = db.query(Job).filter(Job.note_group_id == "note-a").all()
+            self.assertEqual([job.id for job in jobs], ["job-queued"])
+        finally:
+            db.close()
+
+    def test_recent_running_generation_job_is_returned_without_duplicate(self):
+        db = self.SessionLocal()
+        try:
+            self.seed_graph_scope(db)
+            owner = db.get(User, "owner-1")
+            db.add(
+                Job(
+                    id="job-running",
+                    type=JOB_TYPE_MIND_MAP_GENERATION,
+                    status="running",
+                    note_group_id="note-a",
+                    updated_at=datetime.utcnow() - timedelta(minutes=5),
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        client = self._client(user=owner)
+
+        with patch("app.main.run_mind_map_generation") as run_generation:
+            response = client.post("/note-groups/note-a/mind-map/generate")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["id"], "job-running")
+        self.assertEqual(response.json()["status"], "running")
+        run_generation.assert_not_called()
+
+        db = self.SessionLocal()
+        try:
+            jobs = db.query(Job).filter(Job.note_group_id == "note-a").all()
+            self.assertEqual([job.id for job in jobs], ["job-running"])
+        finally:
+            db.close()
+
+    def test_stale_running_generation_job_is_failed_and_new_job_is_scheduled(self):
+        db = self.SessionLocal()
+        try:
+            self.seed_graph_scope(db)
+            owner = db.get(User, "owner-1")
+            db.add(
+                Job(
+                    id="job-stale",
+                    type=JOB_TYPE_MIND_MAP_GENERATION,
+                    status="running",
+                    note_group_id="note-a",
+                    updated_at=datetime.utcnow() - timedelta(minutes=31),
+                    created_at=datetime.utcnow() - timedelta(minutes=31),
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        client = self._client(user=owner)
+
+        with patch("app.main.run_mind_map_generation") as run_generation:
+            response = client.post("/note-groups/note-a/mind-map/generate")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotEqual(response.json()["id"], "job-stale")
+        self.assertEqual(response.json()["status"], "queued")
+        run_generation.assert_called_once_with(response.json()["id"])
+
+        db = self.SessionLocal()
+        try:
+            stale_job = db.get(Job, "job-stale")
+            self.assertEqual(stale_job.status, "failed")
+            self.assertEqual(stale_job.error, "Stale Concept Mind Map generation job superseded")
+            active_jobs = (
+                db.query(Job)
+                .filter(
+                    Job.note_group_id == "note-a",
+                    Job.type == JOB_TYPE_MIND_MAP_GENERATION,
+                    Job.status.in_(("queued", "running")),
+                )
+                .all()
+            )
+            self.assertEqual(len(active_jobs), 1)
+            self.assertEqual(active_jobs[0].id, response.json()["id"])
         finally:
             db.close()

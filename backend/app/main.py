@@ -159,6 +159,11 @@ from app.schemas import (
     UserRoleUpdate,
 )
 
+MIND_MAP_ACTIVE_JOB_STATUSES = ("queued", "running")
+MIND_MAP_RUNNING_JOB_TIMEOUT = timedelta(minutes=30)
+STALE_MIND_MAP_JOB_ERROR = "Stale Concept Mind Map generation job superseded"
+
+
 def _normalize_source_text(value: str) -> str:
     return " ".join(value.split()).lower()
 
@@ -2065,6 +2070,28 @@ def get_note_group(
     return note_group
 
 
+def _active_mind_map_generation_job(db: Session, note_group_id: str) -> Job | None:
+    return (
+        db.query(Job)
+        .filter(
+            Job.note_group_id == note_group_id,
+            Job.type == JOB_TYPE_MIND_MAP_GENERATION,
+            Job.status.in_(MIND_MAP_ACTIVE_JOB_STATUSES),
+        )
+        .order_by(Job.created_at.desc(), Job.id.desc())
+        .first()
+    )
+
+
+def _is_stale_mind_map_generation_job(job: Job) -> bool:
+    if job.status != "running":
+        return False
+    last_seen_at = job.updated_at or job.created_at
+    if last_seen_at is None:
+        return False
+    return datetime.utcnow() - last_seen_at > MIND_MAP_RUNNING_JOB_TIMEOUT
+
+
 @app.post("/note-groups/{note_group_id}/mind-map/generate", response_model=JobOut)
 def generate_note_group_mind_map(
     note_group_id: str,
@@ -2073,23 +2100,31 @@ def generate_note_group_mind_map(
     current_user: User = Depends(require_user),
 ):
     note_group = require_note_group_edit(db, current_user, note_group_id)
-    existing_job = (
-        db.query(Job)
-        .filter(
-            Job.note_group_id == note_group_id,
-            Job.type == JOB_TYPE_MIND_MAP_GENERATION,
-            Job.status.in_(("queued", "running")),
-        )
-        .order_by(Job.created_at.desc())
-        .first()
-    )
+    existing_job = _active_mind_map_generation_job(db, note_group_id)
     if existing_job:
-        return existing_job
+        if existing_job.status == "queued":
+            background_tasks.add_task(run_mind_map_generation, existing_job.id)
+            return existing_job
+        if not _is_stale_mind_map_generation_job(existing_job):
+            return existing_job
+        existing_job.status = "failed"
+        existing_job.error = STALE_MIND_MAP_JOB_ERROR
+        db.commit()
 
     job = Job(type=JOB_TYPE_MIND_MAP_GENERATION, note_group_id=note_group_id)
     db.add(job)
     note_group.mind_map_status = "queued"
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing_job = _active_mind_map_generation_job(db, note_group_id)
+        if existing_job:
+            if existing_job.status == "queued":
+                background_tasks.add_task(run_mind_map_generation, existing_job.id)
+            return existing_job
+        raise
+
     db.refresh(job)
 
     background_tasks.add_task(run_mind_map_generation, job.id)
