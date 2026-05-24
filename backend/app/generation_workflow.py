@@ -170,6 +170,9 @@ def initialize_job_workflow(
 
 
 def start_job_stage(db: Session, job: Job, stage: str) -> JobStage:
+    db.refresh(job)
+    if job.status == "cancelled":
+        raise ValueError("Job is cancelled")
     stage_record = _get_stage(db, job, stage)
     now = datetime.utcnow()
     job.status = "running"
