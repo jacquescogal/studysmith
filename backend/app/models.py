@@ -9,6 +9,8 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
+    Index,
     Integer,
     String,
     Table,
@@ -66,6 +68,22 @@ SUBJECT_ACTIVITY_ENTITY_TYPES = {
     SUBJECT_ACTIVITY_STUDY_CARD,
     SUBJECT_ACTIVITY_QUESTION_CARD,
 }
+
+MIND_MAP_CONCEPT_TYPES = {"topic", "subtopic", "term", "process", "principle", "example"}
+MIND_MAP_IMPORTANCE_LEVELS = {"core", "supporting", "detail"}
+MIND_MAP_RELATION_TYPES = {
+    "contains",
+    "defines",
+    "part_of",
+    "requires",
+    "enables",
+    "causes",
+    "contrasts_with",
+    "example_of",
+    "sequence",
+    "related_to",
+}
+MIND_MAP_STUDY_CARD_ROLES = {"primary", "supporting"}
 
 
 def _uuid() -> str:
@@ -446,6 +464,9 @@ class MindMapConcept(Base):
     __tablename__ = "mind_map_concepts"
     __table_args__ = (
         UniqueConstraint("module_id", "slug", name="uq_mind_map_concepts_module_slug"),
+        UniqueConstraint("module_id", "id", name="uq_mind_map_concepts_module_id"),
+        CheckConstraint(_check_values("concept_type", MIND_MAP_CONCEPT_TYPES), name="ck_mind_map_concepts_type"),
+        CheckConstraint(_check_values("importance", MIND_MAP_IMPORTANCE_LEVELS), name="ck_mind_map_concepts_importance"),
     )
 
     id = Column(String, primary_key=True, default=_uuid)
@@ -487,6 +508,18 @@ class MindMapConcept(Base):
 class MindMapRelation(Base):
     __tablename__ = "mind_map_relations"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["module_id", "source_concept_id"],
+            ["mind_map_concepts.module_id", "mind_map_concepts.id"],
+            ondelete="CASCADE",
+            name="fk_mind_map_relations_source_concept_module",
+        ),
+        ForeignKeyConstraint(
+            ["module_id", "target_concept_id"],
+            ["mind_map_concepts.module_id", "mind_map_concepts.id"],
+            ondelete="CASCADE",
+            name="fk_mind_map_relations_target_concept_module",
+        ),
         UniqueConstraint(
             "module_id",
             "source_concept_id",
@@ -496,6 +529,11 @@ class MindMapRelation(Base):
             name="uq_mind_map_relations_note_group_edge",
         ),
         CheckConstraint("source_concept_id != target_concept_id", name="ck_mind_map_relations_not_self"),
+        CheckConstraint(_check_values("relation_type", MIND_MAP_RELATION_TYPES), name="ck_mind_map_relations_type"),
+        Index("ix_mind_map_relations_source_concept_id", "source_concept_id"),
+        Index("ix_mind_map_relations_target_concept_id", "target_concept_id"),
+        Index("ix_mind_map_relations_module_source_concept_id", "module_id", "source_concept_id"),
+        Index("ix_mind_map_relations_module_target_concept_id", "module_id", "target_concept_id"),
     )
 
     id = Column(String, primary_key=True, default=_uuid)
@@ -518,7 +556,8 @@ class MindMapRelation(Base):
 class StudyCardMindMapConcept(Base):
     __tablename__ = "study_card_mind_map_concepts"
     __table_args__ = (
-        UniqueConstraint("study_card_id", "concept_id", name="uq_study_card_mind_map_concepts"),
+        CheckConstraint(_check_values("role", MIND_MAP_STUDY_CARD_ROLES), name="ck_study_card_mind_map_concepts_role"),
+        Index("ix_study_card_mind_map_concepts_concept_id", "concept_id"),
     )
 
     study_card_id = Column(String, ForeignKey("study_cards.id", ondelete="CASCADE"), primary_key=True)
@@ -533,7 +572,7 @@ class StudyCardMindMapConcept(Base):
 class NoteGroupMindMapConcept(Base):
     __tablename__ = "note_group_mind_map_concepts"
     __table_args__ = (
-        UniqueConstraint("note_group_id", "concept_id", name="uq_note_group_mind_map_concepts"),
+        Index("ix_note_group_mind_map_concepts_concept_id", "concept_id"),
     )
 
     note_group_id = Column(String, ForeignKey("note_groups.id", ondelete="CASCADE"), primary_key=True)

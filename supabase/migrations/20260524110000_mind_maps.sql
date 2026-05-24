@@ -16,6 +16,7 @@ create table if not exists public.mind_map_concepts (
   updated_at timestamp without time zone,
   primary key (id),
   constraint uq_mind_map_concepts_module_slug unique (module_id, slug),
+  constraint uq_mind_map_concepts_module_id unique (module_id, id),
   constraint ck_mind_map_concepts_type check (concept_type in ('topic', 'subtopic', 'term', 'process', 'principle', 'example')),
   constraint ck_mind_map_concepts_importance check (importance in ('core', 'supporting', 'detail')),
   foreign key(module_id) references public.modules (id) on delete cascade
@@ -37,6 +38,8 @@ create table if not exists public.mind_map_relations (
   constraint ck_mind_map_relations_type check (relation_type in ('contains', 'defines', 'part_of', 'requires', 'enables', 'causes', 'contrasts_with', 'example_of', 'sequence', 'related_to')),
   constraint uq_mind_map_relations_note_group_edge unique (module_id, source_concept_id, target_concept_id, relation_type, source_note_group_id),
   foreign key(module_id) references public.modules (id) on delete cascade,
+  constraint fk_mind_map_relations_source_concept_module foreign key(module_id, source_concept_id) references public.mind_map_concepts (module_id, id) on delete cascade,
+  constraint fk_mind_map_relations_target_concept_module foreign key(module_id, target_concept_id) references public.mind_map_concepts (module_id, id) on delete cascade,
   foreign key(source_concept_id) references public.mind_map_concepts (id) on delete cascade,
   foreign key(target_concept_id) references public.mind_map_concepts (id) on delete cascade,
   foreign key(source_note_group_id) references public.note_groups (id) on delete cascade
@@ -49,7 +52,6 @@ create table if not exists public.study_card_mind_map_concepts (
   created_at timestamp without time zone,
   primary key (study_card_id, concept_id),
   constraint ck_study_card_mind_map_concepts_role check (role in ('primary', 'supporting')),
-  constraint uq_study_card_mind_map_concepts unique (study_card_id, concept_id),
   foreign key(study_card_id) references public.study_cards (id) on delete cascade,
   foreign key(concept_id) references public.mind_map_concepts (id) on delete cascade
 );
@@ -59,14 +61,19 @@ create table if not exists public.note_group_mind_map_concepts (
   concept_id varchar not null,
   created_at timestamp without time zone,
   primary key (note_group_id, concept_id),
-  constraint uq_note_group_mind_map_concepts unique (note_group_id, concept_id),
   foreign key(note_group_id) references public.note_groups (id) on delete cascade,
   foreign key(concept_id) references public.mind_map_concepts (id) on delete cascade
 );
 
 create index if not exists ix_mind_map_concepts_module_id on public.mind_map_concepts (module_id);
 create index if not exists ix_mind_map_relations_module_id on public.mind_map_relations (module_id);
+create index if not exists ix_mind_map_relations_source_concept_id on public.mind_map_relations (source_concept_id);
+create index if not exists ix_mind_map_relations_target_concept_id on public.mind_map_relations (target_concept_id);
 create index if not exists ix_mind_map_relations_source_note_group_id on public.mind_map_relations (source_note_group_id);
+create index if not exists ix_mind_map_relations_module_source_concept_id on public.mind_map_relations (module_id, source_concept_id);
+create index if not exists ix_mind_map_relations_module_target_concept_id on public.mind_map_relations (module_id, target_concept_id);
+create index if not exists ix_study_card_mind_map_concepts_concept_id on public.study_card_mind_map_concepts (concept_id);
+create index if not exists ix_note_group_mind_map_concepts_concept_id on public.note_group_mind_map_concepts (concept_id);
 
 alter table public.mind_map_concepts disable row level security;
 alter table public.mind_map_relations disable row level security;
