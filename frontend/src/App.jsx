@@ -96,6 +96,7 @@ import {
   listTopicQuestionCards,
   listTopicReviewQuestionCards,
   listTopicStudyCards,
+  regenerateTopicKnowledgeNodes,
   retryAutoJob,
   resolveAppModuleRoute,
   resolveAppNoteGroupRoute,
@@ -309,6 +310,7 @@ export default function App() {
   const [topicTitleDraft, setTopicTitleDraft] = useState("");
   const [topicDescriptionDraft, setTopicDescriptionDraft] = useState("");
   const [topicSaving, setTopicSaving] = useState(false);
+  const [topicKnowledgeNodeRegenerating, setTopicKnowledgeNodeRegenerating] = useState(false);
   const [topicError, setTopicError] = useState("");
   const [chipFilterIds, setChipFilterIds] = useState([]);
   const [noteGroupChipIds, setNoteGroupChipIds] = useState([]);
@@ -3240,6 +3242,34 @@ export default function App() {
     }
   };
 
+  const handleRegenerateTopicKnowledgeNodes = async () => {
+    if (!canManageSelectedSubject) {
+      setTopicError(
+        canUseProtectedActions
+          ? "Maintainer access is required to regenerate Knowledge Nodes."
+          : "Sign in to regenerate Knowledge Nodes."
+      );
+      return;
+    }
+    if (!selectedTopicId || topicKnowledgeNodeRegenerating) {
+      return;
+    }
+    setTopicKnowledgeNodeRegenerating(true);
+    setTopicError("");
+    try {
+      const updated = await regenerateTopicKnowledgeNodes(selectedTopicId);
+      setTopicChips((prev) =>
+        prev.map((topic) => (topic.id === updated.id ? updated : topic))
+      );
+      toast.success("Knowledge Nodes regenerated.");
+      setMindMapRefreshToken((prev) => prev + 1);
+    } catch (error) {
+      setTopicError(error.message || "Failed to regenerate Knowledge Nodes");
+    } finally {
+      setTopicKnowledgeNodeRegenerating(false);
+    }
+  };
+
   const handleCreateStudyCard = async () => {
     if (!canManageSelectedSubject) {
       setStudyCardError(
@@ -5918,12 +5948,41 @@ export default function App() {
                                 >
                                   Open chat
                                 </button>
+                                <button
+                                  className={outlineButtonClass}
+                                  type="button"
+                                  onClick={handleRegenerateTopicKnowledgeNodes}
+                                  disabled={
+                                    !canManageSelectedSubject ||
+                                    !selectedTopicId ||
+                                    topicKnowledgeNodeRegenerating ||
+                                    isReviewOverlayVisible
+                                  }
+                                >
+                                  {topicKnowledgeNodeRegenerating ? "Regenerating..." : "Regenerate Knowledge Nodes"}
+                                </button>
                               </>
                             }
                             error={topicError}
                           >
                             <div className="form-block">
                               <h3>Topic management</h3>
+                              {selectedTopic?.knowledge_node_status ? (
+                                <div className="status-row">
+                                  <span className={`status-pill status-${selectedTopic.knowledge_node_status}`}>
+                                    {selectedTopic.knowledge_node_status === "needs_review"
+                                      ? "Needs review"
+                                      : selectedTopic.knowledge_node_status === "complete"
+                                        ? "Knowledge Nodes ready"
+                                        : "Knowledge Nodes not generated"}
+                                  </span>
+                                  {selectedTopic.knowledge_node_review_reason ? (
+                                    <span className={mutedTextClass}>
+                                      {selectedTopic.knowledge_node_review_reason}
+                                    </span>
+                                  ) : null}
+                                </div>
+                              ) : null}
                               <input
                                 type="text"
                                 value={topicTitleDraft}

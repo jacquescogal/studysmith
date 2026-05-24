@@ -52,7 +52,9 @@ from app.jobs import (
 from app.mind_map import (
     build_module_mind_map_response,
     build_note_group_mind_map_response,
+    build_topic_knowledge_node_generation_context,
     mark_note_group_mind_map_stale,
+    regenerate_topic_knowledge_nodes,
 )
 from app.models import (
     APP_ROLE_ADMIN,
@@ -106,6 +108,7 @@ from app.progress import build_note_group_progress, build_question_card_performa
 from app.openai_client import (
     embed_texts,
     generate_chat_response,
+    generate_knowledge_node_candidates,
     generate_module_intent_response,
     generate_subject_intent_response,
 )
@@ -1866,6 +1869,75 @@ def update_topic(
     _validate_chip_label(label)
     topic.label = label
     topic.description = payload.description
+    db.commit()
+    db.refresh(topic)
+    ensure_topic_chip_short_code(db, topic)
+    db.commit()
+    return topic
+
+
+@app.post("/topics/{topic_id}/knowledge-nodes/regenerate", response_model=TopicChipOut)
+def regenerate_topic_knowledge_nodes_route(
+    topic_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    topic = require_topic_edit(db, current_user, topic_id)
+    context = build_topic_knowledge_node_generation_context(db, topic.id)
+    study_card_topic_links = [
+        {
+            "study_card_id": card["study_card_id"],
+            "topic_id": topic.id,
+            "role": "primary",
+        }
+        for card in context["study_cards"]
+    ]
+    existing_concepts = [
+        {
+            "concept_id": node["knowledge_node_id"],
+            "title": node["title"],
+            "summary": node["summary"],
+            "knowledge_type": node["knowledge_type"],
+            "importance": node["importance"],
+            "topic_id": node["topic_id"],
+            "context_role": "selected_topic_existing_knowledge_node",
+        }
+        for node in context["existing_knowledge_nodes"]
+    ]
+    existing_concepts.extend(
+        {
+            "concept_id": node["knowledge_node_id"],
+            "title": node["title"],
+            "summary": node["summary"],
+            "knowledge_type": node["knowledge_type"],
+            "importance": node["importance"],
+            "topic_id": node["topic_id"],
+            "context_role": "immediate_child_topic_definition",
+        }
+        for node in context["child_definition_context"]
+    )
+    existing_topics = [
+        context["topic"],
+        *[
+            {
+                "topic_id": child.id,
+                "title": child.label,
+                "summary": child.description or "",
+                "parent_topic_id": child.parent_topic_id,
+            }
+            for child in topic.child_topics
+        ],
+    ]
+    candidate_payload = generate_knowledge_node_candidates(
+        module_title=topic.module.title,
+        note_group_title=f"Topic: {topic.label}",
+        study_cards=context["study_cards"],
+        topics=[context["topic"]],
+        study_card_topic_links=study_card_topic_links,
+        existing_concepts=existing_concepts,
+        existing_topics=existing_topics,
+    )
+    topic = regenerate_topic_knowledge_nodes(db, topic.id, candidate_payload)
     db.commit()
     db.refresh(topic)
     ensure_topic_chip_short_code(db, topic)

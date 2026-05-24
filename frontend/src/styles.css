@@ -125,6 +125,35 @@ h1 {
   color: #b12e2e;
 }
 
+.status-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.status-pill {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 4px 8px;
+}
+
+.status-complete {
+  border-color: #8fc7ad;
+  color: #2e8b68;
+}
+
+.status-needs_review {
+  border-color: #e0bf74;
+  color: #9a6b1d;
+}
+
+.status-not_generated {
+  color: var(--muted);
+}
+
 #create-note-group {
   position: relative;
   z-index: 5;

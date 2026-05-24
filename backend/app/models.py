@@ -742,6 +742,8 @@ class TopicChip(Base):
     label = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     sort_order = Column(Integer, nullable=False, default=0)
+    knowledge_node_status = Column(String, nullable=False, default="not_generated")
+    knowledge_node_review_reason = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

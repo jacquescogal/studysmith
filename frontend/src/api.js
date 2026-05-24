@@ -306,6 +306,12 @@ export function deleteTopic(topicId) {
   });
 }
 
+export function regenerateTopicKnowledgeNodes(topicId) {
+  return request(`/topics/${topicId}/knowledge-nodes/regenerate`, {
+    method: "POST"
+  });
+}
+
 export function attachTopicChips(noteGroupId, payload) {
   return request(`/note-groups/${noteGroupId}/topic-chips`, {
     method: "POST",

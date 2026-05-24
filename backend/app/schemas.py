@@ -245,6 +245,9 @@ class TopicChipOut(BaseModel):
     module_id: str
     label: str
     description: Optional[str] = None
+    parent_topic_id: Optional[str] = None
+    knowledge_node_status: str = "not_generated"
+    knowledge_node_review_reason: Optional[str] = None
 
     class Config:
         from_attributes = True

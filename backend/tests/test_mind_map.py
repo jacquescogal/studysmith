@@ -20,8 +20,10 @@ from app.mind_map import (
     MindMapValidationError,
     build_module_mind_map_response,
     build_note_group_mind_map_response,
+    build_topic_knowledge_node_generation_context,
     mark_note_group_mind_map_stale,
     regenerate_note_group_mind_map,
+    regenerate_topic_knowledge_nodes,
     slugify_concept_title,
     validate_candidate_graph,
 )
@@ -117,6 +119,23 @@ class MindMapModelTests(unittest.TestCase):
             self.assertEqual(stored.parent_topic_id, "topic-parent")
             self.assertEqual(stored.parent_topic.label, "Authentication")
             self.assertEqual([topic.id for topic in parent.child_topics], ["topic-child"])
+        finally:
+            db.close()
+
+    def test_topic_chip_has_knowledge_node_review_defaults(self):
+        db = self.SessionLocal()
+        try:
+            owner = self._owner()
+            subject = Subject(id="subject-1", title="Subject", owner_user_id="owner-1")
+            module = Module(id="module-1", subject_id="subject-1", title="Module")
+            topic = TopicChip(id="topic-1", module_id="module-1", label="Authentication")
+            db.add_all([owner, subject, module, topic])
+            db.commit()
+
+            stored = db.get(TopicChip, "topic-1")
+
+            self.assertEqual(stored.knowledge_node_status, "not_generated")
+            self.assertIsNone(stored.knowledge_node_review_reason)
         finally:
             db.close()
 
@@ -789,6 +808,184 @@ class MindMapServiceTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_regenerate_note_group_mind_map_marks_topic_needs_review_without_definition(self):
+        db = self.SessionLocal()
+        try:
+            owner = self._owner()
+            subject = Subject(id="subject-1", title="Subject", owner_user_id="owner-1")
+            module = Module(id="module-1", subject_id="subject-1", title="Module")
+            note_group = NoteGroup(id="note-group-1", module_id="module-1", title="Auth", raw_text="target")
+            study_card = StudyCard(
+                id="study-card-1",
+                note_group_id="note-group-1",
+                title="Magic links",
+                content="Magic links are email sign-in links.",
+            )
+            db.add_all([owner, subject, module, note_group, study_card])
+            db.commit()
+
+            payload = {
+                "topics": [
+                    {
+                        "temp_id": "topic-magic-links",
+                        "title": "Magic Links",
+                        "summary": "Passwordless email sign-in.",
+                    },
+                ],
+                "knowledge_nodes": [],
+                "relations": [],
+                "study_card_topic_links": [
+                    {
+                        "study_card_id": "study-card-1",
+                        "topic_id": "topic-magic-links",
+                        "role": "primary",
+                    }
+                ],
+                "study_card_knowledge_node_links": [],
+            }
+
+            regenerate_note_group_mind_map(db, "note-group-1", payload)
+            db.commit()
+
+            topic = db.query(TopicChip).filter(TopicChip.module_id == "module-1").one()
+            note_group = db.get(NoteGroup, "note-group-1")
+
+            self.assertEqual(note_group.mind_map_status, "complete")
+            self.assertEqual(topic.knowledge_node_status, "needs_review")
+            self.assertEqual(topic.knowledge_node_review_reason, "Missing definition Knowledge Node")
+        finally:
+            db.close()
+
+    def test_topic_knowledge_node_context_uses_only_selected_topic_direct_cards_and_child_definitions(self):
+        db = self.SessionLocal()
+        try:
+            owner = self._owner()
+            subject = Subject(id="subject-1", title="Subject", owner_user_id="owner-1")
+            module = Module(id="module-1", subject_id="subject-1", title="Module")
+            note_group = NoteGroup(id="note-group-1", module_id="module-1", title="Auth", raw_text="target")
+            parent_topic = TopicChip(id="topic-parent", module_id="module-1", label="Authentication")
+            child_topic = TopicChip(
+                id="topic-child",
+                module_id="module-1",
+                label="Magic Links",
+                parent_topic_id="topic-parent",
+            )
+            parent_card = StudyCard(
+                id="study-parent",
+                note_group_id="note-group-1",
+                title="Authentication overview",
+                content="Authentication verifies identity.",
+            )
+            child_card = StudyCard(
+                id="study-child",
+                note_group_id="note-group-1",
+                title="Magic links",
+                content="Magic links authenticate by email.",
+            )
+            child_definition = MindMapConcept(
+                id="node-child-definition",
+                module_id="module-1",
+                topic_id="topic-child",
+                slug="magic_link_definition",
+                title="Magic link definition",
+                summary="A magic link is a passwordless email sign-in link.",
+                concept_type="term",
+                knowledge_type="definition",
+                importance="core",
+            )
+            db.add_all(
+                [
+                    owner,
+                    subject,
+                    module,
+                    note_group,
+                    parent_topic,
+                    child_topic,
+                    parent_card,
+                    child_card,
+                    child_definition,
+                ]
+            )
+            db.commit()
+            parent_card.topic_chips.append(parent_topic)
+            child_card.topic_chips.append(parent_topic)
+            child_card.topic_chips.append(child_topic)
+            db.commit()
+
+            context = build_topic_knowledge_node_generation_context(db, "topic-parent")
+
+            self.assertEqual([card["study_card_id"] for card in context["study_cards"]], ["study-parent"])
+            self.assertEqual(
+                [node["knowledge_node_id"] for node in context["child_definition_context"]],
+                ["node-child-definition"],
+            )
+        finally:
+            db.close()
+
+    def test_regenerate_topic_knowledge_nodes_updates_selected_topic_only(self):
+        db = self.SessionLocal()
+        try:
+            owner = self._owner()
+            subject = Subject(id="subject-1", title="Subject", owner_user_id="owner-1")
+            module = Module(id="module-1", subject_id="subject-1", title="Module")
+            note_group = NoteGroup(id="note-group-1", module_id="module-1", title="Auth", raw_text="target")
+            topic = TopicChip(id="topic-parent", module_id="module-1", label="Authentication")
+            child_topic = TopicChip(
+                id="topic-child",
+                module_id="module-1",
+                label="Magic Links",
+                parent_topic_id="topic-parent",
+            )
+            study_card = StudyCard(
+                id="study-parent",
+                note_group_id="note-group-1",
+                title="Authentication overview",
+                content="Authentication verifies identity.",
+            )
+            db.add_all([owner, subject, module, note_group, topic, child_topic, study_card])
+            db.commit()
+            study_card.topic_chips.append(topic)
+            db.commit()
+
+            payload = {
+                "knowledge_nodes": [
+                    {
+                        "temp_id": "node-definition",
+                        "topic_id": "topic-parent",
+                        "title": "Authentication definition",
+                        "summary": "Authentication is the process of verifying identity.",
+                        "knowledge_type": "definition",
+                        "importance": "core",
+                    }
+                ],
+                "relations": [],
+                "study_card_knowledge_node_links": [
+                    {
+                        "study_card_id": "study-parent",
+                        "knowledge_node_id": "node-definition",
+                        "role": "primary",
+                    }
+                ],
+            }
+
+            regenerate_topic_knowledge_nodes(db, "topic-parent", payload)
+            db.commit()
+
+            topic_node = db.query(MindMapConcept).filter(MindMapConcept.topic_id == "topic-parent").one()
+            child_nodes = db.query(MindMapConcept).filter(MindMapConcept.topic_id == "topic-child").all()
+            links = db.query(StudyCardMindMapConcept).all()
+            stored_topic = db.get(TopicChip, "topic-parent")
+
+            self.assertEqual(topic_node.knowledge_type, "definition")
+            self.assertEqual(topic_node.summary, "Authentication is the process of verifying identity.")
+            self.assertEqual(child_nodes, [])
+            self.assertEqual(len(links), 1)
+            self.assertEqual(links[0].concept_id, topic_node.id)
+            self.assertEqual(stored_topic.knowledge_node_status, "complete")
+            self.assertIsNone(stored_topic.knowledge_node_review_reason)
+        finally:
+            db.close()
+
     def test_build_module_mind_map_response_is_complete_when_one_note_group_has_graph_data(self):
         db = self.SessionLocal()
         try:
@@ -1393,7 +1590,7 @@ class MindMapServiceTests(unittest.TestCase):
 
 
 class MindMapOpenAIClientTests(unittest.TestCase):
-    def test_generate_mind_map_candidate_graph_requests_topic_tree_payload(self):
+    def test_generate_mind_map_candidate_graph_splits_topic_tree_and_knowledge_node_calls(self):
         topic_links = [
             {
                 "study_card_id": "card-a",
@@ -1411,13 +1608,32 @@ class MindMapOpenAIClientTests(unittest.TestCase):
 
         with patch(
             "app.openai_client._strong_high_json",
-            return_value={
-                "topics": [],
-                "knowledge_nodes": [],
-                "relations": [],
-                "study_card_topic_links": topic_links,
-                "study_card_knowledge_node_links": knowledge_node_links,
-            },
+            side_effect=[
+                {
+                    "topics": [
+                        {
+                            "temp_id": "topic-a",
+                            "title": "Authentication",
+                            "summary": "How users prove identity.",
+                        }
+                    ],
+                    "study_card_topic_links": topic_links,
+                },
+                {
+                    "knowledge_nodes": [
+                        {
+                            "temp_id": "node-a",
+                            "topic_id": "topic-a",
+                            "title": "Authentication definition",
+                            "summary": "Authentication verifies identity.",
+                            "knowledge_type": "definition",
+                            "importance": "core",
+                        }
+                    ],
+                    "relations": [],
+                    "study_card_knowledge_node_links": knowledge_node_links,
+                },
+            ],
         ) as generate_json:
             payload = generate_mind_map_candidate_graph(
                 module_title="Module",
@@ -1430,17 +1646,35 @@ class MindMapOpenAIClientTests(unittest.TestCase):
         self.assertEqual(
             payload,
             {
-                "topics": [],
-                "knowledge_nodes": [],
+                "topics": [
+                    {
+                        "temp_id": "topic-a",
+                        "title": "Authentication",
+                        "summary": "How users prove identity.",
+                    }
+                ],
+                "knowledge_nodes": [
+                    {
+                        "temp_id": "node-a",
+                        "topic_id": "topic-a",
+                        "title": "Authentication definition",
+                        "summary": "Authentication verifies identity.",
+                        "knowledge_type": "definition",
+                        "importance": "core",
+                    }
+                ],
                 "relations": [],
                 "study_card_topic_links": topic_links,
                 "study_card_knowledge_node_links": knowledge_node_links,
             },
         )
-        user_prompt = generate_json.call_args.args[1]
-        self.assertIn("topics, knowledge_nodes, relations, study_card_topic_links, study_card_knowledge_node_links", user_prompt)
-        self.assertIn("Allowed knowledge_type values", user_prompt)
-        self.assertNotIn("concepts, relations, links", user_prompt)
+        self.assertEqual(generate_json.call_count, 2)
+        topic_prompt = generate_json.call_args_list[0].args[1]
+        knowledge_prompt = generate_json.call_args_list[1].args[1]
+        self.assertIn("Return strict JSON with exactly these top-level keys: topics, study_card_topic_links.", topic_prompt)
+        self.assertIn("Return strict JSON with exactly these top-level keys: knowledge_nodes, relations, study_card_knowledge_node_links.", knowledge_prompt)
+        self.assertIn("Immediate child Topic definitions", knowledge_prompt)
+        self.assertNotIn("concepts, relations, links", topic_prompt)
 
 
 class MindMapJobTests(unittest.TestCase):
@@ -2336,6 +2570,89 @@ class MindMapRouteTests(unittest.TestCase):
             self.assertEqual(len(jobs), 1)
         finally:
             db.close()
+
+    def test_owner_can_regenerate_selected_topic_knowledge_nodes(self):
+        db = self.SessionLocal()
+        try:
+            self.seed_graph_scope(db)
+            owner = db.get(User, "owner-1")
+        finally:
+            db.close()
+
+        client = self._client(user=owner)
+        payload = {
+            "knowledge_nodes": [
+                {
+                    "temp_id": "node-definition",
+                    "topic_id": "topic-a",
+                    "title": "Security definition",
+                    "summary": "Security controls access to protected resources.",
+                    "knowledge_type": "definition",
+                    "importance": "core",
+                }
+            ],
+            "relations": [],
+            "study_card_knowledge_node_links": [
+                {
+                    "study_card_id": "card-a",
+                    "knowledge_node_id": "node-definition",
+                    "role": "primary",
+                }
+            ],
+        }
+
+        with patch("app.main.generate_knowledge_node_candidates", return_value=payload) as generate_nodes:
+            response = client.post("/topics/topic-a/knowledge-nodes/regenerate")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["knowledge_node_status"], "complete")
+        generate_nodes.assert_called_once()
+        call_kwargs = generate_nodes.call_args.kwargs
+        self.assertEqual(call_kwargs["topics"][0]["topic_id"], "topic-a")
+        self.assertEqual([card["study_card_id"] for card in call_kwargs["study_cards"]], ["card-a"])
+
+        db = self.SessionLocal()
+        try:
+            topic = db.get(TopicChip, "topic-a")
+            concept = db.query(MindMapConcept).filter(MindMapConcept.topic_id == "topic-a").one()
+            links = db.query(StudyCardMindMapConcept).filter(StudyCardMindMapConcept.concept_id == concept.id).all()
+
+            self.assertEqual(topic.knowledge_node_status, "complete")
+            self.assertEqual(concept.knowledge_type, "definition")
+            self.assertEqual(len(links), 1)
+        finally:
+            db.close()
+
+    def test_reader_cannot_regenerate_selected_topic_knowledge_nodes(self):
+        db = self.SessionLocal()
+        try:
+            self.seed_graph_scope(db)
+            reader = User(
+                id="reader-1",
+                supabase_user_id="reader-sub",
+                email="reader@example.com",
+                app_role="reader",
+            )
+            db.add_all(
+                [
+                    reader,
+                    SubjectAccess(
+                        id="reader-grant",
+                        subject_id="subject-1",
+                        user_id="reader-1",
+                        access_level=SUBJECT_ACCESS_READER,
+                    ),
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        client = self._client(user=reader)
+
+        response = client.post("/topics/topic-a/knowledge-nodes/regenerate")
+
+        self.assertEqual(response.status_code, 403)
 
     def test_creating_study_card_marks_complete_note_group_mind_map_stale(self):
         db = self.SessionLocal()
