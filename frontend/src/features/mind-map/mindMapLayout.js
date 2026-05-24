@@ -49,8 +49,33 @@ function conceptBadges(concept) {
   return badges;
 }
 
+function countBadge(count, singular, plural) {
+  return count ? `${count} ${count === 1 ? singular : plural}` : null;
+}
+
+function topicBadges(topic) {
+  return [
+    "Topic",
+    countBadge(topic.study_card_count, "card", "cards"),
+    topic.note_group_count > 1 ? `${topic.note_group_count} Note Groups` : null
+  ].filter(Boolean);
+}
+
+function knowledgeNodeBadges(node) {
+  return [
+    node.knowledge_type,
+    node.importance,
+    countBadge(node.study_card_count, "card", "cards"),
+    node.note_group_count > 1 ? `${node.note_group_count} Note Groups` : null
+  ].filter(Boolean);
+}
+
 function emptyGraph(graph) {
   return !graph || !Array.isArray(graph.nodes) || graph.nodes.length === 0;
+}
+
+function hasTopicTreeNodes(graph) {
+  return graph.nodes.some((node) => node.node_type === "topic" || node.node_type === "knowledge_node");
 }
 
 export function buildMindMapElements(graph, { title = "Mind Map" } = {}) {
@@ -80,6 +105,92 @@ export function buildMindMapElements(graph, { title = "Mind Map" } = {}) {
   ];
   const edges = [];
   const conceptIds = new Set(graph.nodes.map((node) => node.id));
+
+  if (hasTopicTreeNodes(graph)) {
+    const nodeIds = new Set(graph.nodes.map((node) => node.id));
+    const topicIds = new Set(graph.nodes.filter((node) => node.node_type === "topic").map((node) => node.id));
+
+    graph.nodes.forEach((item) => {
+      const isTopic = item.node_type === "topic";
+      const isKnowledgeNode = item.node_type === "knowledge_node";
+      nodes.push({
+        id: item.id,
+        type: "mindMapNode",
+        position: { x: 0, y: 0 },
+        data: {
+          title: compactTitle(item.title, isTopic ? "Untitled Topic" : "Untitled Knowledge Node"),
+          summary: item.summary || "",
+          nodeType: isTopic ? "topic" : isKnowledgeNode ? "knowledge_node" : "concept",
+          importance: item.importance || (isKnowledgeNode ? "supporting" : undefined),
+          badges: isTopic ? topicBadges(item) : knowledgeNodeBadges(item),
+          studyCardIds: item.study_card_ids || [],
+          noteGroupIds: item.note_group_ids || []
+        },
+        width: NODE_WIDTH,
+        height: isTopic ? ROOT_NODE_HEIGHT : NODE_HEIGHT
+      });
+    });
+
+    graph.nodes
+      .filter((item) => item.node_type === "topic")
+      .forEach((topic) => {
+        const parentTopicId = topic.parent_topic_id;
+        if (parentTopicId && topicIds.has(parentTopicId)) {
+          edges.push({
+            id: `mind-map-topic-edge:${parentTopicId}:${topic.id}`,
+            source: parentTopicId,
+            target: topic.id,
+            type: "smoothstep",
+            label: "includes",
+            data: { relationType: "contains" }
+          });
+          return;
+        }
+        edges.push({
+          id: `mind-map-root-edge:${topic.id}`,
+          source: rootId,
+          target: topic.id,
+          type: "smoothstep",
+          label: "includes",
+          data: { relationType: "contains" }
+        });
+      });
+
+    graph.nodes
+      .filter((item) => item.node_type === "knowledge_node")
+      .forEach((node) => {
+        const parentTopicId = node.parent_topic_id;
+        edges.push({
+          id: `mind-map-knowledge-edge:${parentTopicId || "root"}:${node.id}`,
+          source: parentTopicId && nodeIds.has(parentTopicId) ? parentTopicId : rootId,
+          target: node.id,
+          type: "smoothstep",
+          label: "contains",
+          data: { relationType: "contains" }
+        });
+      });
+
+    graphEdges
+      .filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target))
+      .forEach((edge) => {
+        const label = edge.label || relationLabels[edge.relation_type] || edge.relation_type || "related";
+        edges.push({
+          id: edge.id,
+          source: edge.source,
+          target: edge.target,
+          type: "smoothstep",
+          animated: edge.relation_type === "sequence",
+          label,
+          data: {
+            relationType: edge.relation_type,
+            confidence: edge.confidence,
+            sourceNoteGroupId: edge.source_note_group_id
+          }
+        });
+      });
+
+    return { nodes, edges };
+  }
 
   if (graphScope !== "note_group") {
     noteGroups.forEach((group) => {
