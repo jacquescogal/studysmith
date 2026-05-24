@@ -16,6 +16,7 @@ from sqlalchemy import (
     Table,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import relationship
 from pgvector.sqlalchemy import Vector
@@ -776,6 +777,23 @@ class TopicChipShortCode(Base):
 
 class Job(Base):
     __tablename__ = "jobs"
+    __table_args__ = (
+        Index(
+            "uq_jobs_active_mind_map_generation_note_group",
+            "note_group_id",
+            unique=True,
+            sqlite_where=text(
+                "note_group_id IS NOT NULL "
+                "AND type = 'MIND_MAP_GENERATION' "
+                "AND status IN ('queued', 'running')"
+            ),
+            postgresql_where=text(
+                "note_group_id IS NOT NULL "
+                "AND type = 'MIND_MAP_GENERATION' "
+                "AND status IN ('queued', 'running')"
+            ),
+        ),
+    )
 
     id = Column(String, primary_key=True, default=_uuid)
     type = Column(String, nullable=False)

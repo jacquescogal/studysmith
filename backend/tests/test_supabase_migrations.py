@@ -38,3 +38,12 @@ def test_subject_access_migration_uses_reader_maintainer_owner_roles():
     assert "when 'read' then 'reader'" in sql
     assert "when 'edit' then 'maintainer'" in sql
     assert "uq_subject_access_single_owner" in sql
+
+
+def test_mind_map_generation_jobs_have_active_uniqueness_migration():
+    sql = _migration_sql().lower()
+
+    assert "uq_jobs_active_mind_map_generation_note_group" in sql
+    assert "on public.jobs (note_group_id)" in sql
+    assert "type = 'mind_map_generation'" in sql
+    assert "status in ('queued', 'running')" in sql
