@@ -6,7 +6,7 @@ from openai import OpenAI
 
 from app.config import settings
 from app.models import (
-    MIND_MAP_CONCEPT_TYPES,
+    KNOWLEDGE_NODE_TYPES,
     MIND_MAP_IMPORTANCE_LEVELS,
     MIND_MAP_RELATION_TYPES,
     MIND_MAP_STUDY_CARD_ROLES,
@@ -95,8 +95,8 @@ CLEANED_TEXT_SYSTEM_PROMPT = (
 
 MIND_MAP_SYSTEM_PROMPT = (
     "Extract a learning mind map from Study Cards. Return strict JSON only. "
-    "Use existing module concepts when they represent the same study concept. "
-    "Do not invent facts beyond the Study Cards. Every Study Card must link to at least one primary concept."
+    "Derive or reuse a single-parent Topic Tree, then derive leaf Knowledge Nodes under the deepest relevant Topic. "
+    "Do not invent facts beyond the Study Cards. Every Study Card must link to at least one primary Topic."
 )
 
 
@@ -425,37 +425,54 @@ def generate_mind_map_candidate_graph(
     note_group_title: str,
     study_cards: List[dict],
     existing_concepts: List[dict],
+    existing_topics: Optional[List[dict]] = None,
 ) -> dict:
     existing_concepts_json = json.dumps(existing_concepts, ensure_ascii=True)
+    existing_topics_json = json.dumps(existing_topics or [], ensure_ascii=True)
     study_cards_json = json.dumps(study_cards, ensure_ascii=True)
     user_prompt = (
         f"Module title: {module_title}\n"
         f"Note Group title: {note_group_title}\n\n"
-        "Existing module concepts:\n"
+        "Existing module Topics:\n"
+        f"{existing_topics_json}\n\n"
+        "Existing module Knowledge Nodes:\n"
         f"{existing_concepts_json}\n\n"
         "Study Cards:\n"
         f"{study_cards_json}\n\n"
         "Return strict JSON with exactly these top-level keys: "
-        "concepts, relations, links.\n"
-        "Allowed concept_type values: "
-        f"{sorted(MIND_MAP_CONCEPT_TYPES)}.\n"
+        "topics, knowledge_nodes, relations, study_card_topic_links, study_card_knowledge_node_links.\n"
+        "Topic objects must include temp_id, title, summary, optional parent_topic_id, "
+        "and optional matched_existing_topic_id. parent_topic_id may reference a topic temp_id or existing Topic ID. "
+        "Each Topic must have at most one parent. Topics are intermediary scope nodes and are never leaf nodes. "
+        "Knowledge Node objects must include temp_id, topic_id, title, summary, knowledge_type, importance, "
+        "optional source_quote, and optional matched_existing_knowledge_node_id. "
+        "topic_id may reference a topic temp_id or existing Topic ID. "
+        "Allowed knowledge_type values: "
+        f"{sorted(KNOWLEDGE_NODE_TYPES)}.\n"
         "Allowed importance values: "
         f"{sorted(MIND_MAP_IMPORTANCE_LEVELS)}.\n"
         "Allowed relation_type values: "
         f"{sorted(MIND_MAP_RELATION_TYPES)}.\n"
         "Allowed Study Card link role values: "
         f"{sorted(MIND_MAP_STUDY_CARD_ROLES)}.\n\n"
-        "Concept objects must include temp_id, title, summary, concept_type, importance, "
-        "optional source_quote, and optional matched_existing_concept_id. "
-        "Set matched_existing_concept_id to an existing concept_id only when it represents the same study concept. "
-        "Relations must include source_concept_id, target_concept_id, relation_type, confidence, and optional label. "
-        "Relation endpoints may reference a concept temp_id or an existing concept_id. "
-        "Links must include study_card_id, concept_id, and role. "
-        "Every provided Study Card must have at least one link with role primary. "
+        "Relations must include source_knowledge_node_id, target_knowledge_node_id, relation_type, confidence, and optional label. "
+        "Relation endpoints may reference a Knowledge Node temp_id or an existing Knowledge Node ID. "
+        "Study Card Topic links must include study_card_id, topic_id, and role. "
+        "Every provided Study Card must have at least one Topic link with role primary; use the deepest relevant Topic. "
+        "Study Card Knowledge Node links must include study_card_id, knowledge_node_id, and role when a Study Card teaches a leaf node. "
         "Use only provided Study Card IDs in links. "
-        "Do not create relations that are unsupported by the Study Cards."
+        "Do not create relations that are unsupported by the Study Cards. "
+        "Do not use topic, subtopic, term, process, principle, example, or detail as knowledge_type values."
     )
     payload = _strong_high_json(MIND_MAP_SYSTEM_PROMPT, user_prompt)
+    if "topics" in payload or "knowledge_nodes" in payload:
+        return {
+            "topics": payload.get("topics"),
+            "knowledge_nodes": payload.get("knowledge_nodes"),
+            "relations": payload.get("relations"),
+            "study_card_topic_links": payload.get("study_card_topic_links"),
+            "study_card_knowledge_node_links": payload.get("study_card_knowledge_node_links", []),
+        }
     links = payload.get("links")
     if links is None and "study_card_concept_links" in payload:
         links = payload.get("study_card_concept_links")

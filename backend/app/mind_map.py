@@ -16,6 +16,8 @@ from app.models import (
     QuestionCard,
     StudyCard,
     StudyCardMindMapConcept,
+    TopicChip,
+    note_group_topic_chips,
     study_card_topic_chips,
 )
 from app.schemas import MindMapResponse
@@ -392,6 +394,17 @@ def regenerate_note_group_mind_map(db: Session, note_group_id: str, candidate_pa
     existing_concept_ids = {concept.id for concept in existing_concepts}
     concepts_by_id = {concept.id: concept for concept in existing_concepts}
     concepts_by_slug = {concept.slug: concept for concept in existing_concepts}
+    if "topics" in candidate_payload or "knowledge_nodes" in candidate_payload:
+        _regenerate_note_group_topic_tree_mind_map(
+            db,
+            note_group,
+            study_card_ids,
+            existing_concepts,
+            existing_concept_ids,
+            candidate_payload,
+        )
+        return
+
     validated = validate_candidate_graph(candidate_payload, study_card_ids, existing_concept_ids)
 
     db.query(NoteGroupMindMapConcept).filter(NoteGroupMindMapConcept.note_group_id == note_group_id).delete(
@@ -499,6 +512,174 @@ def regenerate_note_group_mind_map(db: Session, note_group_id: str, candidate_pa
             NoteGroupMindMapConcept(
                 module_id=note_group.module_id,
                 note_group_id=note_group_id,
+                concept_id=concept_id,
+            )
+        )
+
+    note_group.mind_map_status = "complete"
+    note_group.mind_map_stale = False
+    note_group.mind_map_generated_at = datetime.utcnow()
+    db.flush()
+    _prune_orphan_module_concepts(db, note_group.module_id)
+    db.flush()
+
+
+def _regenerate_note_group_topic_tree_mind_map(
+    db: Session,
+    note_group: NoteGroup,
+    study_card_ids: set[str],
+    existing_concepts: list[MindMapConcept],
+    existing_concept_ids: set[str],
+    candidate_payload: dict,
+) -> None:
+    existing_topics = db.query(TopicChip).filter(TopicChip.module_id == note_group.module_id).all()
+    existing_topic_ids = {topic.id for topic in existing_topics}
+    topics_by_id = {topic.id: topic for topic in existing_topics}
+    topics_by_slug = {slugify_concept_title(topic.label): topic for topic in existing_topics}
+    concepts_by_id = {concept.id: concept for concept in existing_concepts}
+    concepts_by_slug = {concept.slug: concept for concept in existing_concepts}
+    validated = validate_candidate_graph(
+        candidate_payload,
+        study_card_ids,
+        existing_concept_ids,
+        existing_topic_ids,
+    )
+
+    db.query(NoteGroupMindMapConcept).filter(NoteGroupMindMapConcept.note_group_id == note_group.id).delete(
+        synchronize_session=False
+    )
+    db.query(StudyCardMindMapConcept).filter(StudyCardMindMapConcept.study_card_id.in_(study_card_ids)).delete(
+        synchronize_session=False
+    )
+    db.query(MindMapRelation).filter(MindMapRelation.source_note_group_id == note_group.id).delete(
+        synchronize_session=False
+    )
+    db.execute(study_card_topic_chips.delete().where(study_card_topic_chips.c.study_card_id.in_(study_card_ids)))
+    db.execute(note_group_topic_chips.delete().where(note_group_topic_chips.c.note_group_id == note_group.id))
+    db.flush()
+
+    resolved_topics: dict[str, TopicChip] = {topic.id: topic for topic in existing_topics}
+    for topic_data in validated["topics"]:
+        topic = None
+        matched_existing_topic_id = topic_data["matched_existing_topic_id"]
+        if matched_existing_topic_id:
+            topic = topics_by_id[matched_existing_topic_id]
+        if topic is None:
+            topic = topics_by_slug.get(topic_data["slug"])
+        if topic is None:
+            topic = TopicChip(
+                id=str(uuid.uuid4()),
+                module_id=note_group.module_id,
+                label=topic_data["title"],
+                description=topic_data["summary"],
+            )
+            db.add(topic)
+            topics_by_id[topic.id] = topic
+            topics_by_slug[topic_data["slug"]] = topic
+        else:
+            topic.label = topic_data["title"]
+            if not topic.description:
+                topic.description = topic_data["summary"]
+        resolved_topics[topic_data["temp_id"]] = topic
+        resolved_topics[topic.id] = topic
+
+    db.flush()
+
+    for topic_data in validated["topics"]:
+        topic = resolved_topics[topic_data["temp_id"]]
+        parent_ref = topic_data["parent_topic_id"]
+        topic.parent_topic_id = resolved_topics[parent_ref].id if parent_ref else None
+
+    resolved_concepts: dict[str, MindMapConcept] = {concept.id: concept for concept in existing_concepts}
+    graph_concept_ids: set[str] = set()
+    for node_data in validated["knowledge_nodes"]:
+        concept = None
+        matched_existing_node_id = node_data["matched_existing_knowledge_node_id"]
+        if matched_existing_node_id:
+            concept = concepts_by_id[matched_existing_node_id]
+        if concept is None:
+            concept = concepts_by_slug.get(node_data["slug"])
+        topic = resolved_topics[node_data["topic_id"]]
+        if concept is None:
+            concept = MindMapConcept(
+                id=str(uuid.uuid4()),
+                module_id=note_group.module_id,
+                topic_id=topic.id,
+                slug=_unique_slug(concepts_by_slug, node_data["slug"]),
+                title=node_data["title"],
+                summary=node_data["summary"],
+                concept_type=_legacy_concept_type_for_knowledge_type(node_data["knowledge_type"]),
+                knowledge_type=node_data["knowledge_type"],
+                importance=node_data["importance"],
+                source_quote=node_data["source_quote"],
+            )
+            db.add(concept)
+            concepts_by_id[concept.id] = concept
+            concepts_by_slug[concept.slug] = concept
+        else:
+            concept.topic_id = topic.id
+            concept.title = node_data["title"]
+            concept.summary = node_data["summary"]
+            concept.concept_type = _legacy_concept_type_for_knowledge_type(node_data["knowledge_type"])
+            concept.knowledge_type = node_data["knowledge_type"]
+            concept.importance = node_data["importance"]
+            concept.source_quote = node_data["source_quote"]
+        resolved_concepts[node_data["temp_id"]] = concept
+        resolved_concepts[concept.id] = concept
+        graph_concept_ids.add(concept.id)
+
+    db.flush()
+
+    topic_ids_for_note_group: set[str] = set()
+    seen_study_card_topic_links: set[tuple[str, str]] = set()
+    for link in validated["study_card_topic_links"]:
+        topic = resolved_topics[link["topic_id"]]
+        topic_ids_for_note_group.add(topic.id)
+        link_key = (link["study_card_id"], topic.id)
+        if link_key in seen_study_card_topic_links:
+            continue
+        seen_study_card_topic_links.add(link_key)
+        db.execute(
+            study_card_topic_chips.insert().values(
+                study_card_id=link["study_card_id"],
+                chip_id=topic.id,
+            )
+        )
+
+    for topic_data in validated["topics"]:
+        topic_ids_for_note_group.add(resolved_topics[topic_data["temp_id"]].id)
+
+    for topic_id in sorted(topic_ids_for_note_group):
+        db.execute(
+            note_group_topic_chips.insert().values(
+                note_group_id=note_group.id,
+                chip_id=topic_id,
+            )
+        )
+
+    seen_concept_links: set[tuple[str, str]] = set()
+    for link in validated["study_card_knowledge_node_links"]:
+        concept = resolved_concepts[link["knowledge_node_id"]]
+        graph_concept_ids.add(concept.id)
+        link_key = (link["study_card_id"], concept.id)
+        if link_key in seen_concept_links:
+            continue
+        seen_concept_links.add(link_key)
+        db.add(
+            StudyCardMindMapConcept(
+                module_id=note_group.module_id,
+                note_group_id=note_group.id,
+                study_card_id=link["study_card_id"],
+                concept_id=concept.id,
+                role=link["role"],
+            )
+        )
+
+    for concept_id in sorted(graph_concept_ids):
+        db.add(
+            NoteGroupMindMapConcept(
+                module_id=note_group.module_id,
+                note_group_id=note_group.id,
                 concept_id=concept_id,
             )
         )
@@ -862,6 +1043,15 @@ def _unique_slug(concepts_by_slug: dict[str, MindMapConcept], slug: str) -> str:
     while f"{slug}_{suffix}" in concepts_by_slug:
         suffix += 1
     return f"{slug}_{suffix}"
+
+
+def _legacy_concept_type_for_knowledge_type(knowledge_type: str) -> str:
+    return {
+        "definition": "term",
+        "mechanism": "process",
+        "rule": "principle",
+        "fact": "example",
+    }.get(knowledge_type, "term")
 
 
 def _prune_orphan_module_concepts(db: Session, module_id: str) -> None:
