@@ -39,6 +39,19 @@ export function MindMapNode({ data }) {
           ))}
         </div>
       ) : null}
+      {data.canRegenerateKnowledgeNodes ? (
+        <button
+          className="mind-map-node-action"
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            data.onRegenerateKnowledgeNodes?.(data.id);
+          }}
+          disabled={data.regeneratingKnowledgeNodes}
+        >
+          {data.regeneratingKnowledgeNodes ? "Regenerating..." : "Regenerate Knowledge Nodes"}
+        </button>
+      ) : null}
       <Handle className="mind-map-node-handle" type="source" position={Position.Right} />
     </div>
   );
@@ -66,12 +79,24 @@ export function MindMapPanel({
   error = "",
   canGenerate = false,
   generating = false,
-  onGenerate
+  onGenerate,
+  canRegenerateTopicKnowledgeNodes = false,
+  regeneratingTopicId = "",
+  onRegenerateTopicKnowledgeNodes
 }) {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [layoutError, setLayoutError] = useState("");
-  const elementInput = useMemo(() => buildMindMapElements(graph, { title }), [graph, title]);
+  const elementInput = useMemo(
+    () =>
+      buildMindMapElements(graph, {
+        title,
+        canRegenerateTopicKnowledgeNodes,
+        regeneratingTopicId,
+        onRegenerateTopicKnowledgeNodes
+      }),
+    [canRegenerateTopicKnowledgeNodes, graph, onRegenerateTopicKnowledgeNodes, regeneratingTopicId, title]
+  );
   const hasGraph = elementInput.nodes.length > 0;
 
   useEffect(() => {

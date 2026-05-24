@@ -311,6 +311,7 @@ export default function App() {
   const [topicDescriptionDraft, setTopicDescriptionDraft] = useState("");
   const [topicSaving, setTopicSaving] = useState(false);
   const [topicKnowledgeNodeRegenerating, setTopicKnowledgeNodeRegenerating] = useState(false);
+  const [topicKnowledgeNodeRegeneratingId, setTopicKnowledgeNodeRegeneratingId] = useState("");
   const [topicError, setTopicError] = useState("");
   const [chipFilterIds, setChipFilterIds] = useState([]);
   const [noteGroupChipIds, setNoteGroupChipIds] = useState([]);
@@ -3242,7 +3243,7 @@ export default function App() {
     }
   };
 
-  const handleRegenerateTopicKnowledgeNodes = async () => {
+  const handleRegenerateTopicKnowledgeNodes = async (topicIdOverride = "") => {
     if (!canManageSelectedSubject) {
       setTopicError(
         canUseProtectedActions
@@ -3251,13 +3252,15 @@ export default function App() {
       );
       return;
     }
-    if (!selectedTopicId || topicKnowledgeNodeRegenerating) {
+    const targetTopicId = topicIdOverride || selectedTopicId;
+    if (!targetTopicId || topicKnowledgeNodeRegenerating) {
       return;
     }
     setTopicKnowledgeNodeRegenerating(true);
+    setTopicKnowledgeNodeRegeneratingId(targetTopicId);
     setTopicError("");
     try {
-      const updated = await regenerateTopicKnowledgeNodes(selectedTopicId);
+      const updated = await regenerateTopicKnowledgeNodes(targetTopicId);
       setTopicChips((prev) =>
         prev.map((topic) => (topic.id === updated.id ? updated : topic))
       );
@@ -3267,6 +3270,7 @@ export default function App() {
       setTopicError(error.message || "Failed to regenerate Knowledge Nodes");
     } finally {
       setTopicKnowledgeNodeRegenerating(false);
+      setTopicKnowledgeNodeRegeneratingId("");
     }
   };
 
@@ -5681,6 +5685,9 @@ export default function App() {
                           description="Concepts across generated Note Group Mind Maps in this module."
                           loading={moduleMindMapLoading}
                           error={moduleMindMapError}
+                          canRegenerateTopicKnowledgeNodes={canManageSelectedSubject}
+                          regeneratingTopicId={topicKnowledgeNodeRegeneratingId}
+                          onRegenerateTopicKnowledgeNodes={handleRegenerateTopicKnowledgeNodes}
                         />
                       </section>
                       <section className={panelClass} id="module-review">
@@ -6114,6 +6121,9 @@ export default function App() {
                                 canGenerate={canManageSelectedSubject}
                                 generating={noteGroupMindMapGenerating}
                                 onGenerate={handleGenerateNoteGroupMindMap}
+                                canRegenerateTopicKnowledgeNodes={canManageSelectedSubject}
+                                regeneratingTopicId={topicKnowledgeNodeRegeneratingId}
+                                onRegenerateTopicKnowledgeNodes={handleRegenerateTopicKnowledgeNodes}
                               />
                             </section>
                             <section className={panelClass} id="note-group-content">
