@@ -63,3 +63,14 @@ def test_mind_map_migration_repairs_existing_join_tables_with_module_id():
     assert "alter table public.mind_map_concepts\n      add constraint uq_mind_map_concepts_module_id" in sql
     assert "alter table public.note_groups\n      add constraint uq_note_groups_module_id_id" in sql
     assert "alter table public.study_cards\n      add constraint uq_study_cards_note_group_id_id" in sql
+
+
+def test_topic_tree_migration_adds_single_parent_lineage():
+    sql = _migration_sql().lower()
+
+    assert "add column if not exists parent_topic_id varchar" in sql
+    assert "add column if not exists sort_order integer not null default 0" in sql
+    assert "constraint fk_topic_chips_parent_topic" in sql
+    assert "references public.topic_chips (id)" in sql
+    assert "on delete set null" in sql
+    assert "ix_topic_chips_module_parent_topic_id" in sql
