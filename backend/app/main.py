@@ -2157,6 +2157,27 @@ def _queue_mind_map_generation_job(
     return job
 
 
+def _queue_or_resolve_mind_map_generation_job(
+    db: Session,
+    background_tasks: BackgroundTasks,
+    note_group_id: str,
+) -> Job:
+    last_error: IntegrityError | None = None
+    for _attempt in range(3):
+        try:
+            return _queue_mind_map_generation_job(db, background_tasks, note_group_id)
+        except IntegrityError as exc:
+            last_error = exc
+            db.rollback()
+            latest_job = _latest_mind_map_generation_job_for_update(db, note_group_id)
+            resolved_job = _resolve_existing_mind_map_generation_job(db, background_tasks, latest_job)
+            if resolved_job:
+                return resolved_job
+    if last_error:
+        raise last_error
+    raise HTTPException(status_code=409, detail="Unable to queue Concept Mind Map generation")
+
+
 @app.post("/note-groups/{note_group_id}/mind-map/generate", response_model=JobOut)
 def generate_note_group_mind_map(
     note_group_id: str,
@@ -2175,15 +2196,7 @@ def generate_note_group_mind_map(
     if resolved_job:
         return resolved_job
 
-    try:
-        return _queue_mind_map_generation_job(db, background_tasks, note_group_id)
-    except IntegrityError:
-        db.rollback()
-        latest_job = _latest_mind_map_generation_job_for_update(db, note_group_id)
-        resolved_job = _resolve_existing_mind_map_generation_job(db, background_tasks, latest_job)
-        if resolved_job:
-            return resolved_job
-        return _queue_mind_map_generation_job(db, background_tasks, note_group_id)
+    return _queue_or_resolve_mind_map_generation_job(db, background_tasks, note_group_id)
 
 
 @app.get("/note-groups/{note_group_id}/mind-map", response_model=MindMapResponse)
