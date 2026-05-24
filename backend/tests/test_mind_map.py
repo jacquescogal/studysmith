@@ -7,16 +7,26 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db import Base
+from app.mind_map import (
+    MindMapValidationError,
+    build_note_group_mind_map_response,
+    regenerate_note_group_mind_map,
+    slugify_concept_title,
+    validate_candidate_graph,
+)
 from app.models import (
     MindMapConcept,
     MindMapRelation,
     Module,
     NoteGroup,
     NoteGroupMindMapConcept,
+    QuestionCard,
     StudyCard,
     StudyCardMindMapConcept,
     Subject,
+    TopicChip,
     User,
+    study_card_topic_chips,
 )
 from app.schemas import MindMapResponse
 
@@ -65,6 +75,332 @@ class MindMapModelTests(unittest.TestCase):
             self.assertEqual(stored.mind_map_status, "not_generated")
             self.assertFalse(stored.mind_map_stale)
             self.assertIsNone(stored.mind_map_generated_at)
+        finally:
+            db.close()
+
+
+class MindMapServiceTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+
+        @event.listens_for(self.engine, "connect")
+        def _set_sqlite_pragma(dbapi_connection, connection_record) -> None:
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
+        Base.metadata.create_all(bind=self.engine)
+        self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
+
+    def tearDown(self):
+        Base.metadata.drop_all(bind=self.engine)
+
+    def _owner(self) -> User:
+        return User(id="owner-1", supabase_user_id="owner-sub", email="owner@example.com", app_role="creator")
+
+    def _seed_mind_map_workspace(self, db):
+        owner = User(id="owner-1", supabase_user_id="owner-sub", email="owner@example.com", app_role="creator")
+        subject = Subject(id="subject-1", title="Subject", owner_user_id="owner-1")
+        module = Module(id="module-1", subject_id="subject-1", title="Module")
+        target_group = NoteGroup(id="note-group-1", module_id="module-1", title="Target", raw_text="target")
+        other_group = NoteGroup(id="note-group-2", module_id="module-1", title="Other", raw_text="other")
+        target_card_1 = StudyCard(
+            id="study-card-1",
+            note_group_id="note-group-1",
+            title="RLS",
+            content="Row-level security content",
+        )
+        target_card_2 = StudyCard(
+            id="study-card-2",
+            note_group_id="note-group-1",
+            title="Policies",
+            content="Policy content",
+        )
+        other_card = StudyCard(
+            id="study-card-other",
+            note_group_id="note-group-2",
+            title="Other",
+            content="Other content",
+        )
+        existing_concept = MindMapConcept(
+            id="concept-existing",
+            module_id="module-1",
+            slug="existing_security",
+            title="Existing Security",
+            summary="Existing security summary.",
+            concept_type="topic",
+            importance="core",
+        )
+        old_target_concept = MindMapConcept(
+            id="concept-old-target",
+            module_id="module-1",
+            slug="old_target",
+            title="Old Target",
+            summary="Old target summary.",
+            concept_type="term",
+            importance="detail",
+        )
+        other_concept = MindMapConcept(
+            id="concept-other",
+            module_id="module-1",
+            slug="other_concept",
+            title="Other Concept",
+            summary="Other concept summary.",
+            concept_type="term",
+            importance="supporting",
+        )
+        db.add_all(
+            [
+                owner,
+                subject,
+                module,
+                target_group,
+                other_group,
+                target_card_1,
+                target_card_2,
+                other_card,
+                existing_concept,
+                old_target_concept,
+                other_concept,
+            ]
+        )
+        db.commit()
+        db.add_all(
+            [
+                NoteGroupMindMapConcept(
+                    module_id="module-1",
+                    note_group_id="note-group-1",
+                    concept_id="concept-old-target",
+                ),
+                StudyCardMindMapConcept(
+                    module_id="module-1",
+                    note_group_id="note-group-1",
+                    study_card_id="study-card-1",
+                    concept_id="concept-old-target",
+                    role="primary",
+                ),
+                MindMapRelation(
+                    id="relation-old-target",
+                    module_id="module-1",
+                    source_concept_id="concept-old-target",
+                    target_concept_id="concept-existing",
+                    relation_type="related_to",
+                    confidence=0.9,
+                    source_note_group_id="note-group-1",
+                ),
+                NoteGroupMindMapConcept(
+                    module_id="module-1",
+                    note_group_id="note-group-2",
+                    concept_id="concept-other",
+                ),
+                StudyCardMindMapConcept(
+                    module_id="module-1",
+                    note_group_id="note-group-2",
+                    study_card_id="study-card-other",
+                    concept_id="concept-other",
+                    role="primary",
+                ),
+                MindMapRelation(
+                    id="relation-other",
+                    module_id="module-1",
+                    source_concept_id="concept-other",
+                    target_concept_id="concept-existing",
+                    relation_type="related_to",
+                    confidence=0.8,
+                    source_note_group_id="note-group-2",
+                ),
+            ]
+        )
+        db.commit()
+
+    def test_slugify_concept_title_normalizes_backend_slugs(self):
+        self.assertEqual(slugify_concept_title(" Row-Level Security! "), "row_level_security")
+        self.assertEqual(slugify_concept_title("   "), "concept")
+
+    def test_validate_candidate_graph_rejects_unresolved_relation_endpoint(self):
+        payload = {
+            "concepts": [
+                {
+                    "temp_id": "candidate-1",
+                    "title": "Row-Level Security",
+                    "summary": "Restricts rows by policy.",
+                    "concept_type": "term",
+                    "importance": "core",
+                }
+            ],
+            "relations": [
+                {
+                    "source_concept_id": "candidate-1",
+                    "target_concept_id": "missing",
+                    "relation_type": "requires",
+                    "confidence": 0.9,
+                }
+            ],
+            "links": [
+                {
+                    "study_card_id": "study-card-1",
+                    "concept_id": "candidate-1",
+                    "role": "primary",
+                }
+            ],
+        }
+
+        with self.assertRaises(MindMapValidationError):
+            validate_candidate_graph(payload, {"study-card-1"}, set())
+
+    def test_regenerate_note_group_mind_map_replaces_target_graph_and_preserves_other_group(self):
+        db = self.SessionLocal()
+        try:
+            self._seed_mind_map_workspace(db)
+            payload = {
+                "concepts": [
+                    {
+                        "temp_id": "existing",
+                        "matched_existing_concept_id": "concept-existing",
+                        "title": "Existing Security",
+                        "summary": "Existing security summary.",
+                        "concept_type": "topic",
+                        "importance": "core",
+                    },
+                    {
+                        "temp_id": "new",
+                        "title": " Row-Level Security! ",
+                        "summary": "Restricts visible rows by policy.",
+                        "concept_type": "term",
+                        "importance": "supporting",
+                    },
+                ],
+                "relations": [
+                    {
+                        "source_concept_id": "existing",
+                        "target_concept_id": "new",
+                        "relation_type": "requires",
+                        "label": "requires",
+                        "confidence": 0.92,
+                    }
+                ],
+                "links": [
+                    {
+                        "study_card_id": "study-card-1",
+                        "concept_id": "existing",
+                        "role": "primary",
+                    },
+                    {
+                        "study_card_id": "study-card-1",
+                        "concept_id": "new",
+                        "role": "supporting",
+                    },
+                    {
+                        "study_card_id": "study-card-2",
+                        "concept_id": "new",
+                        "role": "supporting",
+                    },
+                ],
+            }
+
+            regenerate_note_group_mind_map(db, "note-group-1", payload)
+            db.commit()
+
+            target_group = db.get(NoteGroup, "note-group-1")
+            new_concept = (
+                db.query(MindMapConcept)
+                .filter(MindMapConcept.module_id == "module-1", MindMapConcept.slug == "row_level_security")
+                .one()
+            )
+            target_links = {
+                (link.note_group_id, link.study_card_id, link.concept_id, link.role)
+                for link in db.query(StudyCardMindMapConcept)
+                .filter(StudyCardMindMapConcept.note_group_id == "note-group-1")
+                .all()
+            }
+            other_links = db.query(StudyCardMindMapConcept).filter(
+                StudyCardMindMapConcept.note_group_id == "note-group-2"
+            ).all()
+            relation_ids = {relation.id for relation in db.query(MindMapRelation).all()}
+
+            self.assertEqual(target_group.mind_map_status, "complete")
+            self.assertFalse(target_group.mind_map_stale)
+            self.assertIsNotNone(target_group.mind_map_generated_at)
+            self.assertEqual(db.get(MindMapConcept, "concept-existing").id, "concept-existing")
+            self.assertIn(("note-group-1", "study-card-1", "concept-existing", "primary"), target_links)
+            self.assertIn(("note-group-1", "study-card-1", new_concept.id, "supporting"), target_links)
+            self.assertIn(("note-group-1", "study-card-2", new_concept.id, "primary"), target_links)
+            self.assertEqual(len(other_links), 1)
+            self.assertEqual(other_links[0].concept_id, "concept-other")
+            self.assertNotIn("relation-old-target", relation_ids)
+            self.assertIn("relation-other", relation_ids)
+        finally:
+            db.close()
+
+    def test_build_note_group_mind_map_response_includes_question_cards_through_study_card_refs(self):
+        db = self.SessionLocal()
+        try:
+            owner = User(id="owner-1", supabase_user_id="owner-sub", email="owner@example.com", app_role="creator")
+            subject = Subject(id="subject-1", title="Subject", owner_user_id="owner-1")
+            module = Module(id="module-1", subject_id="subject-1", title="Module")
+            note_group = NoteGroup(
+                id="note-group-1",
+                module_id="module-1",
+                title="Target",
+                raw_text="target",
+                mind_map_status="complete",
+                mind_map_generated_at=datetime.utcnow(),
+            )
+            topic = TopicChip(id="topic-1", module_id="module-1", label="Security")
+            study_card = StudyCard(id="study-card-1", note_group_id="note-group-1", title="RLS", content="RLS content")
+            concept = MindMapConcept(
+                id="concept-1",
+                module_id="module-1",
+                slug="row_level_security",
+                title="Row-Level Security",
+                summary="Restricts rows.",
+                concept_type="term",
+                importance="core",
+            )
+            question = QuestionCard(
+                id="question-1",
+                note_group_id="note-group-1",
+                type="multiple_choice",
+                prompt="What does RLS restrict?",
+                options_json='["rows"]',
+                correct_option_indices_json="[0]",
+                study_card_refs_json='["study-card-1"]',
+            )
+            db.add_all([owner, subject, module, note_group, topic, study_card, concept, question])
+            db.commit()
+            db.execute(
+                study_card_topic_chips.insert().values(study_card_id="study-card-1", chip_id="topic-1")
+            )
+            db.add_all(
+                [
+                    NoteGroupMindMapConcept(
+                        module_id="module-1",
+                        note_group_id="note-group-1",
+                        concept_id="concept-1",
+                    ),
+                    StudyCardMindMapConcept(
+                        module_id="module-1",
+                        note_group_id="note-group-1",
+                        study_card_id="study-card-1",
+                        concept_id="concept-1",
+                        role="primary",
+                    ),
+                ]
+            )
+            db.commit()
+
+            response = build_note_group_mind_map_response(db, "note-group-1")
+
+            self.assertEqual(response.scope, "note_group")
+            self.assertEqual([node.id for node in response.nodes], ["concept-1"])
+            self.assertEqual(response.nodes[0].topic_ids, ["topic-1"])
+            self.assertEqual([card.id for card in response.study_cards], ["study-card-1"])
+            self.assertEqual([card.id for card in response.question_cards], ["question-1"])
+            self.assertEqual(response.question_cards[0].study_card_refs, ["study-card-1"])
         finally:
             db.close()
 
