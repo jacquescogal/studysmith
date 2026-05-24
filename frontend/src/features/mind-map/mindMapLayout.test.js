@@ -128,4 +128,54 @@ describe("buildMindMapElements", () => {
     expect(conceptNode.data.badges).toContain("concept area");
     expect(conceptNode.data.badges).not.toContain("topic");
   });
+
+  test("renders topics as intermediary nodes and knowledge nodes as leaves", () => {
+    const graph = {
+      scope: "module",
+      module_id: "module-1",
+      note_groups: [],
+      nodes: [
+        {
+          id: "topic-auth",
+          node_type: "topic",
+          title: "Authentication",
+          parent_topic_id: null,
+          study_card_count: 2
+        },
+        {
+          id: "topic-magic-links",
+          node_type: "topic",
+          title: "Magic Links",
+          parent_topic_id: "topic-auth",
+          study_card_count: 1
+        },
+        {
+          id: "node-definition",
+          node_type: "knowledge_node",
+          title: "Magic link definition",
+          parent_topic_id: "topic-magic-links",
+          knowledge_type: "definition",
+          importance: "core",
+          study_card_count: 1
+        }
+      ],
+      edges: []
+    };
+
+    const { nodes, edges } = buildMindMapElements(graph, { title: "Supabase Auth" });
+
+    expect(nodes.map((node) => node.id)).toEqual([
+      "mind-map-root:module-1",
+      "topic-auth",
+      "topic-magic-links",
+      "node-definition"
+    ]);
+    expect(nodes.find((node) => node.id === "topic-auth").data.nodeType).toBe("topic");
+    expect(nodes.find((node) => node.id === "node-definition").data.badges).toContain("definition");
+    expect(edges.map((edge) => [edge.source, edge.target])).toEqual([
+      ["mind-map-root:module-1", "topic-auth"],
+      ["topic-auth", "topic-magic-links"],
+      ["topic-magic-links", "node-definition"]
+    ]);
+  });
 });

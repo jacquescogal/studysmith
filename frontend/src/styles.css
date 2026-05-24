@@ -729,6 +729,16 @@ textarea {
   background: #f1fbf6;
 }
 
+.mind-map-node-topic {
+  border-color: #8fc4d0;
+  background: #eefbfc;
+}
+
+.mind-map-node-knowledge_node {
+  border-color: #d7c6a0;
+  background: #fffdf7;
+}
+
 .mind-map-node-core {
   border-color: #f0b86d;
 }
