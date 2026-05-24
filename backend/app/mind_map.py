@@ -344,9 +344,37 @@ def mark_note_group_mind_map_stale(db: Session, note_group_id: str) -> None:
     note_group = db.get(NoteGroup, note_group_id)
     if not note_group:
         raise MindMapValidationError(f"Note Group not found: {note_group_id}.")
-    note_group.mind_map_stale = True
     if note_group.mind_map_status == "not_generated":
-        note_group.mind_map_status = "stale"
+        return
+    note_group.mind_map_stale = True
+    db.flush()
+
+
+def reset_note_group_mind_map(db: Session, note_group_id: str) -> None:
+    note_group = db.get(NoteGroup, note_group_id)
+    if not note_group:
+        raise MindMapValidationError(f"Note Group not found: {note_group_id}.")
+    study_card_ids = {
+        row[0]
+        for row in db.query(StudyCard.id)
+        .filter(StudyCard.note_group_id == note_group_id)
+        .all()
+    }
+    db.query(NoteGroupMindMapConcept).filter(NoteGroupMindMapConcept.note_group_id == note_group_id).delete(
+        synchronize_session=False
+    )
+    if study_card_ids:
+        db.query(StudyCardMindMapConcept).filter(StudyCardMindMapConcept.study_card_id.in_(study_card_ids)).delete(
+            synchronize_session=False
+        )
+    db.query(MindMapRelation).filter(MindMapRelation.source_note_group_id == note_group_id).delete(
+        synchronize_session=False
+    )
+    note_group.mind_map_status = "not_generated"
+    note_group.mind_map_stale = False
+    note_group.mind_map_generated_at = None
+    db.flush()
+    _prune_orphan_module_concepts(db, note_group.module_id)
     db.flush()
 
 
