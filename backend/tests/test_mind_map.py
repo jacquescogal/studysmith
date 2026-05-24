@@ -1191,6 +1191,162 @@ class MindMapJobTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_run_mind_map_generation_does_not_rerun_completed_job(self):
+        db = self.SessionLocal()
+        try:
+            MindMapServiceTests.seed_graph_scope(self, db)
+            db.add(Job(id="job-1", type=JOB_TYPE_MIND_MAP_GENERATION, note_group_id="note-a"))
+            db.commit()
+        finally:
+            db.close()
+
+        candidate_payload = {
+            "concepts": [
+                {
+                    "temp_id": "concept-a",
+                    "title": "Row-Level Security",
+                    "summary": "Restricts visible rows by policy.",
+                    "concept_type": "term",
+                    "importance": "core",
+                }
+            ],
+            "relations": [],
+            "links": [
+                {
+                    "study_card_id": "card-a",
+                    "concept_id": "concept-a",
+                    "role": "primary",
+                }
+            ],
+        }
+
+        with patch("app.jobs.SessionLocal", self.SessionLocal), patch(
+            "app.jobs.generate_mind_map_candidate_graph",
+            return_value=candidate_payload,
+        ):
+            run_mind_map_generation("job-1")
+
+        with patch("app.jobs.SessionLocal", self.SessionLocal), patch(
+            "app.jobs.generate_mind_map_candidate_graph",
+        ) as generate_graph:
+            run_mind_map_generation("job-1")
+
+        db = self.SessionLocal()
+        try:
+            job = db.get(Job, "job-1")
+            concepts = db.query(MindMapConcept).filter(MindMapConcept.module_id == "module-1").all()
+
+            self.assertEqual(job.status, "completed")
+            self.assertIsNone(job.error)
+            self.assertEqual(len(concepts), 1)
+            generate_graph.assert_not_called()
+        finally:
+            db.close()
+
+    def test_run_mind_map_generation_does_not_rerun_running_job(self):
+        db = self.SessionLocal()
+        try:
+            MindMapServiceTests.seed_graph_scope(self, db)
+            db.add(
+                Job(
+                    id="job-running",
+                    type=JOB_TYPE_MIND_MAP_GENERATION,
+                    note_group_id="note-a",
+                    status="running",
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        with patch("app.jobs.SessionLocal", self.SessionLocal), patch(
+            "app.jobs.generate_mind_map_candidate_graph",
+        ) as generate_graph:
+            run_mind_map_generation("job-running")
+
+        db = self.SessionLocal()
+        try:
+            job = db.get(Job, "job-running")
+            concepts = db.query(MindMapConcept).filter(MindMapConcept.module_id == "module-1").all()
+
+            self.assertEqual(job.status, "running")
+            self.assertEqual(concepts, [])
+            generate_graph.assert_not_called()
+        finally:
+            db.close()
+
+    def test_run_mind_map_generation_aborts_when_job_was_marked_failed_as_stale(self):
+        db = self.SessionLocal()
+        try:
+            MindMapServiceTests.seed_graph_scope(self, db)
+            db.add(Job(id="job-stale", type=JOB_TYPE_MIND_MAP_GENERATION, note_group_id="note-a"))
+            db.commit()
+        finally:
+            db.close()
+
+        candidate_payload = {
+            "concepts": [
+                {
+                    "temp_id": "concept-stale",
+                    "title": "Stale Worker Result",
+                    "summary": "This graph came from a stale worker.",
+                    "concept_type": "topic",
+                    "importance": "supporting",
+                }
+            ],
+            "relations": [],
+            "links": [
+                {
+                    "study_card_id": "card-a",
+                    "concept_id": "concept-stale",
+                    "role": "primary",
+                }
+            ],
+        }
+
+        def mark_job_failed_as_stale(**kwargs):
+            stale_db = self.SessionLocal()
+            try:
+                stale_job = stale_db.get(Job, "job-stale")
+                stale_job.status = "failed"
+                stale_job.error = "Stale Concept Mind Map generation job superseded"
+                stale_db.add(
+                    Job(
+                        id="job-replacement",
+                        type=JOB_TYPE_MIND_MAP_GENERATION,
+                        note_group_id="note-a",
+                    )
+                )
+                stale_db.commit()
+            finally:
+                stale_db.close()
+            return candidate_payload
+
+        with patch("app.jobs.SessionLocal", self.SessionLocal), patch(
+            "app.jobs.generate_mind_map_candidate_graph",
+            side_effect=mark_job_failed_as_stale,
+        ):
+            run_mind_map_generation("job-stale")
+
+        db = self.SessionLocal()
+        try:
+            stale_job = db.get(Job, "job-stale")
+            replacement_job = db.get(Job, "job-replacement")
+            concepts = db.query(MindMapConcept).filter(MindMapConcept.module_id == "module-1").all()
+            note_group_links = (
+                db.query(NoteGroupMindMapConcept)
+                .filter(NoteGroupMindMapConcept.note_group_id == "note-a")
+                .all()
+            )
+
+            self.assertEqual(stale_job.status, "failed")
+            self.assertEqual(stale_job.error, "Stale Concept Mind Map generation job superseded")
+            self.assertEqual(replacement_job.status, "queued")
+            self.assertEqual(concepts, [])
+            self.assertEqual(note_group_links, [])
+        finally:
+            db.close()
+
     def test_run_mind_map_generation_keeps_previous_graph_on_failure(self):
         db = self.SessionLocal()
         try:
