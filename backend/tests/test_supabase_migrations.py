@@ -74,3 +74,15 @@ def test_topic_tree_migration_adds_single_parent_lineage():
     assert "references public.topic_chips (id)" in sql
     assert "on delete set null" in sql
     assert "ix_topic_chips_module_parent_topic_id" in sql
+
+
+def test_knowledge_node_migration_adds_topic_and_type_fields():
+    sql = _migration_sql().lower()
+
+    assert "alter table public.mind_map_concepts\n  add column if not exists topic_id varchar" in sql
+    assert "add column if not exists knowledge_type varchar" in sql
+    assert "constraint fk_mind_map_concepts_topic" in sql
+    assert "references public.topic_chips (id)" in sql
+    assert "constraint ck_mind_map_concepts_knowledge_type" in sql
+    assert "check (knowledge_type in ('definition', 'fact', 'mechanism', 'rule'))" in sql
+    assert "ix_mind_map_concepts_module_topic_id" in sql

@@ -119,6 +119,34 @@ class MindMapModelTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_mind_map_concept_stores_knowledge_node_fields(self):
+        db = self.SessionLocal()
+        try:
+            owner = self._owner()
+            subject = Subject(id="subject-1", title="Subject", owner_user_id="owner-1")
+            module = Module(id="module-1", subject_id="subject-1", title="Module")
+            topic = TopicChip(id="topic-1", module_id="module-1", label="Authentication")
+            knowledge_node = MindMapConcept(
+                id="node-1",
+                module_id="module-1",
+                topic_id="topic-1",
+                slug="magic_link_definition",
+                title="Magic link definition",
+                summary="A magic link is a passwordless sign-in link sent by email.",
+                concept_type="term",
+                knowledge_type="definition",
+                importance="core",
+            )
+            db.add_all([owner, subject, module, topic, knowledge_node])
+            db.commit()
+
+            stored = db.get(MindMapConcept, "node-1")
+
+            self.assertEqual(stored.topic_id, "topic-1")
+            self.assertEqual(stored.knowledge_type, "definition")
+        finally:
+            db.close()
+
 
 class MindMapServiceTests(unittest.TestCase):
     def setUp(self):
@@ -458,6 +486,55 @@ class MindMapServiceTests(unittest.TestCase):
 
         with self.assertRaises(MindMapValidationError):
             validate_candidate_graph(payload, {"study-card-1"}, set())
+
+    def test_validate_candidate_graph_accepts_topic_tree_and_knowledge_nodes(self):
+        payload = {
+            "topics": [
+                {
+                    "temp_id": "topic-auth",
+                    "title": "Authentication",
+                    "summary": "How users prove identity.",
+                },
+                {
+                    "temp_id": "topic-magic-links",
+                    "parent_topic_id": "topic-auth",
+                    "title": "Magic Links",
+                    "summary": "Passwordless email sign-in.",
+                },
+            ],
+            "knowledge_nodes": [
+                {
+                    "temp_id": "node-definition",
+                    "topic_id": "topic-magic-links",
+                    "title": "Magic link definition",
+                    "summary": "A magic link is a passwordless sign-in link sent by email.",
+                    "knowledge_type": "definition",
+                    "importance": "core",
+                }
+            ],
+            "relations": [],
+            "study_card_topic_links": [
+                {
+                    "study_card_id": "study-card-1",
+                    "topic_id": "topic-magic-links",
+                    "role": "primary",
+                }
+            ],
+            "study_card_knowledge_node_links": [
+                {
+                    "study_card_id": "study-card-1",
+                    "knowledge_node_id": "node-definition",
+                    "role": "primary",
+                }
+            ],
+        }
+
+        validated = validate_candidate_graph(payload, {"study-card-1"}, set(), set())
+
+        self.assertEqual(validated["topics"][1]["parent_topic_id"], "topic-auth")
+        self.assertEqual(validated["knowledge_nodes"][0]["knowledge_type"], "definition")
+        self.assertEqual(validated["study_card_topic_links"][0]["role"], "primary")
+        self.assertEqual(validated["study_card_knowledge_node_links"][0]["knowledge_node_id"], "node-definition")
 
     def test_regenerate_note_group_mind_map_replaces_target_graph_and_preserves_other_group(self):
         db = self.SessionLocal()
