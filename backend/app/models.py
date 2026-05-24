@@ -247,6 +247,8 @@ class Module(Base):
     subject = relationship("Subject", back_populates="modules")
     note_groups = relationship("NoteGroup", back_populates="module")
     topic_chips = relationship("TopicChip", back_populates="module")
+    mind_map_concepts = relationship("MindMapConcept", back_populates="module")
+    mind_map_relations = relationship("MindMapRelation", back_populates="module")
     short_code_record = relationship(
         "ModuleShortCode",
         back_populates="module",
@@ -301,6 +303,9 @@ class NoteGroup(Base):
     generation_status = Column(String, default="created")
     suggested_titles_json = Column(Text)
     sort_order = Column(Integer)
+    mind_map_status = Column(String, nullable=False, default="not_generated")
+    mind_map_stale = Column(Boolean, nullable=False, default=False)
+    mind_map_generated_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -317,6 +322,11 @@ class NoteGroup(Base):
     topic_chips = relationship(
         "TopicChip",
         secondary=note_group_topic_chips,
+        back_populates="note_groups",
+    )
+    mind_map_concepts = relationship(
+        "MindMapConcept",
+        secondary="note_group_mind_map_concepts",
         back_populates="note_groups",
     )
 
@@ -385,6 +395,11 @@ class StudyCard(Base):
         secondary=study_card_topic_chips,
         back_populates="study_cards",
     )
+    mind_map_concept_links = relationship(
+        "StudyCardMindMapConcept",
+        back_populates="study_card",
+        cascade="all, delete-orphan",
+    )
     embedding = relationship(
         "StudyCardEmbedding",
         back_populates="study_card",
@@ -425,6 +440,105 @@ class StudyCardSourceRange(Base):
 
     study_card = relationship("StudyCard", back_populates="source_ranges")
     note_group = relationship("NoteGroup")
+
+
+class MindMapConcept(Base):
+    __tablename__ = "mind_map_concepts"
+    __table_args__ = (
+        UniqueConstraint("module_id", "slug", name="uq_mind_map_concepts_module_slug"),
+    )
+
+    id = Column(String, primary_key=True, default=_uuid)
+    module_id = Column(String, ForeignKey("modules.id", ondelete="CASCADE"), nullable=False, index=True)
+    slug = Column(String, nullable=False)
+    title = Column(String, nullable=False)
+    summary = Column(Text, nullable=False)
+    concept_type = Column(String, nullable=False)
+    importance = Column(String, nullable=False)
+    source_quote = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    module = relationship("Module", back_populates="mind_map_concepts")
+    note_groups = relationship(
+        "NoteGroup",
+        secondary="note_group_mind_map_concepts",
+        back_populates="mind_map_concepts",
+    )
+    study_card_links = relationship(
+        "StudyCardMindMapConcept",
+        back_populates="concept",
+        cascade="all, delete-orphan",
+    )
+    outgoing_relations = relationship(
+        "MindMapRelation",
+        foreign_keys="MindMapRelation.source_concept_id",
+        back_populates="source_concept",
+        cascade="all, delete-orphan",
+    )
+    incoming_relations = relationship(
+        "MindMapRelation",
+        foreign_keys="MindMapRelation.target_concept_id",
+        back_populates="target_concept",
+        cascade="all, delete-orphan",
+    )
+
+
+class MindMapRelation(Base):
+    __tablename__ = "mind_map_relations"
+    __table_args__ = (
+        UniqueConstraint(
+            "module_id",
+            "source_concept_id",
+            "target_concept_id",
+            "relation_type",
+            "source_note_group_id",
+            name="uq_mind_map_relations_note_group_edge",
+        ),
+        CheckConstraint("source_concept_id != target_concept_id", name="ck_mind_map_relations_not_self"),
+    )
+
+    id = Column(String, primary_key=True, default=_uuid)
+    module_id = Column(String, ForeignKey("modules.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_concept_id = Column(String, ForeignKey("mind_map_concepts.id", ondelete="CASCADE"), nullable=False)
+    target_concept_id = Column(String, ForeignKey("mind_map_concepts.id", ondelete="CASCADE"), nullable=False)
+    relation_type = Column(String, nullable=False)
+    label = Column(String)
+    confidence = Column(Float, nullable=False, default=0.0)
+    source_note_group_id = Column(String, ForeignKey("note_groups.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    module = relationship("Module", back_populates="mind_map_relations")
+    source_concept = relationship("MindMapConcept", foreign_keys=[source_concept_id], back_populates="outgoing_relations")
+    target_concept = relationship("MindMapConcept", foreign_keys=[target_concept_id], back_populates="incoming_relations")
+    source_note_group = relationship("NoteGroup")
+
+
+class StudyCardMindMapConcept(Base):
+    __tablename__ = "study_card_mind_map_concepts"
+    __table_args__ = (
+        UniqueConstraint("study_card_id", "concept_id", name="uq_study_card_mind_map_concepts"),
+    )
+
+    study_card_id = Column(String, ForeignKey("study_cards.id", ondelete="CASCADE"), primary_key=True)
+    concept_id = Column(String, ForeignKey("mind_map_concepts.id", ondelete="CASCADE"), primary_key=True)
+    role = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    study_card = relationship("StudyCard", back_populates="mind_map_concept_links")
+    concept = relationship("MindMapConcept", back_populates="study_card_links")
+
+
+class NoteGroupMindMapConcept(Base):
+    __tablename__ = "note_group_mind_map_concepts"
+    __table_args__ = (
+        UniqueConstraint("note_group_id", "concept_id", name="uq_note_group_mind_map_concepts"),
+    )
+
+    note_group_id = Column(String, ForeignKey("note_groups.id", ondelete="CASCADE"), primary_key=True)
+    concept_id = Column(String, ForeignKey("mind_map_concepts.id", ondelete="CASCADE"), primary_key=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class QuestionCard(Base):

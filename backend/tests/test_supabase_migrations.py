@@ -13,10 +13,13 @@ def _migration_sql() -> str:
 
 
 def test_baseline_migration_creates_all_model_tables():
-    sql = _migration_sql()
+    sql = _migration_sql().lower()
 
     for table_name in sorted(Base.metadata.tables):
-        assert f"create table public.{table_name}" in sql.lower()
+        assert (
+            f"create table public.{table_name}" in sql
+            or f"create table if not exists public.{table_name}" in sql
+        )
 
 
 def test_baseline_migration_installs_vector_and_disables_rls_for_app_tables():

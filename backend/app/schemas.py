@@ -145,6 +145,9 @@ class NoteGroupOut(BaseModel):
     generation_status: str
     created_at: datetime
     sort_order: Optional[int] = None
+    mind_map_status: str = "not_generated"
+    mind_map_stale: bool = False
+    mind_map_generated_at: Optional[datetime] = None
     topic_chips: List["TopicChipOut"] = []
     suggested_titles: List[str] = []
 
@@ -170,6 +173,63 @@ class StudyCardOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class MindMapNodeOut(BaseModel):
+    id: str
+    node_type: str
+    title: str
+    summary: Optional[str] = None
+    concept_type: Optional[str] = None
+    importance: Optional[str] = None
+    topic_ids: List[str] = []
+    study_card_ids: List[str] = []
+    note_group_ids: List[str] = []
+    study_card_count: int = 0
+    note_group_count: int = 0
+
+
+class MindMapEdgeOut(BaseModel):
+    id: str
+    source: str
+    target: str
+    relation_type: str
+    label: Optional[str] = None
+    confidence: Optional[float] = None
+    source_note_group_id: Optional[str] = None
+
+
+class MindMapStudyCardOut(BaseModel):
+    id: str
+    note_group_id: str
+    title: Optional[str] = None
+    content: str
+
+
+class MindMapQuestionCardOut(BaseModel):
+    id: str
+    note_group_id: str
+    prompt: str
+    study_card_refs: List[str] = []
+
+
+class MindMapNoteGroupOut(BaseModel):
+    id: str
+    title: Optional[str] = None
+
+
+class MindMapResponse(BaseModel):
+    scope: str
+    module_id: str
+    note_group_id: Optional[str] = None
+    status: str = "not_generated"
+    stale: bool = False
+    generated_at: Optional[datetime] = None
+    nodes: List[MindMapNodeOut] = []
+    edges: List[MindMapEdgeOut] = []
+    study_cards: List[MindMapStudyCardOut] = []
+    question_cards: List[MindMapQuestionCardOut] = []
+    note_groups: List[MindMapNoteGroupOut] = []
 
 
 class TopicChipCreate(BaseModel):
