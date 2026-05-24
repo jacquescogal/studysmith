@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 
 class UserOut(BaseModel):
@@ -494,6 +494,62 @@ class JobOut(BaseModel):
     status: str
     note_group_id: Optional[str] = None
     error: Optional[str] = None
+    current_stage: Optional[str] = None
+    stage_status: Optional[str] = None
+    progress_current: Optional[int] = None
+    progress_total: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+
+class JobStageOut(BaseModel):
+    stage: str
+    status: str
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    error: Optional[str] = None
+    progress_current: Optional[int] = None
+    progress_total: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+
+class JobLogOut(BaseModel):
+    id: str
+    stage: Optional[str] = None
+    message: str
+    metadata: dict = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("metadata", "metadata_dict"),
+    )
+    created_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def use_metadata_dict_for_orm_logs(cls, data: Any) -> Any:
+        if not isinstance(data, dict) and hasattr(data, "metadata_dict"):
+            return {
+                "id": data.id,
+                "stage": data.stage,
+                "message": data.message,
+                "metadata": data.metadata_dict,
+                "created_at": data.created_at,
+            }
+        return data
+
+    class Config:
+        from_attributes = True
+
+
+class NoteGroupGenerationWorkflowOut(BaseModel):
+    job: JobOut
+    note_group: NoteGroupOut
+    draft_title: Optional[str] = None
+    current_stage: str
+    stages: List[JobStageOut] = []
+    logs: List[JobLogOut] = []
 
     class Config:
         from_attributes = True

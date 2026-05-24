@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    and_,
     Boolean,
     CheckConstraint,
     Column,
@@ -18,7 +19,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import foreign, relationship
 from pgvector.sqlalchemy import Vector
 
 from app.config import settings
@@ -87,6 +88,32 @@ MIND_MAP_RELATION_TYPES = {
 }
 MIND_MAP_STUDY_CARD_ROLES = {"primary", "supporting"}
 
+JOB_STAGE_QUEUED = "queued"
+JOB_STAGE_TITLE = "title"
+JOB_STAGE_CLEANED_TEXT = "cleaned_text"
+JOB_STAGE_STUDY_CARDS = "study_cards"
+JOB_STAGE_FORMATTED_TEXT = "formatted_text"
+JOB_STAGE_EMBEDDINGS = "embeddings"
+JOB_STAGE_QUESTION_CARDS = "question_cards"
+JOB_STAGE_MIND_MAP_TOPICS = "mind_map_topics"
+JOB_STAGE_TOPIC_KNOWLEDGE_NODES = "topic_knowledge_nodes"
+JOB_STAGE_PROMOTING = "promoting"
+JOB_STAGE_COMPLETE = "complete"
+JOB_STAGES = {
+    JOB_STAGE_QUEUED,
+    JOB_STAGE_TITLE,
+    JOB_STAGE_CLEANED_TEXT,
+    JOB_STAGE_STUDY_CARDS,
+    JOB_STAGE_FORMATTED_TEXT,
+    JOB_STAGE_EMBEDDINGS,
+    JOB_STAGE_QUESTION_CARDS,
+    JOB_STAGE_MIND_MAP_TOPICS,
+    JOB_STAGE_TOPIC_KNOWLEDGE_NODES,
+    JOB_STAGE_PROMOTING,
+    JOB_STAGE_COMPLETE,
+}
+JOB_STAGE_STATUSES = {"pending", "running", "succeeded", "failed", "cancelled"}
+
 
 def _uuid() -> str:
     return str(uuid.uuid4())
@@ -95,6 +122,14 @@ def _uuid() -> str:
 def _check_values(column_name: str, values: set[str]) -> str:
     quoted_values = ", ".join(f"'{value}'" for value in sorted(values))
     return f"{column_name} IN ({quoted_values})"
+
+
+def _exactly_one_not_null(*column_names: str) -> str:
+    terms = [
+        f"CASE WHEN {column_name} IS NOT NULL THEN 1 ELSE 0 END"
+        for column_name in column_names
+    ]
+    return f"({' + '.join(terms)}) = 1"
 
 
 note_group_topic_chips = Table(
@@ -335,7 +370,7 @@ class NoteGroup(Base):
     module = relationship("Module", back_populates="note_groups")
     study_cards = relationship("StudyCard", back_populates="note_group")
     question_cards = relationship("QuestionCard", back_populates="note_group")
-    jobs = relationship("Job", back_populates="note_group")
+    jobs = relationship("Job", back_populates="note_group", passive_deletes=True)
     short_code_record = relationship(
         "NoteGroupShortCode",
         back_populates="note_group",
@@ -735,6 +770,9 @@ class QuestionCardReviewEvent(Base):
 
 class TopicChip(Base):
     __tablename__ = "topic_chips"
+    __table_args__ = (
+        UniqueConstraint("module_id", "id", name="uq_topic_chips_module_id_id"),
+    )
 
     id = Column(String, primary_key=True, default=_uuid)
     module_id = Column(String, ForeignKey("modules.id"), nullable=False)
@@ -797,6 +835,7 @@ class TopicChipShortCode(Base):
 class Job(Base):
     __tablename__ = "jobs"
     __table_args__ = (
+        UniqueConstraint("id", "note_group_id", name="uq_jobs_id_note_group_id"),
         Index(
             "uq_jobs_active_mind_map_generation_note_group",
             "note_group_id",
@@ -824,3 +863,607 @@ class Job(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     note_group = relationship("NoteGroup", back_populates="jobs")
+    stages = relationship(
+        "JobStage",
+        back_populates="job",
+        cascade="all, delete-orphan",
+        order_by="JobStage.sort_order",
+    )
+    logs = relationship(
+        "JobLog",
+        back_populates="job",
+        cascade="all, delete-orphan",
+        order_by="JobLog.created_at",
+    )
+    generation_draft = relationship(
+        "NoteGroupGenerationDraft",
+        back_populates="job",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+    def _current_stage_record(self):
+        current_stage = self.current_stage
+        if current_stage:
+            for stage in self.stages:
+                if stage.stage == current_stage:
+                    return stage
+        return None
+
+    @property
+    def current_stage(self) -> str | None:
+        if self.generation_draft:
+            return self.generation_draft.current_stage
+        if self.stages:
+            return self.stages[-1].stage
+        return None
+
+    @property
+    def stage_status(self) -> str | None:
+        stage = self._current_stage_record()
+        return stage.status if stage else None
+
+    @property
+    def progress_current(self) -> int | None:
+        stage = self._current_stage_record()
+        return stage.progress_current if stage else None
+
+    @property
+    def progress_total(self) -> int | None:
+        stage = self._current_stage_record()
+        return stage.progress_total if stage else None
+
+
+class JobStage(Base):
+    __tablename__ = "job_stages"
+    __table_args__ = (
+        UniqueConstraint("job_id", "stage", name="uq_job_stages_job_stage"),
+        CheckConstraint(_check_values("stage", JOB_STAGES), name="ck_job_stages_stage"),
+        CheckConstraint(_check_values("status", JOB_STAGE_STATUSES), name="ck_job_stages_status"),
+    )
+
+    id = Column(String, primary_key=True, default=_uuid)
+    job_id = Column(String, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    stage = Column(String, nullable=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+    status = Column(String, nullable=False, default="pending")
+    started_at = Column(DateTime)
+    finished_at = Column(DateTime)
+    error = Column(Text)
+    progress_current = Column(Integer)
+    progress_total = Column(Integer)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    job = relationship("Job", back_populates="stages")
+
+
+class JobLog(Base):
+    __tablename__ = "job_logs"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    job_id = Column(String, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    stage = Column(String)
+    message = Column(Text, nullable=False)
+    metadata_json = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    job = relationship("Job", back_populates="logs")
+
+    @property
+    def metadata_dict(self) -> dict:
+        if not self.metadata_json:
+            return {}
+        try:
+            data = json.loads(self.metadata_json)
+        except json.JSONDecodeError:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+
+class NoteGroupGenerationDraft(Base):
+    __tablename__ = "note_group_generation_drafts"
+    __table_args__ = (
+        UniqueConstraint("id", "module_id", name="uq_note_group_generation_drafts_id_module_id"),
+        CheckConstraint(_check_values("current_stage", JOB_STAGES), name="ck_note_group_generation_drafts_current_stage"),
+        ForeignKeyConstraint(
+            ["module_id", "note_group_id"],
+            ["note_groups.module_id", "note_groups.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["job_id", "note_group_id"],
+            ["jobs.id", "jobs.note_group_id"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    id = Column(String, primary_key=True, default=_uuid)
+    job_id = Column(String, nullable=False, unique=True)
+    module_id = Column(String, ForeignKey("modules.id", ondelete="CASCADE"), nullable=False, index=True)
+    note_group_id = Column(String, nullable=False, unique=True, index=True)
+    raw_text = Column(Text, nullable=False)
+    unique_id = Column(String)
+    additional_generation_instructions = Column(Text)
+    title = Column(String)
+    suggested_titles_json = Column(Text)
+    cleaned_text_markdown = Column(Text)
+    formatted_sections_json = Column(Text)
+    formatted_text = Column(Text)
+    current_stage = Column(String, nullable=False, default=JOB_STAGE_QUEUED)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    job = relationship("Job", back_populates="generation_draft")
+    module = relationship("Module")
+    note_group = relationship("NoteGroup", overlaps="generation_draft,job,module")
+    study_cards = relationship(
+        "DraftStudyCard",
+        back_populates="draft",
+        cascade="all, delete-orphan",
+        order_by="DraftStudyCard.sort_order",
+    )
+    question_cards = relationship(
+        "DraftQuestionCard",
+        back_populates="draft",
+        cascade="all, delete-orphan",
+        order_by="DraftQuestionCard.sort_order",
+    )
+    topics = relationship(
+        "DraftTopic",
+        back_populates="draft",
+        cascade="all, delete-orphan",
+        order_by="DraftTopic.sort_order",
+    )
+    knowledge_nodes = relationship(
+        "DraftKnowledgeNode",
+        back_populates="draft",
+        cascade="all, delete-orphan",
+        order_by="DraftKnowledgeNode.sort_order",
+    )
+    note_group_topic_links = relationship(
+        "DraftNoteGroupTopicLink",
+        back_populates="draft",
+        cascade="all, delete-orphan",
+        order_by="DraftNoteGroupTopicLink.sort_order",
+    )
+    mind_map_relations = relationship(
+        "DraftMindMapRelation",
+        back_populates="draft",
+        cascade="all, delete-orphan",
+        order_by="DraftMindMapRelation.sort_order",
+    )
+
+
+class DraftStudyCard(Base):
+    __tablename__ = "draft_study_cards"
+    __table_args__ = (
+        UniqueConstraint("draft_id", "id", name="uq_draft_study_cards_draft_id_id"),
+    )
+
+    id = Column(String, primary_key=True, default=_uuid)
+    draft_id = Column(String, ForeignKey("note_group_generation_drafts.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = Column(String)
+    content = Column(Text, nullable=False)
+    embedding_json = Column(Text)
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    draft = relationship("NoteGroupGenerationDraft", back_populates="study_cards")
+    source_ranges = relationship(
+        "DraftStudyCardSourceRange",
+        back_populates="draft_study_card",
+        cascade="all, delete-orphan",
+        order_by="DraftStudyCardSourceRange.start_index",
+    )
+    topic_links = relationship(
+        "DraftStudyCardTopicLink",
+        back_populates="draft_study_card",
+        cascade="all, delete-orphan",
+    )
+    knowledge_node_links = relationship(
+        "DraftStudyCardKnowledgeNodeLink",
+        back_populates="draft_study_card",
+        cascade="all, delete-orphan",
+    )
+
+
+class DraftStudyCardSourceRange(Base):
+    __tablename__ = "draft_study_card_source_ranges"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    draft_study_card_id = Column(String, ForeignKey("draft_study_cards.id", ondelete="CASCADE"), nullable=False, index=True)
+    start_index = Column(Integer, nullable=False)
+    end_index = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    draft_study_card = relationship("DraftStudyCard", back_populates="source_ranges")
+
+
+class DraftQuestionCard(Base):
+    __tablename__ = "draft_question_cards"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    draft_id = Column(String, ForeignKey("note_group_generation_drafts.id", ondelete="CASCADE"), nullable=False, index=True)
+    type = Column(String, nullable=False)
+    prompt = Column(Text, nullable=False)
+    options_json = Column(Text, nullable=False)
+    correct_option_indices_json = Column(Text, nullable=False)
+    option_explanations_json = Column(Text)
+    study_card_refs_json = Column(Text, nullable=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    draft = relationship("NoteGroupGenerationDraft", back_populates="question_cards")
+
+
+class DraftTopic(Base):
+    __tablename__ = "draft_topics"
+    __table_args__ = (
+        UniqueConstraint("draft_id", "id", name="uq_draft_topics_draft_id_id"),
+        UniqueConstraint("draft_id", "relation_endpoint_id", name="uq_draft_topics_relation_endpoint"),
+        ForeignKeyConstraint(
+            ["draft_id", "module_id"],
+            ["note_group_generation_drafts.id", "note_group_generation_drafts.module_id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["draft_id", "parent_draft_topic_id"],
+            ["draft_topics.draft_id", "draft_topics.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["module_id", "existing_topic_id"],
+            ["topic_chips.module_id", "topic_chips.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["module_id", "parent_existing_topic_id"],
+            ["topic_chips.module_id", "topic_chips.id"],
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "parent_draft_topic_id IS NULL OR parent_existing_topic_id IS NULL",
+            name="ck_draft_topics_at_most_one_parent",
+        ),
+        CheckConstraint(
+            "existing_topic_id IS NULL OR relation_endpoint_id IS NULL",
+            name="ck_draft_topics_existing_alias_has_no_relation_endpoint",
+        ),
+        CheckConstraint(
+            "relation_endpoint_id IS NULL OR relation_endpoint_id = id",
+            name="ck_draft_topics_relation_endpoint_matches_id",
+        ),
+    )
+
+    id = Column(String, primary_key=True, default=_uuid)
+    draft_id = Column(String, nullable=False, index=True)
+    module_id = Column(String, nullable=False, index=True)
+    existing_topic_id = Column(String, nullable=True)
+    relation_endpoint_id = Column(String, nullable=True)
+    parent_draft_topic_id = Column(String, nullable=True)
+    parent_existing_topic_id = Column(String, nullable=True)
+    label = Column(String, nullable=False)
+    description = Column(Text)
+    sort_order = Column(Integer, nullable=False, default=0)
+    knowledge_node_status = Column(String, nullable=False, default="not_generated")
+    knowledge_node_review_reason = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    draft = relationship("NoteGroupGenerationDraft", back_populates="topics")
+    existing_topic = relationship("TopicChip", foreign_keys=[module_id, existing_topic_id], overlaps="draft,topics")
+    parent_existing_topic = relationship(
+        "TopicChip",
+        foreign_keys=[module_id, parent_existing_topic_id],
+        overlaps="draft,existing_topic,topics",
+    )
+    parent_draft_topic = relationship(
+        "DraftTopic",
+        remote_side=[id],
+        foreign_keys=[parent_draft_topic_id],
+        back_populates="child_draft_topics",
+    )
+    child_draft_topics = relationship(
+        "DraftTopic",
+        back_populates="parent_draft_topic",
+        foreign_keys=[parent_draft_topic_id],
+        order_by="DraftTopic.sort_order",
+        passive_deletes=True,
+    )
+    knowledge_nodes = relationship(
+        "DraftKnowledgeNode",
+        back_populates="draft_topic",
+        cascade="all, delete-orphan",
+        overlaps="draft,knowledge_nodes",
+    )
+
+
+class DraftKnowledgeNode(Base):
+    __tablename__ = "draft_knowledge_nodes"
+    __table_args__ = (
+        UniqueConstraint("draft_id", "id", name="uq_draft_knowledge_nodes_draft_id_id"),
+        CheckConstraint(
+            _exactly_one_not_null("draft_topic_id", "existing_topic_id"),
+            name="ck_draft_knowledge_nodes_exactly_one_topic",
+        ),
+        ForeignKeyConstraint(
+            ["draft_id", "module_id"],
+            ["note_group_generation_drafts.id", "note_group_generation_drafts.module_id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["draft_id", "draft_topic_id"],
+            ["draft_topics.draft_id", "draft_topics.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["module_id", "existing_topic_id"],
+            ["topic_chips.module_id", "topic_chips.id"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    id = Column(String, primary_key=True, default=_uuid)
+    draft_id = Column(String, nullable=False, index=True)
+    module_id = Column(String, nullable=False, index=True)
+    draft_topic_id = Column(String, nullable=True, index=True)
+    existing_topic_id = Column(String, nullable=True, index=True)
+    title = Column(String, nullable=False)
+    summary = Column(Text, nullable=False)
+    knowledge_type = Column(String)
+    importance = Column(String)
+    source_quote = Column(Text)
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    draft = relationship(
+        "NoteGroupGenerationDraft",
+        back_populates="knowledge_nodes",
+        overlaps="knowledge_nodes",
+    )
+    draft_topic = relationship(
+        "DraftTopic",
+        back_populates="knowledge_nodes",
+        overlaps="draft,knowledge_nodes",
+    )
+    existing_topic = relationship("TopicChip", foreign_keys=[module_id, existing_topic_id], overlaps="draft,knowledge_nodes")
+    study_card_links = relationship(
+        "DraftStudyCardKnowledgeNodeLink",
+        back_populates="draft_knowledge_node",
+        cascade="all, delete-orphan",
+        overlaps="knowledge_node_links",
+    )
+
+
+class DraftNoteGroupTopicLink(Base):
+    __tablename__ = "draft_note_group_topic_links"
+    __table_args__ = (
+        CheckConstraint(
+            _exactly_one_not_null("draft_topic_id", "existing_topic_id"),
+            name="ck_draft_note_group_topic_links_exactly_one_topic",
+        ),
+        ForeignKeyConstraint(
+            ["draft_id", "module_id"],
+            ["note_group_generation_drafts.id", "note_group_generation_drafts.module_id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["draft_id", "draft_topic_id"],
+            ["draft_topics.draft_id", "draft_topics.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["module_id", "existing_topic_id"],
+            ["topic_chips.module_id", "topic_chips.id"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    id = Column(String, primary_key=True, default=_uuid)
+    draft_id = Column(String, nullable=False, index=True)
+    module_id = Column(String, nullable=False, index=True)
+    draft_topic_id = Column(String, nullable=True, index=True)
+    existing_topic_id = Column(String, nullable=True, index=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+
+    draft = relationship("NoteGroupGenerationDraft", back_populates="note_group_topic_links")
+    draft_topic = relationship("DraftTopic", overlaps="draft,note_group_topic_links")
+    existing_topic = relationship(
+        "TopicChip",
+        foreign_keys=[module_id, existing_topic_id],
+        overlaps="draft,note_group_topic_links",
+    )
+
+
+class DraftStudyCardTopicLink(Base):
+    __tablename__ = "draft_study_card_topic_links"
+    __table_args__ = (
+        CheckConstraint(
+            _exactly_one_not_null("draft_topic_id", "existing_topic_id"),
+            name="ck_draft_study_card_topic_links_exactly_one_topic",
+        ),
+        ForeignKeyConstraint(
+            ["draft_id", "module_id"],
+            ["note_group_generation_drafts.id", "note_group_generation_drafts.module_id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["draft_id", "draft_study_card_id"],
+            ["draft_study_cards.draft_id", "draft_study_cards.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["draft_id", "draft_topic_id"],
+            ["draft_topics.draft_id", "draft_topics.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["module_id", "existing_topic_id"],
+            ["topic_chips.module_id", "topic_chips.id"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    id = Column(String, primary_key=True, default=_uuid)
+    draft_id = Column(String, nullable=False, index=True)
+    module_id = Column(String, nullable=False, index=True)
+    draft_study_card_id = Column(String, nullable=False, index=True)
+    draft_topic_id = Column(String, nullable=True, index=True)
+    existing_topic_id = Column(String, nullable=True, index=True)
+    role = Column(String, nullable=False, default="primary")
+
+    draft_study_card = relationship("DraftStudyCard", back_populates="topic_links")
+    draft_topic = relationship("DraftTopic", overlaps="draft_study_card,topic_links")
+    existing_topic = relationship("TopicChip", foreign_keys=[module_id, existing_topic_id])
+
+
+class DraftStudyCardKnowledgeNodeLink(Base):
+    __tablename__ = "draft_study_card_knowledge_node_links"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["draft_id", "draft_study_card_id"],
+            ["draft_study_cards.draft_id", "draft_study_cards.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["draft_id", "draft_knowledge_node_id"],
+            ["draft_knowledge_nodes.draft_id", "draft_knowledge_nodes.id"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    id = Column(String, primary_key=True, default=_uuid)
+    draft_id = Column(String, ForeignKey("note_group_generation_drafts.id", ondelete="CASCADE"), nullable=False, index=True)
+    draft_study_card_id = Column(String, nullable=False, index=True)
+    draft_knowledge_node_id = Column(String, nullable=False, index=True)
+    role = Column(String, nullable=False, default="primary")
+
+    draft_study_card = relationship(
+        "DraftStudyCard",
+        back_populates="knowledge_node_links",
+        overlaps="study_card_links",
+    )
+    draft_knowledge_node = relationship(
+        "DraftKnowledgeNode",
+        back_populates="study_card_links",
+        overlaps="draft_study_card,knowledge_node_links",
+    )
+
+
+class DraftMindMapRelation(Base):
+    __tablename__ = "draft_mind_map_relations"
+    __table_args__ = (
+        CheckConstraint(_check_values("relation_type", MIND_MAP_RELATION_TYPES), name="ck_draft_mind_map_relations_type"),
+        CheckConstraint(
+            "source_draft_topic_id IS NULL OR target_draft_topic_id IS NULL OR source_draft_topic_id != target_draft_topic_id",
+            name="ck_draft_mind_map_relations_no_self_draft_topic",
+        ),
+        CheckConstraint(
+            "source_existing_topic_id IS NULL OR target_existing_topic_id IS NULL OR source_existing_topic_id != target_existing_topic_id",
+            name="ck_draft_mind_map_relations_no_self_existing_topic",
+        ),
+        CheckConstraint(
+            "source_draft_knowledge_node_id IS NULL OR target_draft_knowledge_node_id IS NULL OR source_draft_knowledge_node_id != target_draft_knowledge_node_id",
+            name="ck_draft_mind_map_relations_no_self_knowledge_node",
+        ),
+        CheckConstraint(
+            _exactly_one_not_null(
+                "source_draft_topic_id",
+                "source_existing_topic_id",
+                "source_draft_knowledge_node_id",
+            ),
+            name="ck_draft_mind_map_relations_exactly_one_source",
+        ),
+        CheckConstraint(
+            _exactly_one_not_null(
+                "target_draft_topic_id",
+                "target_existing_topic_id",
+                "target_draft_knowledge_node_id",
+            ),
+            name="ck_draft_mind_map_relations_exactly_one_target",
+        ),
+        ForeignKeyConstraint(
+            ["draft_id", "module_id"],
+            ["note_group_generation_drafts.id", "note_group_generation_drafts.module_id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["draft_id", "source_draft_topic_id"],
+            ["draft_topics.draft_id", "draft_topics.relation_endpoint_id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["module_id", "source_existing_topic_id"],
+            ["topic_chips.module_id", "topic_chips.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["draft_id", "source_draft_knowledge_node_id"],
+            ["draft_knowledge_nodes.draft_id", "draft_knowledge_nodes.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["draft_id", "target_draft_topic_id"],
+            ["draft_topics.draft_id", "draft_topics.relation_endpoint_id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["module_id", "target_existing_topic_id"],
+            ["topic_chips.module_id", "topic_chips.id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["draft_id", "target_draft_knowledge_node_id"],
+            ["draft_knowledge_nodes.draft_id", "draft_knowledge_nodes.id"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    id = Column(String, primary_key=True, default=_uuid)
+    draft_id = Column(String, nullable=False, index=True)
+    module_id = Column(String, nullable=False, index=True)
+    source_draft_topic_id = Column(String, nullable=True, index=True)
+    source_existing_topic_id = Column(String, nullable=True, index=True)
+    source_draft_knowledge_node_id = Column(String, nullable=True, index=True)
+    target_draft_topic_id = Column(String, nullable=True, index=True)
+    target_existing_topic_id = Column(String, nullable=True, index=True)
+    target_draft_knowledge_node_id = Column(String, nullable=True, index=True)
+    relation_type = Column(String, nullable=False)
+    label = Column(String)
+    confidence = Column(Float)
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    draft = relationship("NoteGroupGenerationDraft", back_populates="mind_map_relations")
+    source_draft_topic = relationship(
+        "DraftTopic",
+        primaryjoin=lambda: and_(
+            DraftMindMapRelation.draft_id == DraftTopic.draft_id,
+            foreign(DraftMindMapRelation.source_draft_topic_id) == DraftTopic.relation_endpoint_id,
+        ),
+        foreign_keys=lambda: [DraftMindMapRelation.source_draft_topic_id],
+    )
+    source_existing_topic = relationship(
+        "TopicChip",
+        foreign_keys=[module_id, source_existing_topic_id],
+        overlaps="draft,mind_map_relations",
+    )
+    source_draft_knowledge_node = relationship("DraftKnowledgeNode", foreign_keys=[source_draft_knowledge_node_id])
+    target_draft_topic = relationship(
+        "DraftTopic",
+        primaryjoin=lambda: and_(
+            DraftMindMapRelation.draft_id == DraftTopic.draft_id,
+            foreign(DraftMindMapRelation.target_draft_topic_id) == DraftTopic.relation_endpoint_id,
+        ),
+        foreign_keys=lambda: [DraftMindMapRelation.target_draft_topic_id],
+    )
+    target_existing_topic = relationship(
+        "TopicChip",
+        foreign_keys=[module_id, target_existing_topic_id],
+        overlaps="draft,mind_map_relations,source_existing_topic",
+    )
+    target_draft_knowledge_node = relationship("DraftKnowledgeNode", foreign_keys=[target_draft_knowledge_node_id])
