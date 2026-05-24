@@ -101,4 +101,31 @@ describe("buildMindMapElements", () => {
       })
     ]);
   });
+
+  test("labels extracted topic concepts as concept areas", () => {
+    const graph = {
+      scope: "note_group",
+      module_id: "module-1",
+      note_group_id: "note-a",
+      note_groups: [{ id: "note-a", title: "Authentication" }],
+      nodes: [
+        {
+          id: "concept-1",
+          title: "Authentication Flow",
+          summary: "How users prove identity.",
+          importance: "core",
+          concept_type: "topic",
+          note_group_ids: ["note-a"],
+          study_card_count: 1
+        }
+      ],
+      edges: []
+    };
+
+    const { nodes } = buildMindMapElements(graph, { title: "Authentication" });
+    const conceptNode = nodes.find((node) => node.id === "concept-1");
+
+    expect(conceptNode.data.badges).toContain("concept area");
+    expect(conceptNode.data.badges).not.toContain("topic");
+  });
 });

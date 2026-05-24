@@ -19,15 +19,23 @@ const relationLabels = {
   related_to: "related"
 };
 
+const conceptTypeLabels = {
+  topic: "concept area"
+};
+
 function compactTitle(value, fallback) {
   const title = String(value || "").trim();
   return title || fallback;
 }
 
+function conceptTypeLabel(value) {
+  return conceptTypeLabels[value] || value.replace(/_/g, " ");
+}
+
 function conceptBadges(concept) {
   const badges = [];
   if (concept.concept_type) {
-    badges.push(concept.concept_type.replace(/_/g, " "));
+    badges.push(conceptTypeLabel(concept.concept_type));
   }
   if (concept.importance) {
     badges.push(concept.importance);
