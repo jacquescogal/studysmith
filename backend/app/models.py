@@ -704,9 +704,9 @@ class QuestionCardReviewEvent(Base):
     __tablename__ = "question_card_reviews"
 
     id = Column(String, primary_key=True, default=_uuid)
-    question_card_id = Column(String, ForeignKey("question_cards.id"), nullable=False, index=True)
+    question_card_id = Column(String, ForeignKey("question_cards.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    note_group_id = Column(String, ForeignKey("note_groups.id"), nullable=False, index=True)
+    note_group_id = Column(String, ForeignKey("note_groups.id", ondelete="CASCADE"), nullable=False, index=True)
     module_id = Column(String, ForeignKey("modules.id"), nullable=False, index=True)
     correct = Column(Boolean, nullable=False)
     response_time_ms = Column(Integer, nullable=False)
@@ -817,7 +817,7 @@ class Job(Base):
     id = Column(String, primary_key=True, default=_uuid)
     type = Column(String, nullable=False)
     status = Column(String, default="queued")
-    note_group_id = Column(String, ForeignKey("note_groups.id"))
+    note_group_id = Column(String, ForeignKey("note_groups.id", ondelete="SET NULL"))
     payload_json = Column(Text)
     error = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)

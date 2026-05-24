@@ -36,6 +36,7 @@ from app.models import (
     NoteGroupMindMapConcept,
     Job,
     QuestionCard,
+    QuestionCardReviewEvent,
     StudyCard,
     StudyCardMindMapConcept,
     Subject,
@@ -2682,6 +2683,62 @@ class MindMapRouteTests(unittest.TestCase):
             note_group = db.get(NoteGroup, "note-a")
             self.assertTrue(note_group.mind_map_stale)
             self.assertEqual(note_group.mind_map_status, "complete")
+        finally:
+            db.close()
+
+    def test_owner_can_delete_note_group_with_jobs_and_review_history(self):
+        db = self.SessionLocal()
+        try:
+            self.seed_graph_scope(db)
+            question = QuestionCard(
+                id="question-a",
+                note_group_id="note-a",
+                type="mcq",
+                prompt="Prompt",
+                options_json='["A", "B"]',
+                correct_option_indices_json="[1]",
+                option_explanations_json='["No", "Yes"]',
+                study_card_refs_json='["card-a"]',
+            )
+            review = QuestionCardReviewEvent(
+                id="review-a",
+                user_id="owner-1",
+                question_card_id="question-a",
+                note_group_id="note-a",
+                module_id="module-1",
+                correct=True,
+                response_time_ms=1200,
+                rating="easy",
+                answer_option_indices_json="[1]",
+                correct_option_indices_json="[1]",
+            )
+            active_job = Job(id="job-active", type=JOB_TYPE_MIND_MAP_GENERATION, note_group_id="note-a")
+            completed_job = Job(
+                id="job-completed",
+                type=JOB_TYPE_MIND_MAP_GENERATION,
+                note_group_id="note-a",
+                status="completed",
+            )
+            db.add_all([question, review, active_job, completed_job])
+            db.commit()
+            owner = db.get(User, "owner-1")
+        finally:
+            db.close()
+
+        client = self._client(user=owner)
+        response = client.delete("/note-groups/note-a")
+
+        self.assertEqual(response.status_code, 200)
+
+        db = self.SessionLocal()
+        try:
+            self.assertIsNone(db.get(NoteGroup, "note-a"))
+            self.assertEqual(db.query(QuestionCardReviewEvent).count(), 0)
+            jobs = {job.id: job for job in db.query(Job).order_by(Job.id.asc()).all()}
+            self.assertIsNone(jobs["job-active"].note_group_id)
+            self.assertEqual(jobs["job-active"].status, "cancelled")
+            self.assertIsNone(jobs["job-completed"].note_group_id)
+            self.assertEqual(jobs["job-completed"].status, "completed")
         finally:
             db.close()
 
