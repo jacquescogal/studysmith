@@ -2095,6 +2095,20 @@ def _mind_map_generation_job_by_id_for_update(db: Session, job_id: str) -> Job |
     )
 
 
+def _latest_mind_map_generation_job_for_update(db: Session, note_group_id: str) -> Job | None:
+    return (
+        db.query(Job)
+        .filter(
+            Job.note_group_id == note_group_id,
+            Job.type == JOB_TYPE_MIND_MAP_GENERATION,
+        )
+        .order_by(Job.created_at.desc(), Job.id.desc())
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+
+
 def _is_stale_mind_map_generation_job(job: Job) -> bool:
     if job.status != "running":
         return False
@@ -2102,6 +2116,45 @@ def _is_stale_mind_map_generation_job(job: Job) -> bool:
     if last_seen_at is None:
         return False
     return datetime.utcnow() - last_seen_at > MIND_MAP_RUNNING_JOB_TIMEOUT
+
+
+def _resolve_existing_mind_map_generation_job(
+    db: Session,
+    background_tasks: BackgroundTasks,
+    existing_job: Job | None,
+) -> Job | None:
+    if not existing_job:
+        return None
+    if existing_job.status == "queued":
+        background_tasks.add_task(run_mind_map_generation, existing_job.id)
+        return existing_job
+    if existing_job.status == "running":
+        if not _is_stale_mind_map_generation_job(existing_job):
+            return existing_job
+        existing_job.status = "failed"
+        existing_job.error = STALE_MIND_MAP_JOB_ERROR
+        db.commit()
+        return None
+    if existing_job.status == "completed":
+        return existing_job
+    return None
+
+
+def _queue_mind_map_generation_job(
+    db: Session,
+    background_tasks: BackgroundTasks,
+    note_group_id: str,
+) -> Job:
+    note_group = db.get(NoteGroup, note_group_id)
+    if not note_group:
+        raise HTTPException(status_code=404, detail="Note group not found")
+    job = Job(type=JOB_TYPE_MIND_MAP_GENERATION, note_group_id=note_group_id)
+    db.add(job)
+    note_group.mind_map_status = "queued"
+    db.commit()
+    db.refresh(job)
+    background_tasks.add_task(run_mind_map_generation, job.id)
+    return job
 
 
 @app.post("/note-groups/{note_group_id}/mind-map/generate", response_model=JobOut)
@@ -2118,37 +2171,19 @@ def generate_note_group_mind_map(
         if active_job
         else None
     )
-    if existing_job:
-        if existing_job.status == "queued":
-            background_tasks.add_task(run_mind_map_generation, existing_job.id)
-            return existing_job
-        if existing_job.status == "running":
-            if not _is_stale_mind_map_generation_job(existing_job):
-                return existing_job
-            existing_job.status = "failed"
-            existing_job.error = STALE_MIND_MAP_JOB_ERROR
-            db.commit()
-        if existing_job.status == "completed":
-            return existing_job
+    resolved_job = _resolve_existing_mind_map_generation_job(db, background_tasks, existing_job)
+    if resolved_job:
+        return resolved_job
 
-    job = Job(type=JOB_TYPE_MIND_MAP_GENERATION, note_group_id=note_group_id)
-    db.add(job)
-    note_group.mind_map_status = "queued"
     try:
-        db.commit()
+        return _queue_mind_map_generation_job(db, background_tasks, note_group_id)
     except IntegrityError:
         db.rollback()
-        existing_job = _active_mind_map_generation_job(db, note_group_id, for_update=True)
-        if existing_job:
-            if existing_job.status == "queued":
-                background_tasks.add_task(run_mind_map_generation, existing_job.id)
-            return existing_job
-        raise
-
-    db.refresh(job)
-
-    background_tasks.add_task(run_mind_map_generation, job.id)
-    return job
+        latest_job = _latest_mind_map_generation_job_for_update(db, note_group_id)
+        resolved_job = _resolve_existing_mind_map_generation_job(db, background_tasks, latest_job)
+        if resolved_job:
+            return resolved_job
+        return _queue_mind_map_generation_job(db, background_tasks, note_group_id)
 
 
 @app.get("/note-groups/{note_group_id}/mind-map", response_model=MindMapResponse)

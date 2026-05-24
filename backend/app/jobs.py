@@ -365,7 +365,11 @@ def run_mind_map_generation(job_id: str) -> None:
     try:
         claimed = (
             db.query(Job)
-            .filter(Job.id == job_id, Job.status == "queued")
+            .filter(
+                Job.id == job_id,
+                Job.type == JOB_TYPE_MIND_MAP_GENERATION,
+                Job.status == "queued",
+            )
             .update(
                 {
                     Job.status: "running",

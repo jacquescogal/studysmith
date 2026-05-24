@@ -2,7 +2,7 @@ import unittest
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.exc import IntegrityError
@@ -1275,6 +1275,29 @@ class MindMapJobTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_run_mind_map_generation_does_not_claim_non_mind_map_job(self):
+        db = self.SessionLocal()
+        try:
+            MindMapServiceTests.seed_graph_scope(self, db)
+            db.add(Job(id="job-auto", type="NOTE_GROUP_AUTO_GENERATION", note_group_id="note-a"))
+            db.commit()
+        finally:
+            db.close()
+
+        with patch("app.jobs.SessionLocal", self.SessionLocal), patch(
+            "app.jobs.generate_mind_map_candidate_graph",
+        ) as generate_graph:
+            run_mind_map_generation("job-auto")
+
+        db = self.SessionLocal()
+        try:
+            job = db.get(Job, "job-auto")
+
+            self.assertEqual(job.status, "queued")
+            generate_graph.assert_not_called()
+        finally:
+            db.close()
+
     def test_run_mind_map_generation_aborts_when_job_was_marked_failed_as_stale(self):
         db = self.SessionLocal()
         try:
@@ -2033,6 +2056,45 @@ class MindMapRouteTests(unittest.TestCase):
             self.assertEqual(len(jobs), 2)
             self.assertEqual(len(active_jobs), 1)
             self.assertEqual(active_jobs[0].id, response.json()["id"])
+        finally:
+            db.close()
+
+    def test_generation_integrity_conflict_returns_latest_completed_job(self):
+        import app.db as db_module
+
+        with patch.object(db_module, "engine", self.engine):
+            from app.main import generate_note_group_mind_map
+
+        db = self.SessionLocal()
+        try:
+            self.seed_graph_scope(db)
+            owner = db.get(User, "owner-1")
+            completed_job = Job(
+                id="job-completed",
+                type=JOB_TYPE_MIND_MAP_GENERATION,
+                status="completed",
+                note_group_id="note-a",
+            )
+            db.add(completed_job)
+            db.commit()
+
+            original_commit = db.commit
+            commit_calls = {"count": 0}
+
+            def fail_first_commit():
+                if commit_calls["count"] == 0:
+                    commit_calls["count"] += 1
+                    raise IntegrityError("insert job", {}, RuntimeError("active job conflict"))
+                original_commit()
+
+            background_tasks = BackgroundTasks()
+
+            with patch.object(db, "commit", side_effect=fail_first_commit):
+                returned_job = generate_note_group_mind_map("note-a", background_tasks, db, owner)
+
+            self.assertEqual(returned_job.id, "job-completed")
+            self.assertEqual(returned_job.status, "completed")
+            self.assertEqual(background_tasks.tasks, [])
         finally:
             db.close()
 
