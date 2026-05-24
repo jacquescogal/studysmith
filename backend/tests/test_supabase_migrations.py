@@ -47,3 +47,19 @@ def test_mind_map_generation_jobs_have_active_uniqueness_migration():
     assert "on public.jobs (note_group_id)" in sql
     assert "type = 'mind_map_generation'" in sql
     assert "status in ('queued', 'running')" in sql
+
+
+def test_mind_map_migration_repairs_existing_join_tables_with_module_id():
+    sql = _migration_sql().lower()
+
+    assert "alter table public.note_group_mind_map_concepts add column if not exists module_id varchar" in sql
+    assert "alter table public.study_card_mind_map_concepts add column if not exists note_group_id varchar" in sql
+    assert "alter table public.study_card_mind_map_concepts add column if not exists module_id varchar" in sql
+    assert "alter table public.mind_map_relations add column if not exists module_id varchar" in sql
+    assert "update public.note_group_mind_map_concepts ngmmc" in sql
+    assert "update public.study_card_mind_map_concepts scmmc\nset note_group_id = study_cards.note_group_id" in sql
+    assert "update public.study_card_mind_map_concepts scmmc" in sql
+    assert "update public.mind_map_relations mmr" in sql
+    assert "alter table public.mind_map_concepts\n      add constraint uq_mind_map_concepts_module_id" in sql
+    assert "alter table public.note_groups\n      add constraint uq_note_groups_module_id_id" in sql
+    assert "alter table public.study_cards\n      add constraint uq_study_cards_note_group_id_id" in sql
