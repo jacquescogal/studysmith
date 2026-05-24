@@ -2085,6 +2085,16 @@ def _active_mind_map_generation_job(db: Session, note_group_id: str, *, for_upda
     return query.first()
 
 
+def _mind_map_generation_job_by_id_for_update(db: Session, job_id: str) -> Job | None:
+    return (
+        db.query(Job)
+        .filter(Job.id == job_id, Job.type == JOB_TYPE_MIND_MAP_GENERATION)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+
+
 def _is_stale_mind_map_generation_job(job: Job) -> bool:
     if job.status != "running":
         return False
@@ -2102,10 +2112,17 @@ def generate_note_group_mind_map(
     current_user: User = Depends(require_user),
 ):
     note_group = require_note_group_edit(db, current_user, note_group_id)
-    existing_job = _active_mind_map_generation_job(db, note_group_id, for_update=True)
+    active_job = _active_mind_map_generation_job(db, note_group_id)
+    existing_job = (
+        _mind_map_generation_job_by_id_for_update(db, active_job.id)
+        if active_job
+        else None
+    )
     if existing_job:
         if existing_job.status == "queued":
             background_tasks.add_task(run_mind_map_generation, existing_job.id)
+            return existing_job
+        if existing_job.status == "completed":
             return existing_job
         if not _is_stale_mind_map_generation_job(existing_job):
             return existing_job

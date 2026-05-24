@@ -1925,6 +1925,61 @@ class MindMapRouteTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_generation_request_returns_job_that_completed_before_route_lock(self):
+        db = self.SessionLocal()
+        try:
+            self.seed_graph_scope(db)
+            owner = db.get(User, "owner-1")
+            db.add(
+                Job(
+                    id="job-running",
+                    type=JOB_TYPE_MIND_MAP_GENERATION,
+                    status="running",
+                    note_group_id="note-a",
+                    updated_at=datetime.utcnow() - timedelta(minutes=5),
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        def complete_after_active_lookup(route_db, note_group_id, **kwargs):
+            active_job = route_db.get(Job, "job-running")
+            completing_db = self.SessionLocal()
+            try:
+                completed_job = completing_db.get(Job, "job-running")
+                note_group = completing_db.get(NoteGroup, "note-a")
+                completed_job.status = "completed"
+                completed_job.error = None
+                note_group.mind_map_status = "complete"
+                note_group.mind_map_stale = False
+                note_group.mind_map_generated_at = datetime.utcnow()
+                completing_db.commit()
+            finally:
+                completing_db.close()
+            return active_job
+
+        client = self._client(user=owner)
+
+        with patch("app.main._active_mind_map_generation_job", side_effect=complete_after_active_lookup), patch(
+            "app.main.run_mind_map_generation"
+        ) as run_generation:
+            response = client.post("/note-groups/note-a/mind-map/generate")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["id"], "job-running")
+        self.assertEqual(response.json()["status"], "completed")
+        run_generation.assert_not_called()
+
+        db = self.SessionLocal()
+        try:
+            note_group = db.get(NoteGroup, "note-a")
+            jobs = db.query(Job).filter(Job.note_group_id == "note-a").all()
+            self.assertEqual(note_group.mind_map_status, "complete")
+            self.assertEqual([job.id for job in jobs], ["job-running"])
+        finally:
+            db.close()
+
     def test_stale_running_generation_job_is_failed_and_new_job_is_scheduled(self):
         db = self.SessionLocal()
         try:
