@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from sqlalchemy import create_engine, delete, event
 from sqlalchemy.exc import IntegrityError
@@ -8,7 +9,9 @@ from sqlalchemy.pool import StaticPool
 from app.db import Base
 from app.models import (
     JOB_STAGE_QUEUED,
+    JOB_STAGE_QUESTION_CARDS,
     JOB_STAGE_STUDY_CARDS,
+    JOB_STAGE_TITLE,
     DraftMindMapRelation,
     DraftNoteGroupTopicLink,
     DraftStudyCard,
@@ -25,6 +28,17 @@ from app.models import (
     User,
 )
 from app.schemas import JobLogOut, JobOut
+from app.generation_workflow import (
+    JOB_STAGE_SEQUENCE,
+    append_job_log,
+    delete_job_and_draft,
+    fail_job_stage,
+    initialize_job_workflow,
+    serialize_generation_workflow,
+    set_stage_progress,
+    start_job_stage,
+    succeed_job_stage,
+)
 
 
 class GenerationWorkflowModelTests(unittest.TestCase):
@@ -676,3 +690,207 @@ class GenerationWorkflowModelTests(unittest.TestCase):
         )
 
         self.assertEqual(log_out.metadata, {"count": 1})
+
+
+class GenerationWorkflowServiceTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+
+        @event.listens_for(self.engine, "connect")
+        def _set_sqlite_pragma(dbapi_connection, connection_record) -> None:
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
+        Base.metadata.create_all(bind=self.engine)
+        self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
+
+    def tearDown(self):
+        Base.metadata.drop_all(bind=self.engine)
+
+    def _create_generation_job(self, db, suffix: str) -> Job:
+        owner = User(
+            id=f"workflow-owner-{suffix}",
+            supabase_user_id=f"workflow-owner-sub-{suffix}",
+            email=f"workflow-owner-{suffix}@example.com",
+            app_role="creator",
+        )
+        subject = Subject(
+            id=f"workflow-subject-{suffix}",
+            title=f"Workflow Subject {suffix}",
+            owner_user_id=owner.id,
+        )
+        module = Module(
+            id=f"workflow-module-{suffix}",
+            subject_id=subject.id,
+            title=f"Workflow Module {suffix}",
+        )
+        note_group = NoteGroup(
+            id=f"workflow-note-group-{suffix}",
+            module_id=module.id,
+            title=f"Workflow Note Group {suffix}",
+            source="source",
+            raw_text="raw",
+            generation_status="queued",
+        )
+        job = Job(
+            id=f"workflow-job-{suffix}",
+            type="NOTE_GROUP_GENERATION",
+            status="queued",
+            note_group_id=note_group.id,
+        )
+        db.add_all([owner, subject, module, note_group, job])
+        db.commit()
+        return job
+
+    def test_initialize_start_succeed_and_log_job_stage(self):
+        db = self.SessionLocal()
+        try:
+            job = self._create_generation_job(db, "happy-path")
+
+            initialize_job_workflow(db, job, "raw text", "unique-id", "extra instructions")
+            start_job_stage(db, job, JOB_STAGE_TITLE)
+            append_job_log(db, job, JOB_STAGE_TITLE, "Title draft generated", {"count": 1})
+            succeed_job_stage(db, job, JOB_STAGE_TITLE, message="Title approved")
+            db.commit()
+
+            workflow = serialize_generation_workflow(db, job)
+            title_stage = next(stage for stage in workflow["stages"] if stage["stage"] == JOB_STAGE_TITLE)
+            log_messages = [log["message"] for log in workflow["logs"]]
+
+            self.assertEqual(title_stage["status"], "succeeded")
+            self.assertIn("Title draft generated", log_messages)
+            self.assertEqual(workflow["current_stage"], JOB_STAGE_TITLE)
+            self.assertEqual(workflow["job"]["current_stage"], JOB_STAGE_TITLE)
+            self.assertEqual(workflow["job"]["stage_status"], "succeeded")
+            self.assertEqual(job.generation_draft.current_stage, JOB_STAGE_TITLE)
+            self.assertEqual(workflow["logs"][2]["metadata"], {"count": 1})
+        finally:
+            db.close()
+
+    def test_fail_job_stage_sets_job_error_and_status(self):
+        db = self.SessionLocal()
+        try:
+            job = self._create_generation_job(db, "fail")
+            initialize_job_workflow(db, job, "raw text", "unique-id", None)
+            start_job_stage(db, job, JOB_STAGE_QUESTION_CARDS)
+
+            fail_job_stage(db, job, JOB_STAGE_QUESTION_CARDS, "Question generation failed")
+            db.commit()
+
+            failed_stage = (
+                db.query(JobStage)
+                .filter(JobStage.job_id == job.id, JobStage.stage == JOB_STAGE_QUESTION_CARDS)
+                .one()
+            )
+            self.assertEqual(job.status, "failed")
+            self.assertEqual(job.error, "Question generation failed")
+            self.assertEqual(failed_stage.status, "failed")
+            self.assertEqual(failed_stage.error, "Question generation failed")
+        finally:
+            db.close()
+
+    def test_initialize_is_idempotent(self):
+        db = self.SessionLocal()
+        try:
+            job = self._create_generation_job(db, "idempotent")
+
+            initialize_job_workflow(db, job, "raw text", "unique-id", None)
+            initialize_job_workflow(db, job, "raw text", "unique-id", None)
+            db.commit()
+
+            self.assertEqual(db.query(NoteGroupGenerationDraft).filter_by(job_id=job.id).count(), 1)
+            self.assertEqual(db.query(JobStage).filter_by(job_id=job.id).count(), len(JOB_STAGE_SEQUENCE))
+            self.assertEqual(db.query(JobLog).filter_by(job_id=job.id).count(), 1)
+        finally:
+            db.close()
+
+    def test_initialize_updates_preloaded_empty_draft_relationship(self):
+        db = self.SessionLocal()
+        try:
+            job = self._create_generation_job(db, "preloaded-draft")
+            self.assertIsNone(job.generation_draft)
+
+            initialize_job_workflow(db, job, "raw text", "unique-id", None)
+            start_job_stage(db, job, JOB_STAGE_TITLE)
+            db.commit()
+
+            draft = db.query(NoteGroupGenerationDraft).filter_by(job_id=job.id).one()
+            workflow = serialize_generation_workflow(db, job)
+
+            self.assertEqual(draft.current_stage, JOB_STAGE_TITLE)
+            self.assertEqual(job.generation_draft.current_stage, JOB_STAGE_TITLE)
+            self.assertEqual(workflow["current_stage"], JOB_STAGE_TITLE)
+        finally:
+            db.close()
+
+    def test_set_stage_progress_updates_progress_and_log(self):
+        db = self.SessionLocal()
+        try:
+            job = self._create_generation_job(db, "progress")
+            initialize_job_workflow(db, job, "raw text", "unique-id", None)
+
+            set_stage_progress(db, job, JOB_STAGE_STUDY_CARDS, 3, 10, message="Created 3 Study Cards")
+            db.commit()
+
+            stage = (
+                db.query(JobStage)
+                .filter(JobStage.job_id == job.id, JobStage.stage == JOB_STAGE_STUDY_CARDS)
+                .one()
+            )
+            messages = [log.message for log in db.query(JobLog).filter_by(job_id=job.id).all()]
+
+            self.assertEqual(stage.progress_current, 3)
+            self.assertEqual(stage.progress_total, 10)
+            self.assertIn("Created 3 Study Cards", messages)
+        finally:
+            db.close()
+
+    def test_generation_events_publish_only_after_commit(self):
+        db = self.SessionLocal()
+        try:
+            job = self._create_generation_job(db, "event-commit")
+            published_events = []
+
+            with patch("app.generation_events.generation_event_bus.publish", published_events.append):
+                initialize_job_workflow(db, job, "raw text", "unique-id", None)
+                self.assertEqual(published_events, [])
+
+                db.rollback()
+                self.assertEqual(published_events, [])
+
+                initialize_job_workflow(db, job, "raw text", "unique-id", None)
+                start_job_stage(db, job, JOB_STAGE_TITLE)
+                self.assertEqual(published_events, [])
+
+                db.commit()
+
+            self.assertEqual([event.event for event in published_events], ["workflow_initialized", "stage_started"])
+            self.assertTrue(all(event.module_id == job.note_group.module_id for event in published_events))
+        finally:
+            db.close()
+
+    def test_delete_job_and_draft_cascades_stages_logs_draft(self):
+        db = self.SessionLocal()
+        try:
+            job = self._create_generation_job(db, "delete")
+            job_id = job.id
+            note_group_id = job.note_group_id
+            initialize_job_workflow(db, job, "raw text", "unique-id", None)
+            append_job_log(db, job, JOB_STAGE_TITLE, "Generated title")
+            db.commit()
+
+            delete_job_and_draft(db, job)
+            db.commit()
+
+            self.assertIsNone(db.get(Job, job_id))
+            self.assertEqual(db.query(NoteGroupGenerationDraft).filter_by(job_id=job_id).count(), 0)
+            self.assertEqual(db.query(JobStage).filter_by(job_id=job_id).count(), 0)
+            self.assertEqual(db.query(JobLog).filter_by(job_id=job_id).count(), 0)
+            self.assertIsNotNone(db.get(NoteGroup, note_group_id))
+        finally:
+            db.close()
