@@ -3,6 +3,9 @@ alter table public.note_groups
   add column if not exists mind_map_stale boolean not null default false,
   add column if not exists mind_map_generated_at timestamp without time zone;
 
+alter table public.note_groups
+  add constraint uq_note_groups_module_id_id unique (module_id, id);
+
 create table if not exists public.mind_map_concepts (
   id varchar not null,
   module_id varchar not null,
@@ -40,6 +43,7 @@ create table if not exists public.mind_map_relations (
   foreign key(module_id) references public.modules (id) on delete cascade,
   constraint fk_mind_map_relations_source_concept_module foreign key(module_id, source_concept_id) references public.mind_map_concepts (module_id, id) on delete cascade,
   constraint fk_mind_map_relations_target_concept_module foreign key(module_id, target_concept_id) references public.mind_map_concepts (module_id, id) on delete cascade,
+  constraint fk_mind_map_relations_source_note_group_module foreign key(module_id, source_note_group_id) references public.note_groups (module_id, id) on delete cascade,
   foreign key(source_concept_id) references public.mind_map_concepts (id) on delete cascade,
   foreign key(target_concept_id) references public.mind_map_concepts (id) on delete cascade,
   foreign key(source_note_group_id) references public.note_groups (id) on delete cascade
@@ -72,6 +76,7 @@ create index if not exists ix_mind_map_relations_target_concept_id on public.min
 create index if not exists ix_mind_map_relations_source_note_group_id on public.mind_map_relations (source_note_group_id);
 create index if not exists ix_mind_map_relations_module_source_concept_id on public.mind_map_relations (module_id, source_concept_id);
 create index if not exists ix_mind_map_relations_module_target_concept_id on public.mind_map_relations (module_id, target_concept_id);
+create index if not exists ix_mind_map_relations_module_source_note_group_id on public.mind_map_relations (module_id, source_note_group_id);
 create index if not exists ix_study_card_mind_map_concepts_concept_id on public.study_card_mind_map_concepts (concept_id);
 create index if not exists ix_note_group_mind_map_concepts_concept_id on public.note_group_mind_map_concepts (concept_id);
 

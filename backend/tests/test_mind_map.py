@@ -304,3 +304,60 @@ class MindMapModelTests(unittest.TestCase):
                     db.rollback()
         finally:
             db.close()
+
+    def test_relation_rejects_source_note_group_from_other_module_locally(self):
+        db = self.SessionLocal()
+        try:
+            owner = self._owner()
+            subject = Subject(id="subject-1", title="Subject", owner_user_id="owner-1")
+            source_module = Module(id="module-1", subject_id="subject-1", title="Source Module")
+            other_module = Module(id="module-2", subject_id="subject-1", title="Other Module")
+            source_note_group = NoteGroup(id="note-group-1", module_id="module-1", raw_text="raw")
+            other_note_group = NoteGroup(id="note-group-2", module_id="module-2", raw_text="raw")
+            source_concept = MindMapConcept(
+                id="concept-1",
+                module_id="module-1",
+                slug="source_concept",
+                title="Source Concept",
+                summary="Source concept summary.",
+                concept_type="topic",
+                importance="core",
+            )
+            target_concept = MindMapConcept(
+                id="concept-2",
+                module_id="module-1",
+                slug="target_concept",
+                title="Target Concept",
+                summary="Target concept summary.",
+                concept_type="topic",
+                importance="core",
+            )
+            db.add_all(
+                [
+                    owner,
+                    subject,
+                    source_module,
+                    other_module,
+                    source_note_group,
+                    other_note_group,
+                    source_concept,
+                    target_concept,
+                ]
+            )
+            db.commit()
+
+            relation = MindMapRelation(
+                id="relation-note-group-mismatch",
+                module_id="module-1",
+                source_concept_id="concept-1",
+                target_concept_id="concept-2",
+                relation_type="related_to",
+                source_note_group_id="note-group-2",
+            )
+
+            db.add(relation)
+            with self.assertRaises(IntegrityError):
+                db.commit()
+            db.rollback()
+        finally:
+            db.close()
