@@ -1984,7 +1984,6 @@ def _topic_allowed_study_ids(db: Session, topic: TopicChip) -> list[str]:
             study_card_topic_chips.c.chip_id == topic.id,
         )
         .order_by(StudyCard.created_at.asc())
-        .distinct()
         .all()
     )
     return [row[0] for row in rows]

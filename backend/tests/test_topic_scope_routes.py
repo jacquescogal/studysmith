@@ -1,7 +1,8 @@
 import unittest
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -114,6 +115,31 @@ class TopicScopeRoutesTests(unittest.TestCase):
         self.assertEqual(timeline_response["question_count"], 2)
         self.assertEqual(timeline_response["stale_count"], 1)
         self.assertEqual(timeline_response["timeline"]["due"], 1)
+
+    def test_topic_allowed_study_query_avoids_postgres_distinct_order_by_conflict(self):
+        import app.db as db_module
+
+        with patch.object(db_module, "engine", self.engine):
+            from app.main import _topic_allowed_study_ids
+
+        db = self.seed_topic_scope()
+        captured_sql = []
+
+        def capture_sql(conn, cursor, statement, parameters, context, executemany):
+            if "study_card_topic_chips" in statement:
+                captured_sql.append(statement.lower())
+
+        event.listen(self.engine, "before_cursor_execute", capture_sql)
+        try:
+            topic = db.get(TopicChip, "topic-1")
+            study_ids = _topic_allowed_study_ids(db, topic)
+        finally:
+            event.remove(self.engine, "before_cursor_execute", capture_sql)
+            db.close()
+
+        self.assertEqual(study_ids, ["study-a", "study-b"])
+        self.assertTrue(captured_sql)
+        self.assertNotIn("select distinct study_cards.id", captured_sql[-1])
 
     def test_delete_topic_removes_associations_without_deleting_cards(self):
         from app.main import delete_topic
