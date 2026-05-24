@@ -1980,6 +1980,62 @@ class MindMapRouteTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_generation_request_replaces_job_that_failed_before_route_lock(self):
+        db = self.SessionLocal()
+        try:
+            self.seed_graph_scope(db)
+            owner = db.get(User, "owner-1")
+            db.add(
+                Job(
+                    id="job-running",
+                    type=JOB_TYPE_MIND_MAP_GENERATION,
+                    status="running",
+                    note_group_id="note-a",
+                    updated_at=datetime.utcnow() - timedelta(minutes=5),
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        def fail_after_active_lookup(route_db, note_group_id, **kwargs):
+            active_job = route_db.get(Job, "job-running")
+            failing_db = self.SessionLocal()
+            try:
+                failed_job = failing_db.get(Job, "job-running")
+                failed_job.status = "failed"
+                failed_job.error = "LLM failed"
+                failing_db.commit()
+            finally:
+                failing_db.close()
+            return active_job
+
+        client = self._client(user=owner)
+
+        with patch("app.main._active_mind_map_generation_job", side_effect=fail_after_active_lookup), patch(
+            "app.main.run_mind_map_generation"
+        ) as run_generation:
+            response = client.post("/note-groups/note-a/mind-map/generate")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotEqual(response.json()["id"], "job-running")
+        self.assertEqual(response.json()["status"], "queued")
+        run_generation.assert_called_once_with(response.json()["id"])
+
+        db = self.SessionLocal()
+        try:
+            failed_job = db.get(Job, "job-running")
+            jobs = db.query(Job).filter(Job.note_group_id == "note-a").order_by(Job.id.asc()).all()
+            active_jobs = [job for job in jobs if job.status in {"queued", "running"}]
+
+            self.assertEqual(failed_job.status, "failed")
+            self.assertEqual(failed_job.error, "LLM failed")
+            self.assertEqual(len(jobs), 2)
+            self.assertEqual(len(active_jobs), 1)
+            self.assertEqual(active_jobs[0].id, response.json()["id"])
+        finally:
+            db.close()
+
     def test_stale_running_generation_job_is_failed_and_new_job_is_scheduled(self):
         db = self.SessionLocal()
         try:
