@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.db import SessionLocal
 from app.fsrs_utils import initialize_question_card
-from app.mind_map import regenerate_note_group_mind_map, reset_note_group_mind_map
+from app.mind_map import regenerate_note_group_mind_map
 
 from app.models import (
     Job,
@@ -26,7 +26,6 @@ from app.openai_client import (
     generate_note_group_title_suggestions,
     generate_question_cards,
     generate_study_cards_with_context,
-    suggest_topic_chips,
 )
 from app.source_ranges import find_evidence_ranges
 from app.text_formatter import build_formatted_sections, sections_to_markdown
@@ -551,73 +550,17 @@ def run_auto_note_group_generation(job_id: str) -> None:
             note_group.suggested_titles_json = json.dumps(suggestions[:3])
         _raise_if_cancelled(db, job)
 
-        chips_in_module = (
-            db.query(TopicChip).filter(TopicChip.module_id == module.id).all()
-        )
-        attach_ids: list[str] = []
-        new_chips: list[str] = []
-        try:
-            module_chip_pool = [{"chipId": chip.id, "label": chip.label} for chip in chips_in_module]
-            suggestion = suggest_topic_chips(
-                module_chip_pool,
-                raw_text,
-                module_goal=module.goal,
-                module_scope=module.scope,
-                subject_title=subject.title,
-                subject_goal=subject.goal,
-                subject_scope=subject.scope,
-            )
-            attach_ids = [
-                chip_id
-                for chip_id in suggestion.get("attach_chip_ids", [])
-                if any(chip.id == chip_id for chip in chips_in_module)
-            ]
-            new_chips = [
-                label.strip()
-                for label in suggestion.get("new_chips", [])
-                if isinstance(label, str) and label.strip()
-            ]
-        except Exception:
-            attach_ids = []
-            new_chips = []
-
-        chip_by_id = {chip.id: chip for chip in chips_in_module}
-        chip_by_label = {chip.label.strip().lower(): chip for chip in chips_in_module}
-        selected_chips: list[TopicChip] = []
-        for chip_id in attach_ids:
-            chip = chip_by_id.get(chip_id)
-            if chip and chip not in selected_chips:
-                selected_chips.append(chip)
-        for label in new_chips:
-            normalized = label.strip()
-            if not normalized:
-                continue
-            key = normalized.lower()
-            chip = chip_by_label.get(key)
-            if not chip:
-                chip = TopicChip(module_id=module.id, label=normalized)
-                db.add(chip)
-                db.flush()
-                chip_by_label[key] = chip
-            if chip not in selected_chips:
-                selected_chips.append(chip)
-        note_group.topic_chips = selected_chips
-        db.commit()
-        _raise_if_cancelled(db, job)
-
         cleaned_text_markdown = generate_cleaned_text_markdown(raw_text)
         note_group.cleaned_text_markdown = cleaned_text_markdown
         db.commit()
         _raise_if_cancelled(db, job)
 
-        chip_labels = [chip.label for chip in selected_chips]
         _raise_if_cancelled(db, job)
         study_card_payloads = generate_study_cards_with_context(
             module_title=module.title,
             module_description=module.description,
             note_group_title=note_group.title or "",
             raw_text=cleaned_text_markdown,
-            chip_labels=chip_labels,
             additional_instructions=additional_instructions,
             module_goal=module.goal,
             module_scope=module.scope,
@@ -631,7 +574,6 @@ def run_auto_note_group_generation(job_id: str) -> None:
 
         study_cards: list[StudyCard] = []
         card_payload_pairs = []
-        chip_label_map = {chip.label.strip().lower(): chip for chip in selected_chips}
         for payload in study_card_payloads:
             content = (payload.get("content") or "").strip()
             if not content:
@@ -642,14 +584,6 @@ def run_auto_note_group_generation(job_id: str) -> None:
                 title=card_title,
                 content=content,
             )
-            raw_chips = payload.get("topic_chips") or []
-            if isinstance(raw_chips, list):
-                for chip_label in raw_chips:
-                    if not isinstance(chip_label, str):
-                        continue
-                    chip = chip_label_map.get(chip_label.strip().lower())
-                    if chip and chip not in card.topic_chips:
-                        card.topic_chips.append(chip)
             db.add(card)
             study_cards.append(card)
             card_payload_pairs.append((card, payload))
@@ -745,7 +679,60 @@ def run_auto_note_group_generation(job_id: str) -> None:
         note_group = db.get(NoteGroup, note_group.id)
         if note_group:
             note_group.generation_status = "complete"
-            reset_note_group_mind_map(db, note_group.id)
+            mind_map_study_cards = (
+                db.query(StudyCard)
+                .options(selectinload(StudyCard.topic_chips))
+                .filter(StudyCard.note_group_id == note_group.id)
+                .order_by(StudyCard.created_at.asc(), StudyCard.id.asc())
+                .all()
+            )
+            existing_concepts = (
+                db.query(MindMapConcept)
+                .filter(MindMapConcept.module_id == module.id)
+                .order_by(MindMapConcept.title.asc(), MindMapConcept.id.asc())
+                .all()
+            )
+            existing_topics = (
+                db.query(TopicChip)
+                .filter(TopicChip.module_id == module.id)
+                .order_by(TopicChip.label.asc(), TopicChip.id.asc())
+                .all()
+            )
+            candidate_payload = generate_mind_map_candidate_graph(
+                module_title=module.title,
+                note_group_title=note_group.title or "",
+                study_cards=[
+                    {
+                        "study_card_id": card.id,
+                        "title": card.title,
+                        "content": card.content,
+                        "topic_labels": sorted(chip.label for chip in card.topic_chips),
+                    }
+                    for card in mind_map_study_cards
+                ],
+                existing_concepts=[
+                    {
+                        "concept_id": concept.id,
+                        "title": concept.title,
+                        "summary": concept.summary,
+                        "concept_type": concept.concept_type,
+                        "knowledge_type": concept.knowledge_type,
+                        "importance": concept.importance,
+                        "topic_id": concept.topic_id,
+                    }
+                    for concept in existing_concepts
+                ],
+                existing_topics=[
+                    {
+                        "topic_id": topic.id,
+                        "title": topic.label,
+                        "summary": topic.description or "",
+                        "parent_topic_id": topic.parent_topic_id,
+                    }
+                    for topic in existing_topics
+                ],
+            )
+            regenerate_note_group_mind_map(db, note_group.id, candidate_payload)
         job = db.get(Job, job_id)
         if job:
             job.status = "completed"

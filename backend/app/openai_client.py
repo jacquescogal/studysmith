@@ -48,14 +48,6 @@ TITLE_SYSTEM_PROMPT = (
     "Generate concise, descriptive chapter-style titles reflecting the input content."
 )
 
-TOPIC_CHIP_SYSTEM_PROMPT = (
-    "Assign relevant topic chips from the module pool. "
-    "Propose new chips only when an important concept is missing AND it fits the module's learning goal and scope. "
-    "Each chip label must be 1-2 words and at most 20 characters. "
-    "Prefer broad, reusable terms over specific or verbose ones. "
-    "Do not create chips for content outside the module scope."
-)
-
 SUBJECT_INTENT_SYSTEM_PROMPT = (
     "You are helping a student define a study subject. "
     "Through friendly conversation, extract: "
@@ -240,7 +232,6 @@ def generate_study_cards_with_context(
     module_description: Optional[str],
     note_group_title: str,
     raw_text: str,
-    chip_labels: List[str],
     additional_instructions: Optional[str] = None,
     module_goal: Optional[str] = None,
     module_scope: Optional[str] = None,
@@ -261,11 +252,10 @@ def generate_study_cards_with_context(
         f"{intent_block}"
         f"{module_context}\n"
         f"Note group title: {note_group_title}\n"
-        f"Topic chips: {chip_labels}\n"
         f"{instruction_block}"
         f"Cleaned markdown source text: {raw_text}\n"
         "Output JSON as { \"study_cards\": [ { \"title\": \"...\", \"content\": \"...\", "
-        "\"topic_chips\": [\"...\"], \"evidence_snippets\": [\"...\"] } ] }.\n"
+        "\"evidence_snippets\": [\"...\"] } ] }.\n"
         "Each evidence_snippets value must be an exact copied substring from the cleaned markdown source text."
     )
 
@@ -375,32 +365,6 @@ def generate_note_group_title_suggestions(module_title: str, raw_text: str) -> L
     if len(cleaned) < 3:
         raise ValueError("OpenAI response did not include three titles")
     return cleaned[:3]
-
-
-def suggest_topic_chips(
-    module_chip_pool: List[dict],
-    content: str,
-    module_goal: Optional[str] = None,
-    module_scope: Optional[str] = None,
-    subject_title: Optional[str] = None,
-    subject_goal: Optional[str] = None,
-    subject_scope: Optional[str] = None,
-) -> dict:
-    intent_block = _build_intent_block(subject_title, subject_goal, subject_scope, module_goal, module_scope)
-    user_prompt = (
-        f"{intent_block}"
-        f"Module chip pool: {module_chip_pool}\n"
-        f"Content: {content}\n"
-        "Output JSON as { \"attach_chip_ids\": [\"...\"], \"new_chips\": [\"...\"] }."
-    )
-    payload = _weak_json(TOPIC_CHIP_SYSTEM_PROMPT, user_prompt)
-    attach_chip_ids = payload.get("attach_chip_ids", [])
-    new_chips = payload.get("new_chips", [])
-    if not isinstance(attach_chip_ids, list):
-        attach_chip_ids = []
-    if not isinstance(new_chips, list):
-        new_chips = []
-    return {"attach_chip_ids": attach_chip_ids, "new_chips": new_chips}
 
 
 def generate_formatted_sections(raw_text: str, study_cards: List[dict]) -> List[dict]:

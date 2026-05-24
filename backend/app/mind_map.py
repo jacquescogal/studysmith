@@ -652,6 +652,20 @@ def _regenerate_note_group_topic_tree_mind_map(
     for topic_data in validated["topics"]:
         topic_ids_for_note_group.add(resolved_topics[topic_data["temp_id"]].id)
 
+    if topic_ids_for_note_group:
+        existing_topic_knowledge_nodes = (
+            db.query(MindMapConcept)
+            .filter(
+                MindMapConcept.module_id == note_group.module_id,
+                MindMapConcept.topic_id.in_(topic_ids_for_note_group),
+            )
+            .all()
+        )
+        for concept in existing_topic_knowledge_nodes:
+            graph_concept_ids.add(concept.id)
+            if concept.knowledge_type == "definition" and concept.topic_id:
+                definition_topic_ids.add(concept.topic_id)
+
     for topic_id in sorted(topic_ids_for_note_group):
         topic = resolved_topics[topic_id]
         if topic_id in definition_topic_ids:
