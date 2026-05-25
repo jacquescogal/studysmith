@@ -827,6 +827,7 @@ def resolve_note_group_app_route(
     note_group = db.get(NoteGroup, note_group_record.note_group_id)
     if not note_group or note_group.module_id != module_record.module_id:
         _not_found_route()
+    require_note_group_read(db, current_user, note_group.id)
     return {
         "subject_id": subject_record.subject_id,
         "subject_short_code": subject_record.short_code,

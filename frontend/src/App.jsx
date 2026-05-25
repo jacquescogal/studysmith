@@ -555,6 +555,11 @@ export default function App() {
   const canManageSelectedSubject = Boolean(
     canMaintainSubject(selectedSubject)
   );
+  const isSelectedSubjectPermissionHydrating = Boolean(
+    auth.isAuthenticated &&
+      selectedSubjectId &&
+      (!selectedSubject || (!currentUserProfile && !currentUserError))
+  );
 
   useEffect(() => {
     if (!selectedSubjectId || subjects.some((subject) => subject.id === selectedSubjectId)) {
@@ -601,9 +606,9 @@ export default function App() {
   const isWaitingForSelectedNoteGroupWorkflow =
     Boolean(selectedNoteGroupId) &&
     !selectedTopicId &&
-    canManageSelectedSubject &&
     selectedModuleId &&
-    !moduleGenerationWorkflowChecked;
+    (isSelectedSubjectPermissionHydrating ||
+      (canManageSelectedSubject && !moduleGenerationWorkflowChecked));
   const shouldHoldSelectedNoteGroupContent =
     isSelectedNoteGroupGenerating || isWaitingForSelectedNoteGroupWorkflow;
   const selectedSubjectCode = selectedSubject?.short_code || "";
@@ -1570,12 +1575,34 @@ export default function App() {
   }, [routeTopicId, selectedModuleId, selectedTopicId, topicChips]);
 
   useEffect(() => {
-    if (!selectedModuleId || !canManageSelectedSubject) {
+    if (!selectedModuleId) {
       moduleGenerationWorkflowRef.current = null;
       setModuleGenerationWorkflow(null);
       setModuleGenerationWorkflowError("");
       setModuleGenerationWorkflowConnection("idle");
       setModuleGenerationWorkflowChecked(false);
+      setGenerationWorkflowsByJobId({});
+      setGenerationWorkflowsByNoteGroupId({});
+      setAutoJobsByNoteGroupId({});
+      return;
+    }
+    if (isSelectedSubjectPermissionHydrating) {
+      moduleGenerationWorkflowRef.current = null;
+      setModuleGenerationWorkflow(null);
+      setModuleGenerationWorkflowError("");
+      setModuleGenerationWorkflowConnection("idle");
+      setModuleGenerationWorkflowChecked(false);
+      setGenerationWorkflowsByJobId({});
+      setGenerationWorkflowsByNoteGroupId({});
+      setAutoJobsByNoteGroupId({});
+      return;
+    }
+    if (!canManageSelectedSubject) {
+      moduleGenerationWorkflowRef.current = null;
+      setModuleGenerationWorkflow(null);
+      setModuleGenerationWorkflowError("");
+      setModuleGenerationWorkflowConnection("idle");
+      setModuleGenerationWorkflowChecked(true);
       setGenerationWorkflowsByJobId({});
       setGenerationWorkflowsByNoteGroupId({});
       setAutoJobsByNoteGroupId({});
@@ -1651,7 +1678,7 @@ export default function App() {
       cancelled = true;
       controller.abort();
     };
-  }, [selectedModuleId, canManageSelectedSubject]);
+  }, [selectedModuleId, canManageSelectedSubject, isSelectedSubjectPermissionHydrating]);
 
   useEffect(() => {
     if (!selectedNoteGroupId && !selectedTopicId) {
