@@ -18,6 +18,7 @@ import { AdminPanel } from "@/features/admin/AdminPanel";
 import { ModuleOverview } from "@/features/modules/ModuleOverview";
 import { MindMapPanel } from "@/features/mind-map/MindMapPanel";
 import { NoteGroupCreate } from "@/features/note-groups/NoteGroupCreate";
+import { NoteGroupGenerationWorkflow } from "@/features/note-groups/NoteGroupGenerationWorkflow";
 import { NoteGroupOverview } from "@/features/note-groups/NoteGroupOverview";
 import { NoteGroupProgress } from "@/features/note-groups/NoteGroupProgress";
 import { NoteGroupViewCards } from "@/features/note-groups/NoteGroupViewCards";
@@ -61,6 +62,7 @@ import {
   createSubject,
   createTopicChip,
   deleteModule,
+  deleteJob,
   deleteNoteGroup,
   deleteQuestionCard,
   deleteStudyCard,
@@ -189,6 +191,7 @@ const showFetchToast = (error, fallback) => {
 
 const AUTO_WORKFLOW_ACTIVE_STATUSES = new Set(["queued", "running"]);
 const AUTO_WORKFLOW_TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const AUTO_WORKFLOW_VISIBLE_STATUSES = new Set(["queued", "running", "failed", "cancelled"]);
 const WORKFLOW_STREAM_RECONNECT_DELAYS_MS = [1000, 2000, 5000];
 const WORKFLOW_DELETE_REQUESTED_ERROR = "Generation deletion requested";
 
@@ -196,6 +199,43 @@ const normalizeGenerationWorkflowSnapshot = (snapshot) => ({
   module_id: snapshot?.module_id || "",
   jobs: Array.isArray(snapshot?.jobs) ? snapshot.jobs : []
 });
+
+const generationWorkflowTitle = (workflow) =>
+  workflow?.draft_title ||
+  workflow?.note_group?.title ||
+  (workflow?.job?.id ? `Generation ${workflow.job.id.slice(0, 8)}` : "Generating");
+
+const generationWorkflowStageLabel = (workflow) => {
+  const stage = workflow?.current_stage || workflow?.job?.current_stage || workflow?.job?.status || "";
+  const labels = {
+    queued: "Queued",
+    title: "Title",
+    cleaned_text: "Cleaned Text",
+    study_cards: "Study Cards",
+    embeddings: "Embeddings",
+    formatted_text: "Formatted Text",
+    question_cards: "Question Cards",
+    mind_map_topics: "Mind Map and Topics",
+    topic_knowledge_nodes: "Topic Knowledge Nodes",
+    promoting: "Publishing"
+  };
+  return labels[stage] || String(stage || "Generating").replace(/_/g, " ");
+};
+
+const generationWorkflowStatusLabel = (workflow) => {
+  const status = workflow?.job?.status || "";
+  const labels = {
+    queued: "Queued",
+    running: "Running",
+    failed: "Failed",
+    cancelled: "Cancelled",
+    connected: "Connected",
+    connecting: "Connecting",
+    error: "Connection issue",
+    idle: "Idle"
+  };
+  return labels[status] || String(status || "Generating").replace(/_/g, " ");
+};
 
 export default function App() {
   const auth = useAuth();
@@ -344,6 +384,7 @@ export default function App() {
   const [moduleGenerationWorkflow, setModuleGenerationWorkflow] = useState(null);
   const [moduleGenerationWorkflowError, setModuleGenerationWorkflowError] = useState("");
   const [moduleGenerationWorkflowConnection, setModuleGenerationWorkflowConnection] = useState("idle");
+  const [moduleGenerationWorkflowChecked, setModuleGenerationWorkflowChecked] = useState(false);
   const [generationWorkflowsByJobId, setGenerationWorkflowsByJobId] = useState({});
   const [generationWorkflowsByNoteGroupId, setGenerationWorkflowsByNoteGroupId] = useState({});
   const [autoJobsByNoteGroupId, setAutoJobsByNoteGroupId] = useState({});
@@ -534,6 +575,7 @@ export default function App() {
       setModuleGenerationWorkflow(null);
       setModuleGenerationWorkflowError("");
       setModuleGenerationWorkflowConnection("idle");
+      setModuleGenerationWorkflowChecked(false);
       setGenerationWorkflowsByJobId({});
       setGenerationWorkflowsByNoteGroupId({});
       setAutoJobsByNoteGroupId({});
@@ -552,6 +594,18 @@ export default function App() {
     () => topicChips.find((topic) => topic.id === selectedTopicId),
     [topicChips, selectedTopicId]
   );
+  const selectedNoteGroupWorkflow = selectedNoteGroupId
+    ? generationWorkflowsByNoteGroupId[selectedNoteGroupId] || null
+    : null;
+  const isSelectedNoteGroupGenerating = Boolean(selectedNoteGroupWorkflow && !selectedTopicId);
+  const isWaitingForSelectedNoteGroupWorkflow =
+    Boolean(selectedNoteGroupId) &&
+    !selectedTopicId &&
+    canManageSelectedSubject &&
+    selectedModuleId &&
+    !moduleGenerationWorkflowChecked;
+  const shouldHoldSelectedNoteGroupContent =
+    isSelectedNoteGroupGenerating || isWaitingForSelectedNoteGroupWorkflow;
   const selectedSubjectCode = selectedSubject?.short_code || "";
   const selectedModuleCode = selectedModule?.short_code || "";
   const selectedNoteGroupCode = selectedNoteGroup?.short_code || "";
@@ -608,6 +662,8 @@ export default function App() {
         .filter(([jobId]) => Boolean(jobId))
     );
     const nextWorkflowsById = new Map();
+    const nextObservedWorkflowIds = new Set();
+    const nextVisibleJobs = [];
     const nextWorkflowsByNoteGroupId = {};
     const nextAutoJobsByNoteGroupId = {};
 
@@ -617,14 +673,18 @@ export default function App() {
         return;
       }
       const noteGroupId = job.note_group_id || workflow.note_group?.id;
-      nextWorkflowsById.set(job.id, workflow);
-      if (noteGroupId) {
-        nextWorkflowsByNoteGroupId[noteGroupId] = workflow;
-        nextAutoJobsByNoteGroupId[noteGroupId] = {
-          ...job,
-          note_group_id: noteGroupId,
-          current_stage: workflow.current_stage || job.current_stage
-        };
+      nextObservedWorkflowIds.add(job.id);
+      if (AUTO_WORKFLOW_VISIBLE_STATUSES.has(job.status)) {
+        nextVisibleJobs.push(workflow);
+        nextWorkflowsById.set(job.id, workflow);
+        if (noteGroupId) {
+          nextWorkflowsByNoteGroupId[noteGroupId] = workflow;
+          nextAutoJobsByNoteGroupId[noteGroupId] = {
+            ...job,
+            note_group_id: noteGroupId,
+            current_stage: workflow.current_stage || job.current_stage
+          };
+        }
       }
 
       const previousWorkflow = previousWorkflowsById.get(job.id);
@@ -658,7 +718,7 @@ export default function App() {
 
     if (notify && previousSnapshot) {
       previousWorkflowsById.forEach((previousWorkflow, jobId) => {
-        if (nextWorkflowsById.has(jobId)) {
+        if (nextObservedWorkflowIds.has(jobId)) {
           return;
         }
         const previousJob = previousWorkflow?.job || {};
@@ -675,9 +735,14 @@ export default function App() {
       });
     }
 
-    moduleGenerationWorkflowRef.current = nextSnapshot;
-    setModuleGenerationWorkflow(nextSnapshot);
+    const visibleSnapshot = {
+      ...nextSnapshot,
+      jobs: nextVisibleJobs
+    };
+    moduleGenerationWorkflowRef.current = visibleSnapshot;
+    setModuleGenerationWorkflow(visibleSnapshot);
     setModuleGenerationWorkflowError("");
+    setModuleGenerationWorkflowChecked(true);
     setGenerationWorkflowsByJobId(Object.fromEntries(nextWorkflowsById));
     setGenerationWorkflowsByNoteGroupId(nextWorkflowsByNoteGroupId);
     setAutoJobsByNoteGroupId(nextAutoJobsByNoteGroupId);
@@ -808,6 +873,9 @@ export default function App() {
     if (!selectedModuleId) {
       return [];
     }
+    if (shouldHoldSelectedNoteGroupContent) {
+      return [{ id: "note-group-generation-workflow", label: "Generation" }];
+    }
     if (!selectedNoteGroupId && !selectedTopicId) {
       return [
         { id: "module-overview", label: "Module overview" },
@@ -846,7 +914,8 @@ export default function App() {
     isViewCardsPage,
     isStudyPage,
     isQuestionPage,
-    isTopicScope
+    isTopicScope,
+    shouldHoldSelectedNoteGroupContent
   ]);
 
   const chipOptions = useMemo(
@@ -1506,6 +1575,7 @@ export default function App() {
       setModuleGenerationWorkflow(null);
       setModuleGenerationWorkflowError("");
       setModuleGenerationWorkflowConnection("idle");
+      setModuleGenerationWorkflowChecked(false);
       setGenerationWorkflowsByJobId({});
       setGenerationWorkflowsByNoteGroupId({});
       setAutoJobsByNoteGroupId({});
@@ -1518,6 +1588,7 @@ export default function App() {
     setModuleGenerationWorkflow(null);
     setModuleGenerationWorkflowError("");
     setModuleGenerationWorkflowConnection("connecting");
+    setModuleGenerationWorkflowChecked(false);
     setGenerationWorkflowsByJobId({});
     setGenerationWorkflowsByNoteGroupId({});
     setAutoJobsByNoteGroupId({});
@@ -1533,6 +1604,7 @@ export default function App() {
           error.message || "Failed to load note group generation workflow."
         );
         setModuleGenerationWorkflowConnection("error");
+        setModuleGenerationWorkflowChecked(true);
         toast.error(error.message || "Failed to check note group creation jobs.");
         return;
       }
@@ -1591,6 +1663,18 @@ export default function App() {
       setTopicDescriptionDraft("");
       setFormattedSections([]);
       setCleanedTextMarkdown("");
+      return;
+    }
+    if (shouldHoldSelectedNoteGroupContent) {
+      setStudyCards([]);
+      setQuestionCards([]);
+      setNoteGroupChipIds([]);
+      setMetadataTitleDraft("");
+      setFormattedSections([]);
+      setCleanedTextMarkdown("");
+      setStudyCardError("");
+      setQuestionCardError("");
+      setQuestionJobStatus("idle");
       return;
     }
     setStudyCardError("");
@@ -1659,22 +1743,38 @@ export default function App() {
       ? listTopicStudyCards(selectedTopicId)
       : listStudyCards(selectedNoteGroupId);
     studyRequest
-      .then((data) => setStudyCards(data.study_cards || []))
-      .catch((error) => setStudyCardError(error.message));
+      .then((data) => {
+        if (!cancelled) {
+          setStudyCards(data.study_cards || []);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setStudyCardError(error.message);
+        }
+      });
     const questionRequest = selectedTopicId
       ? listTopicQuestionCards(selectedTopicId)
       : listQuestionCards(selectedNoteGroupId);
     questionRequest
-      .then((data) => setQuestionCards(data.question_cards || []))
-      .catch((error) => setQuestionCardError(error.message));
+      .then((data) => {
+        if (!cancelled) {
+          setQuestionCards(data.question_cards || []);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setQuestionCardError(error.message);
+        }
+      });
     return () => {
       cancelled = true;
     };
-  }, [selectedNoteGroupId, selectedTopicId, routeNoteGroupId, routeTopicId]);
+  }, [selectedNoteGroupId, selectedTopicId, routeNoteGroupId, routeTopicId, shouldHoldSelectedNoteGroupContent]);
 
   useEffect(() => {
     let cancelled = false;
-    if (!selectedNoteGroupId || selectedTopicId) {
+    if (!selectedNoteGroupId || selectedTopicId || shouldHoldSelectedNoteGroupContent) {
       setNoteGroupMindMap(null);
       setNoteGroupMindMapError("");
       setNoteGroupMindMapLoading(false);
@@ -1706,7 +1806,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedNoteGroupId, selectedTopicId, mindMapRefreshToken]);
+  }, [selectedNoteGroupId, selectedTopicId, mindMapRefreshToken, shouldHoldSelectedNoteGroupContent]);
 
   useEffect(() => {
     if (!isReadingOpen) {
@@ -1718,7 +1818,7 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    if (!selectedNoteGroupId && !selectedTopicId) {
+    if ((!selectedNoteGroupId && !selectedTopicId) || shouldHoldSelectedNoteGroupContent) {
       setQuestionTimeline({
         due: 0,
         week: 0,
@@ -1755,11 +1855,11 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedNoteGroupId, selectedTopicId, chipFilterIds, questionCards, reviewRefreshToken]);
+  }, [selectedNoteGroupId, selectedTopicId, chipFilterIds, questionCards, reviewRefreshToken, shouldHoldSelectedNoteGroupContent]);
 
   useEffect(() => {
     let cancelled = false;
-    if (!selectedNoteGroupId || selectedTopicId) {
+    if (!selectedNoteGroupId || selectedTopicId || shouldHoldSelectedNoteGroupContent) {
       setNoteGroupProgress(normalizeNoteGroupProgress());
       setNoteGroupProgressError("");
       setNoteGroupProgressLoading(false);
@@ -1790,11 +1890,11 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedNoteGroupId, selectedTopicId, progressRange, chipFilterIds, reviewRefreshToken]);
+  }, [selectedNoteGroupId, selectedTopicId, progressRange, chipFilterIds, reviewRefreshToken, shouldHoldSelectedNoteGroupContent]);
 
   useEffect(() => {
     let cancelled = false;
-    if (!selectedNoteGroupId || selectedTopicId || !isViewCardsPage) {
+    if (!selectedNoteGroupId || selectedTopicId || !isViewCardsPage || shouldHoldSelectedNoteGroupContent) {
       setNoteGroupCardTable({ rows: [], unlinked_question_count: 0 });
       setNoteGroupCardTableError("");
       setNoteGroupCardTableLoading(false);
@@ -1828,7 +1928,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedNoteGroupId, selectedTopicId, isViewCardsPage]);
+  }, [selectedNoteGroupId, selectedTopicId, isViewCardsPage, shouldHoldSelectedNoteGroupContent]);
 
   useEffect(() => {
     setChatMessages([]);
@@ -3163,6 +3263,57 @@ export default function App() {
     }
   };
 
+  const handleDeleteAutoJob = async (jobId, noteGroupId = "") => {
+    if (!canManageSelectedSubject) {
+      toast.error("Maintainer access is required to manage note group creation jobs.");
+      return;
+    }
+    if (!jobId) {
+      return;
+    }
+    const workflow = generationWorkflowsByJobId[jobId];
+    const noteGroupLabel =
+      workflow?.draft_title ||
+      workflow?.note_group?.title ||
+      selectedNoteGroup?.title ||
+      "this generation";
+    const confirmed = await requestConfirm({
+      title: `Delete "${noteGroupLabel}"?`,
+      description: "This removes the unfinished Note Group and its generation workflow.",
+      confirmLabel: "Delete generation"
+    });
+    if (!confirmed) {
+      return;
+    }
+    setAutoJobActionId(jobId);
+    try {
+      const result = await deleteJob(jobId);
+      if (result?.delete_requested) {
+        toast.info("Generation deletion requested.");
+      } else {
+        toast.info("Generation deleted.");
+        if (noteGroupId) {
+          setNoteGroups((prev) => prev.filter((group) => group.id !== noteGroupId));
+        }
+        if (selectedNoteGroupId === noteGroupId) {
+          setSelectedNoteGroupId("");
+          navigate(
+            selectedSubjectCode && selectedModuleCode
+              ? modulePath(selectedSubjectCode, selectedModuleCode)
+              : "/"
+          );
+        }
+      }
+      if (selectedModuleId) {
+        await refreshModuleGenerationWorkflowSnapshot(selectedModuleId);
+      }
+    } catch (error) {
+      toast.error(error.message || "Failed to delete generation.");
+    } finally {
+      setAutoJobActionId("");
+    }
+  };
+
   const openModuleMetadataModal = () => {
     if (!canManageSelectedSubject) {
       setModuleMetadataError(
@@ -4378,14 +4529,18 @@ export default function App() {
       onNoteGroupSearchChange={setNoteGroupSearch}
       onTopicSearchChange={setTopicSearch}
       noteGroups={filteredNoteGroupOptions.map((option) => {
+        const workflow = generationWorkflowsByNoteGroupId[option.value];
         const statusMeta = getNoteGroupStatusMeta(option.status);
         const statsEntry = moduleNoteGroupStatsById.get(option.value);
         const dueCount = statsEntry?.dueCount;
         return {
           ...option,
-          description: formatCreatedAt(option.createdAt),
+          label: workflow ? generationWorkflowTitle(workflow) : option.label,
+          description: workflow
+            ? generationWorkflowStageLabel(workflow)
+            : formatCreatedAt(option.createdAt),
           badge: Number.isInteger(dueCount) ? String(dueCount) : "...",
-          statusLabel: statusMeta?.label || ""
+          statusLabel: workflow ? generationWorkflowStatusLabel(workflow) : statusMeta?.label || ""
         };
       })}
       topics={filteredTopicOptions}
@@ -5900,7 +6055,48 @@ export default function App() {
                         </>
                       }
                     />
-                      <section id="module-mind-map">
+                    {moduleGenerationWorkflow?.jobs?.length ? (
+                      <section className={panelClass}>
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <h2>Active Note Group generations</h2>
+                            <p className={mutedTextClass}>
+                              {moduleGenerationWorkflow.jobs.length} active or awaiting action in this module.
+                            </p>
+                          </div>
+                          <span className={badgeClass}>
+                            {generationWorkflowStatusLabel({
+                              job: { status: moduleGenerationWorkflowConnection }
+                            })}
+                          </span>
+                        </div>
+                        {moduleGenerationWorkflowError ? (
+                          <p className={errorTextClass}>{moduleGenerationWorkflowError}</p>
+                        ) : null}
+                        <div className="mt-4 grid gap-3">
+                          {moduleGenerationWorkflow.jobs.map((workflow) => {
+                            const noteGroupId =
+                              workflow.job?.note_group_id || workflow.note_group?.id || "";
+                            return (
+                              <button
+                                key={workflow.job?.id}
+                                type="button"
+                                className="rounded-md border bg-background p-3 text-left transition-colors hover:bg-accent"
+                                onClick={() => noteGroupId && navigateToNoteGroup(noteGroupId)}
+                              >
+                                <span className="block font-medium">
+                                  {generationWorkflowTitle(workflow)}
+                                </span>
+                                <span className={smallMutedTextClass}>
+                                  {generationWorkflowStageLabel(workflow)} · {generationWorkflowStatusLabel(workflow)}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </section>
+                    ) : null}
+                    <section id="module-mind-map">
                         <MindMapPanel
                           graph={moduleMindMap}
                           title={`${selectedModule?.title || "Module"} Mind Map`}
@@ -6020,6 +6216,7 @@ export default function App() {
                             {moduleNoteGroupsForDisplay.map((group) => {
                               const stats = moduleNoteGroupStatsById.get(group.id);
                               const statusMeta = getNoteGroupStatusMeta(group.generation_status);
+                              const workflow = generationWorkflowsByNoteGroupId[group.id];
                               const autoJob = autoJobsByNoteGroupId[group.id];
                               const canCancelAuto =
                                 autoJob &&
@@ -6039,27 +6236,33 @@ export default function App() {
                                   onDragEnd={handleNoteGroupDragEnd}
                                 >
                                   <div className="flex flex-wrap items-start justify-between gap-3">
-                                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                                    {canReorderNoteGroups ? (
-                                      <button
-                                        type="button"
-                                        className="drag-handle"
-                                        aria-label="Drag to reorder note groups"
-                                        draggable
-                                        onDragStart={(event) =>
-                                          handleNoteGroupDragStart(event, group.id)
-                                        }
-                                        onDragEnd={handleNoteGroupDragEnd}
-                                      >
-                                        ::
-                                      </button>
-                                    ) : null}
-                                    <div className="note-group-title-stack">
-                                      <h3>{group.title || "Untitled note group"}</h3>
-                                      <span className="note-group-date">
-                                        {formatCreatedAt(group.created_at)}
-                                      </span>
-                                    </div>
+                                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                      {canReorderNoteGroups ? (
+                                        <button
+                                          type="button"
+                                          className="drag-handle"
+                                          aria-label="Drag to reorder note groups"
+                                          draggable
+                                          onDragStart={(event) =>
+                                            handleNoteGroupDragStart(event, group.id)
+                                          }
+                                          onDragEnd={handleNoteGroupDragEnd}
+                                        >
+                                          ::
+                                        </button>
+                                      ) : null}
+                                      <div className="note-group-title-stack">
+                                        <h3>
+                                          {workflow
+                                            ? generationWorkflowTitle(workflow)
+                                            : group.title || "Untitled note group"}
+                                        </h3>
+                                        <span className="note-group-date">
+                                          {workflow
+                                            ? generationWorkflowStageLabel(workflow)
+                                            : formatCreatedAt(group.created_at)}
+                                        </span>
+                                      </div>
                                       {statusMeta ? (
                                         <span className={`${badgeClass} ${statusMeta.className}`}>
                                           {statusMeta.label}
@@ -6118,7 +6321,7 @@ export default function App() {
                                       type="button"
                                       onClick={() => navigateToNoteGroup(group.id)}
                                     >
-                                      Open overview
+                                      {workflow ? "Open workflow" : "Open overview"}
                                     </button>
                                     <button
                                       className={outlineButtonClass}
@@ -6126,6 +6329,7 @@ export default function App() {
                                       onClick={() =>
                                         navigateToNoteGroup(group.id, "study-cards")
                                       }
+                                      disabled={Boolean(workflow)}
                                     >
                                       Study cards
                                     </button>
@@ -6135,6 +6339,7 @@ export default function App() {
                                       onClick={() =>
                                         navigateToNoteGroup(group.id, "question-cards")
                                       }
+                                      disabled={Boolean(workflow)}
                                     >
                                       Question cards
                                     </button>
@@ -6148,7 +6353,18 @@ export default function App() {
                   </div>
                 ) : (
                   <>
-                    {!isViewCardsPage && !isStudyPage && !isQuestionPage ? (
+                    {shouldHoldSelectedNoteGroupContent ? (
+                      <NoteGroupGenerationWorkflow
+                        workflow={selectedNoteGroupWorkflow}
+                        connection={moduleGenerationWorkflowConnection}
+                        error={moduleGenerationWorkflowError}
+                        actionId={autoJobActionId}
+                        canManage={canManageSelectedSubject}
+                        onCancel={handleCancelAutoJob}
+                        onRetry={handleRetryAutoJob}
+                        onDelete={handleDeleteAutoJob}
+                      />
+                    ) : !isViewCardsPage && !isStudyPage && !isQuestionPage ? (
                       <div className="space-y-6">
                         {isTopicScope ? (
                           <TopicOverview
