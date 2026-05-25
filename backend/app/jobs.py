@@ -16,11 +16,13 @@ from app.mind_map import (
 from app.generation_workflow import (
     append_job_log,
     cancel_job_workflow,
+    delete_job_and_draft,
     fail_job_stage,
     initialize_job_workflow,
     start_job_stage,
     succeed_job_stage,
 )
+from app.generation_promotion import promote_note_group_generation_draft
 from app.models import (
     DraftMindMapRelation,
     DraftNoteGroupTopicLink,
@@ -32,6 +34,7 @@ from app.models import (
     DraftStudyCardTopicLink,
     DraftTopic,
     JOB_STAGE_CLEANED_TEXT,
+    JOB_STAGE_COMPLETE,
     JOB_STAGE_EMBEDDINGS,
     JOB_STAGE_FORMATTED_TEXT,
     JOB_STAGE_MIND_MAP_TOPICS,
@@ -1518,7 +1521,21 @@ def run_auto_note_group_generation(job_id: str) -> None:
         current_stage = JOB_STAGE_PROMOTING
         _start_auto_job_stage(db, job, current_stage)
         db.commit()
-        raise ValueError("Draft promotion awaits Task 4")
+        _raise_if_cancelled(db, job)
+        promotion_summary = promote_note_group_generation_draft(db, job)
+        _raise_if_cancelled(db, job)
+        succeed_job_stage(
+            db,
+            job,
+            current_stage,
+            message="Draft promoted to live Note Group",
+            progress_current=promotion_summary.get("study_card_count"),
+            progress_total=promotion_summary.get("study_card_count"),
+        )
+        current_stage = JOB_STAGE_COMPLETE
+        succeed_job_stage(db, job, current_stage, message="Generation complete")
+        delete_job_and_draft(db, job)
+        db.commit()
     except AutoJobCancelled:
         db.rollback()
         job = db.get(Job, job_id)
