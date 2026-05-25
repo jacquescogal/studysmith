@@ -1308,6 +1308,7 @@ class RouteAccessEnforcementTests(unittest.TestCase):
                 ),
                 SubjectShortCode(subject_id="private-subject", short_code="priv"),
                 SubjectShortCode(subject_id="public-subject", short_code="pub"),
+                ModuleShortCode(module_id="module-1", short_code="privmod"),
                 ModuleShortCode(module_id="public-module", short_code="mod"),
                 NoteGroupShortCode(note_group_id="note-group-1", short_code="ng"),
                 TopicChipShortCode(topic_chip_id="public-topic", short_code="topic"),
@@ -1504,8 +1505,13 @@ class RouteAccessEnforcementTests(unittest.TestCase):
             db.close()
 
     def test_readers_do_not_see_unfinished_note_group_generation_placeholders(self):
-        from app.main import get_module_overview, get_note_group, list_note_groups
-        from app.models import NoteGroup
+        from app.main import (
+            get_module_overview,
+            get_note_group,
+            list_note_groups,
+            resolve_note_group_app_route,
+        )
+        from app.models import NoteGroup, NoteGroupShortCode
 
         db = self.SessionLocal()
         try:
@@ -1519,6 +1525,7 @@ class RouteAccessEnforcementTests(unittest.TestCase):
                     generation_status="generating",
                 )
             )
+            db.add(NoteGroupShortCode(note_group_id="note-group-generating", short_code="gen"))
             db.commit()
 
             reader_note_groups = list_note_groups("module-1", chip_ids=None, db=db, current_user=reader)
@@ -1539,6 +1546,26 @@ class RouteAccessEnforcementTests(unittest.TestCase):
             self.assertEqual(exc.exception.status_code, 404)
             self.assertEqual(
                 get_note_group("note-group-generating", db=db, current_user=maintainer).id,
+                "note-group-generating",
+            )
+            with self.assertRaises(HTTPException) as route_exc:
+                resolve_note_group_app_route(
+                    "priv",
+                    "privmod",
+                    "gen",
+                    db=db,
+                    current_user=reader,
+                )
+            self.assertEqual(route_exc.exception.status_code, 404)
+            maintainer_route_response = resolve_note_group_app_route(
+                "priv",
+                "privmod",
+                "gen",
+                db=db,
+                current_user=maintainer,
+            )
+            self.assertEqual(
+                maintainer_route_response["note_group_id"],
                 "note-group-generating",
             )
         finally:
