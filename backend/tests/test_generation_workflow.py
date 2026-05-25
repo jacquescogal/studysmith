@@ -13,6 +13,7 @@ from app.models import (
     JOB_STAGE_MIND_MAP_TOPICS,
     JOB_STAGE_CLEANED_TEXT,
     JOB_STAGE_EMBEDDINGS,
+    JOB_STAGE_PROMOTING,
     JOB_STAGE_QUEUED,
     JOB_STAGE_QUESTION_CARDS,
     JOB_STAGE_STUDY_CARDS,
@@ -31,15 +32,21 @@ from app.models import (
     JobLog,
     JobStage,
     MindMapConcept,
+    MindMapRelation,
     Module,
+    NoteGroupMindMapConcept,
     NoteGroup,
     NoteGroupGenerationDraft,
     QuestionCard,
     Subject,
     StudyCard,
     StudyCardEmbedding,
+    StudyCardSourceRange,
+    StudyCardMindMapConcept,
     TopicChip,
     User,
+    note_group_topic_chips,
+    study_card_topic_chips,
 )
 from app.schemas import JobLogOut, JobOut
 from app.generation_workflow import (
@@ -984,7 +991,7 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
                 }
             ],
             "formatted_sections": [],
-            "embeddings": [[0.1, 0.2, 0.3]],
+            "embeddings": [[0.1] * 1536],
             "questions": [],
             "topics": {"topics": [], "study_card_topic_links": []},
             "knowledge_nodes": {
@@ -1043,7 +1050,7 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
                 }
             ],
             "formatted_sections": [],
-            "embeddings": [[0.1, 0.2, 0.3]],
+            "embeddings": [[0.1] * 1536],
             "questions": [],
             "topics": {"topics": [], "study_card_topic_links": []},
             "knowledge_nodes": {
@@ -1105,7 +1112,7 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
             self.assertEqual(db.query(StudyCardEmbedding).filter_by(note_group_id=note_group_id).count(), 0)
             self.assertEqual(db.query(DraftQuestionCard).filter_by(draft_id=draft.id).count(), 0)
             self.assertEqual(len(draft_cards), 1)
-            self.assertEqual(draft_cards[0].embedding_json, "[0.1, 0.2, 0.3]")
+            self.assertEqual(len(json.loads(draft_cards[0].embedding_json)), 1536)
             self.assertEqual(
                 db.query(DraftStudyCardSourceRange)
                 .filter_by(draft_study_card_id=draft_cards[0].id)
@@ -1204,12 +1211,13 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
         finally:
             db.close()
 
-    def test_mind_map_topics_stage_does_not_create_live_topics_or_knowledge_nodes(self):
+    def test_auto_generation_promotes_completed_draft_to_live_tables_and_discards_workflow(self):
         db = self.SessionLocal()
         try:
-            job = self._create_auto_generation_job(db, "topics")
+            job = self._create_auto_generation_job(db, "promotion-success")
             job_id = job.id
             note_group_id = job.note_group_id
+            module_id = job.note_group.module_id
             db.close()
 
             captured_refs = []
@@ -1222,7 +1230,7 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
                         "prompt": "Which statement is correct?",
                         "options": ["Concept content", "Other", "Wrong", "No"],
                         "correct_option_indices": [0],
-                        "study_card_refs": ["live-or-stale-card", *captured_refs],
+                        "study_card_refs": [*captured_refs, "live-or-stale-card"],
                     }
                 ]
 
@@ -1255,9 +1263,24 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
                             "summary": "Defines the draft topic.",
                             "knowledge_type": "definition",
                             "importance": "core",
+                        },
+                        {
+                            "temp_id": "node-fact-1",
+                            "topic_id": topic_id,
+                            "title": "Draft Topic fact",
+                            "summary": "A supporting fact.",
+                            "knowledge_type": "fact",
+                            "importance": "supporting",
                         }
                     ],
-                    "relations": [],
+                    "relations": [
+                        {
+                            "source_knowledge_node_id": "node-definition-1",
+                            "target_knowledge_node_id": "node-fact-1",
+                            "relation_type": "related_to",
+                            "confidence": 0.9,
+                        }
+                    ],
                     "study_card_knowledge_node_links": [
                         {
                             "study_card_id": captured_refs[0],
@@ -1275,25 +1298,272 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
             )
 
             db = self.SessionLocal()
-            stored_job = db.get(Job, job_id)
-            draft = db.query(NoteGroupGenerationDraft).filter_by(job_id=job_id).one()
-            mind_map_stage = (
-                db.query(JobStage)
-                .filter(JobStage.job_id == job_id, JobStage.stage == JOB_STAGE_MIND_MAP_TOPICS)
-                .one()
+            note_group = db.get(NoteGroup, note_group_id)
+            live_card = db.query(StudyCard).filter_by(note_group_id=note_group_id).one()
+            live_question = db.query(QuestionCard).filter_by(note_group_id=note_group_id).one()
+            live_topic = db.query(TopicChip).filter_by(module_id=module_id).one()
+            live_node = db.query(MindMapConcept).filter_by(module_id=module_id, title="Draft Topic definition").one()
+
+            self.assertIsNone(db.get(Job, job_id))
+            self.assertEqual(db.query(NoteGroupGenerationDraft).filter_by(job_id=job_id).count(), 0)
+            self.assertEqual(db.query(JobStage).filter_by(job_id=job_id).count(), 0)
+            self.assertEqual(db.query(JobLog).filter_by(job_id=job_id).count(), 0)
+            self.assertEqual(note_group.generation_status, "complete")
+            self.assertEqual(note_group.title, "Drafted title")
+            self.assertEqual(note_group.cleaned_text_markdown, "Raw concept text with exact evidence.")
+            self.assertIsNotNone(note_group.formatted_text)
+            self.assertEqual(note_group.mind_map_status, "complete")
+            self.assertFalse(note_group.mind_map_stale)
+            self.assertIsNotNone(note_group.mind_map_generated_at)
+            self.assertEqual(live_card.title, "Concept")
+            self.assertEqual(db.query(StudyCardSourceRange).filter_by(study_card_id=live_card.id).count(), 1)
+            self.assertEqual(db.query(StudyCardEmbedding).filter_by(study_card_id=live_card.id).count(), 1)
+            self.assertEqual(json.loads(live_question.study_card_refs_json), [live_card.id])
+            self.assertNotIn(captured_refs[0], json.loads(live_question.study_card_refs_json))
+            self.assertEqual(live_topic.label, "Draft Topic")
+            self.assertEqual(live_topic.knowledge_node_status, "complete")
+            self.assertEqual(live_node.title, "Draft Topic definition")
+            self.assertEqual(live_node.topic_id, live_topic.id)
+            self.assertEqual(
+                db.execute(
+                    note_group_topic_chips.select().where(
+                        note_group_topic_chips.c.note_group_id == note_group_id,
+                        note_group_topic_chips.c.chip_id == live_topic.id,
+                    )
+                ).first()
+                is not None,
+                True,
+            )
+            self.assertEqual(
+                db.execute(
+                    study_card_topic_chips.select().where(
+                        study_card_topic_chips.c.study_card_id == live_card.id,
+                        study_card_topic_chips.c.chip_id == live_topic.id,
+                    )
+                ).first()
+                is not None,
+                True,
+            )
+            self.assertEqual(db.query(NoteGroupMindMapConcept).filter_by(note_group_id=note_group_id).count(), 2)
+            self.assertEqual(db.query(StudyCardMindMapConcept).filter_by(study_card_id=live_card.id).count(), 1)
+            self.assertEqual(db.query(MindMapRelation).filter_by(source_note_group_id=note_group_id).count(), 1)
+            self.assertEqual(db.query(DraftStudyCard).count(), 0)
+            self.assertEqual(db.query(DraftQuestionCard).count(), 0)
+            self.assertEqual(db.query(DraftTopic).count(), 0)
+            self.assertEqual(db.query(DraftKnowledgeNode).count(), 0)
+        finally:
+            db.close()
+
+    def test_promotion_failure_rolls_back_live_rows_and_keeps_draft_failed_at_promoting(self):
+        db = self.SessionLocal()
+        try:
+            job = self._create_auto_generation_job(db, "promotion-failure")
+            job_id = job.id
+            note_group_id = job.note_group_id
+            module_id = job.note_group.module_id
+            db.close()
+
+            def knowledge_payload(*_args, **kwargs):
+                topic_id = kwargs["topics"][0]["topic_id"]
+                return {
+                    "knowledge_nodes": [
+                        {
+                            "temp_id": "node-definition-1",
+                            "topic_id": topic_id,
+                            "title": "Definition",
+                            "summary": "Definition summary",
+                            "knowledge_type": "definition",
+                            "importance": "core",
+                        }
+                    ],
+                    "relations": [],
+                    "study_card_knowledge_node_links": [],
+                }
+
+            self._run_with_extra_patches(
+                job_id,
+                [patch("app.generation_promotion.upsert_study_card_embeddings", side_effect=RuntimeError("embed write failed"))],
+                topics={
+                    "topics": [
+                        {
+                            "temp_id": "topic-draft-1",
+                            "title": "Draft Topic",
+                            "summary": "Draft topic summary",
+                        }
+                    ],
+                    "study_card_topic_links": [],
+                },
+                knowledge_nodes=knowledge_payload,
             )
 
+            db = self.SessionLocal()
+            stored_job = db.get(Job, job_id)
+            draft = db.query(NoteGroupGenerationDraft).filter_by(job_id=job_id).one()
+
             self.assertEqual(stored_job.status, "failed")
-            self.assertEqual(mind_map_stage.status, "succeeded")
+            self.assertEqual(stored_job.current_stage, JOB_STAGE_PROMOTING)
+            self.assertEqual(stored_job.stage_status, "failed")
             self.assertEqual(db.query(StudyCard).filter_by(note_group_id=note_group_id).count(), 0)
-            self.assertEqual(db.query(TopicChip).filter_by(module_id=draft.module_id).count(), 0)
-            self.assertEqual(db.query(MindMapConcept).filter_by(module_id=draft.module_id).count(), 0)
+            self.assertEqual(db.query(QuestionCard).filter_by(note_group_id=note_group_id).count(), 0)
+            self.assertEqual(db.query(TopicChip).filter_by(module_id=module_id).count(), 0)
+            self.assertEqual(db.query(MindMapConcept).filter_by(module_id=module_id).count(), 0)
+            self.assertEqual(db.query(MindMapRelation).filter_by(module_id=module_id).count(), 0)
+            self.assertEqual(db.query(DraftStudyCard).filter_by(draft_id=draft.id).count(), 1)
             self.assertEqual(db.query(DraftTopic).filter_by(draft_id=draft.id).count(), 1)
-            self.assertEqual(db.query(DraftStudyCardTopicLink).filter_by(draft_id=draft.id).count(), 1)
             self.assertEqual(db.query(DraftKnowledgeNode).filter_by(draft_id=draft.id).count(), 1)
-            self.assertEqual(db.query(DraftStudyCardKnowledgeNodeLink).filter_by(draft_id=draft.id).count(), 1)
-            draft_question = db.query(DraftQuestionCard).filter_by(draft_id=draft.id).one()
-            self.assertEqual(json.loads(draft_question.study_card_refs_json), captured_refs)
+        finally:
+            db.close()
+
+    def test_promotion_reuses_existing_topic_for_direct_study_card_link(self):
+        db = self.SessionLocal()
+        try:
+            job = self._create_auto_generation_job(db, "promotion-existing-topic")
+            job_id = job.id
+            note_group_id = job.note_group_id
+            module_id = job.note_group.module_id
+            db.add(
+                TopicChip(
+                    id="existing-direct-topic",
+                    module_id=module_id,
+                    label="Existing Direct Topic",
+                    description="Already present",
+                )
+            )
+            db.commit()
+            db.close()
+
+            def topic_payload(*_args, **kwargs):
+                study_card_id = kwargs["study_cards"][0]["study_card_id"]
+                return {
+                    "topics": [],
+                    "study_card_topic_links": [
+                        {
+                            "study_card_id": study_card_id,
+                            "topic_id": "existing-direct-topic",
+                            "role": "primary",
+                        }
+                    ],
+                }
+
+            self._run_with_mocks(job_id, topics=topic_payload)
+
+            db = self.SessionLocal()
+            live_card = db.query(StudyCard).filter_by(note_group_id=note_group_id).one()
+
+            self.assertIsNone(db.get(Job, job_id))
+            self.assertEqual(db.query(TopicChip).filter_by(module_id=module_id).count(), 1)
+            self.assertEqual(
+                db.execute(
+                    study_card_topic_chips.select().where(
+                        study_card_topic_chips.c.study_card_id == live_card.id,
+                        study_card_topic_chips.c.chip_id == "existing-direct-topic",
+                    )
+                ).first()
+                is not None,
+                True,
+            )
+            self.assertEqual(
+                db.execute(
+                    note_group_topic_chips.select().where(
+                        note_group_topic_chips.c.note_group_id == note_group_id,
+                        note_group_topic_chips.c.chip_id == "existing-direct-topic",
+                    )
+                ).first()
+                is not None,
+                True,
+            )
+        finally:
+            db.close()
+
+    def test_promotion_reuses_existing_topic_knowledge_node(self):
+        db = self.SessionLocal()
+        try:
+            job = self._create_auto_generation_job(db, "promotion-existing-knowledge-node")
+            job_id = job.id
+            note_group_id = job.note_group_id
+            module_id = job.note_group.module_id
+            db.add(
+                TopicChip(
+                    id="existing-direct-topic",
+                    module_id=module_id,
+                    label="Existing Direct Topic",
+                    description="Already present",
+                )
+            )
+            db.add(
+                MindMapConcept(
+                    id="existing-definition-node",
+                    module_id=module_id,
+                    topic_id="existing-direct-topic",
+                    slug="existing_direct_topic_definition",
+                    title="Existing Direct Topic definition",
+                    summary="Old definition.",
+                    concept_type="term",
+                    knowledge_type="definition",
+                    importance="supporting",
+                )
+            )
+            db.commit()
+            db.close()
+
+            def topic_payload(*_args, **kwargs):
+                study_card_id = kwargs["study_cards"][0]["study_card_id"]
+                return {
+                    "topics": [],
+                    "study_card_topic_links": [
+                        {
+                            "study_card_id": study_card_id,
+                            "topic_id": "existing-direct-topic",
+                            "role": "primary",
+                        }
+                    ],
+                }
+
+            def knowledge_payload(*_args, **kwargs):
+                study_card_id = kwargs["study_cards"][0]["id"]
+                return {
+                    "knowledge_nodes": [
+                        {
+                            "temp_id": "node-definition-1",
+                            "topic_id": "existing-direct-topic",
+                            "title": "Existing Direct Topic definition",
+                            "summary": "Updated definition.",
+                            "knowledge_type": "definition",
+                            "importance": "core",
+                        }
+                    ],
+                    "relations": [],
+                    "study_card_knowledge_node_links": [
+                        {
+                            "study_card_id": study_card_id,
+                            "knowledge_node_id": "node-definition-1",
+                            "role": "primary",
+                        }
+                    ],
+                }
+
+            self._run_with_mocks(job_id, topics=topic_payload, knowledge_nodes=knowledge_payload)
+
+            db = self.SessionLocal()
+            live_card = db.query(StudyCard).filter_by(note_group_id=note_group_id).one()
+            reused_node = db.get(MindMapConcept, "existing-definition-node")
+
+            self.assertIsNone(db.get(Job, job_id))
+            self.assertEqual(db.query(MindMapConcept).filter_by(module_id=module_id).count(), 1)
+            self.assertEqual(reused_node.summary, "Updated definition.")
+            self.assertEqual(reused_node.importance, "core")
+            self.assertEqual(
+                db.query(NoteGroupMindMapConcept)
+                .filter_by(note_group_id=note_group_id, concept_id="existing-definition-node")
+                .count(),
+                1,
+            )
+            self.assertEqual(
+                db.query(StudyCardMindMapConcept)
+                .filter_by(study_card_id=live_card.id, concept_id="existing-definition-node")
+                .count(),
+                1,
+            )
         finally:
             db.close()
 
@@ -1302,10 +1572,12 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
         try:
             job = self._create_auto_generation_job(db, "existing-parent-topic")
             job_id = job.id
+            note_group_id = job.note_group_id
+            module_id = job.note_group.module_id
             db.add(
                 TopicChip(
                     id="existing-parent-topic",
-                    module_id=job.note_group.module_id,
+                    module_id=module_id,
                     label="Existing Parent",
                 )
             )
@@ -1335,21 +1607,31 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
             self._run_with_mocks(job_id, topics=topic_payload)
 
             db = self.SessionLocal()
-            draft = db.query(NoteGroupGenerationDraft).filter_by(job_id=job_id).one()
-            draft_topic = db.query(DraftTopic).filter_by(draft_id=draft.id).one()
-            existing_topic_link = db.query(DraftStudyCardTopicLink).filter_by(
-                draft_id=draft.id,
-                existing_topic_id="existing-parent-topic",
-            ).one()
-            existing_note_group_link = db.query(DraftNoteGroupTopicLink).filter_by(
-                draft_id=draft.id,
-                existing_topic_id="existing-parent-topic",
-            ).one()
+            child_topic = db.query(TopicChip).filter_by(module_id=module_id, label="Draft Child Topic").one()
+            live_card = db.query(StudyCard).filter_by(note_group_id=note_group_id).one()
 
-            self.assertEqual(draft_topic.parent_existing_topic_id, "existing-parent-topic")
-            self.assertIsNone(draft_topic.parent_draft_topic_id)
-            self.assertEqual(existing_topic_link.role, "supporting")
-            self.assertIsNotNone(existing_note_group_link)
+            self.assertIsNone(db.get(Job, job_id))
+            self.assertEqual(child_topic.parent_topic_id, "existing-parent-topic")
+            self.assertEqual(
+                db.execute(
+                    study_card_topic_chips.select().where(
+                        study_card_topic_chips.c.study_card_id == live_card.id,
+                        study_card_topic_chips.c.chip_id == "existing-parent-topic",
+                    )
+                ).first()
+                is not None,
+                True,
+            )
+            self.assertEqual(
+                db.execute(
+                    note_group_topic_chips.select().where(
+                        note_group_topic_chips.c.note_group_id == note_group_id,
+                        note_group_topic_chips.c.chip_id == "existing-parent-topic",
+                    )
+                ).first()
+                is not None,
+                True,
+            )
         finally:
             db.close()
 
@@ -1409,6 +1691,7 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
         try:
             job = self._create_auto_generation_job(db, "knowledge-needs-review")
             job_id = job.id
+            module_id = job.note_group.module_id
             db.close()
 
             self._run_with_mocks(
@@ -1427,15 +1710,13 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
             )
 
             db = self.SessionLocal()
-            stored_job = db.get(Job, job_id)
-            draft = db.query(NoteGroupGenerationDraft).filter_by(job_id=job_id).one()
-            draft_topic = db.query(DraftTopic).filter_by(draft_id=draft.id).one()
+            live_topic = db.query(TopicChip).filter_by(module_id=module_id).one()
 
-            self.assertEqual(stored_job.status, "failed")
-            self.assertEqual(stored_job.current_stage, "promoting")
-            self.assertEqual(draft_topic.knowledge_node_status, "needs_review")
-            self.assertEqual(draft_topic.knowledge_node_review_reason, "knowledge generation failed")
-            self.assertEqual(db.query(DraftKnowledgeNode).filter_by(draft_id=draft.id).count(), 0)
+            self.assertIsNone(db.get(Job, job_id))
+            self.assertEqual(live_topic.knowledge_node_status, "needs_review")
+            self.assertEqual(live_topic.knowledge_node_review_reason, "knowledge generation failed")
+            self.assertEqual(db.query(NoteGroupGenerationDraft).filter_by(job_id=job_id).count(), 0)
+            self.assertEqual(db.query(DraftKnowledgeNode).count(), 0)
         finally:
             db.close()
 
@@ -1490,6 +1771,44 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
 
             self.assertEqual(stored_job.status, "cancelled")
             self.assertEqual(note_group.generation_status, "cancelled")
+        finally:
+            db.close()
+
+    def test_cancel_during_promotion_rolls_back_live_rows(self):
+        from app.generation_promotion import promote_note_group_generation_draft as real_promote
+
+        db = self.SessionLocal()
+        try:
+            job = self._create_auto_generation_job(db, "cancel-during-promotion")
+            job_id = job.id
+            note_group_id = job.note_group_id
+            db.close()
+
+            def cancel_during_promotion(db_arg, job_arg):
+                cancel_db = self.SessionLocal()
+                try:
+                    stored_job = cancel_db.get(Job, job_id)
+                    stored_job.status = "cancelled"
+                    cancel_db.commit()
+                finally:
+                    cancel_db.close()
+                return real_promote(db_arg, job_arg)
+
+            self._run_with_extra_patches(
+                job_id,
+                [patch("app.jobs.promote_note_group_generation_draft", side_effect=cancel_during_promotion)],
+            )
+
+            db = self.SessionLocal()
+            stored_job = db.get(Job, job_id)
+            note_group = stored_job.note_group
+
+            self.assertEqual(stored_job.status, "cancelled")
+            self.assertEqual(note_group.generation_status, "cancelled")
+            self.assertEqual(db.query(StudyCard).filter_by(note_group_id=note_group_id).count(), 0)
+            self.assertEqual(db.query(QuestionCard).filter_by(note_group_id=note_group_id).count(), 0)
+            self.assertEqual(db.query(StudyCardEmbedding).filter_by(note_group_id=note_group_id).count(), 0)
+            self.assertEqual(db.query(NoteGroupGenerationDraft).filter_by(job_id=job_id).count(), 1)
         finally:
             db.close()
 
