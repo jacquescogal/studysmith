@@ -1,3 +1,4 @@
+import asyncio
 import json
 import unittest
 from contextlib import ExitStack
@@ -60,6 +61,7 @@ from app.generation_workflow import (
     request_unfinished_job_delete,
     retry_failed_job_stage,
     serialize_generation_workflow,
+    serialize_module_generation_workflow_snapshot,
     set_stage_progress,
     start_job_stage,
     succeed_job_stage,
@@ -900,6 +902,61 @@ class GenerationWorkflowServiceTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_module_generation_snapshot_serializes_updated_auto_job_after_event_commit(self):
+        db = self.SessionLocal()
+        try:
+            job = self._create_generation_job(db, "module-snapshot")
+            job.type = JOB_TYPE_NOTE_GROUP_AUTO_GENERATION
+            initialize_job_workflow(db, job, "raw text", "unique-id", None)
+            start_job_stage(db, job, JOB_STAGE_STUDY_CARDS)
+            db.commit()
+
+            initial_snapshot = serialize_module_generation_workflow_snapshot(db, job.note_group.module_id)
+            self.assertEqual(initial_snapshot["module_id"], job.note_group.module_id)
+            self.assertEqual(initial_snapshot["jobs"][0]["job"]["stage_status"], "running")
+
+            published_events = []
+            with patch("app.generation_events.generation_event_bus.publish", published_events.append):
+                set_stage_progress(
+                    db,
+                    job,
+                    JOB_STAGE_STUDY_CARDS,
+                    4,
+                    7,
+                    message="Created 4 Study Cards",
+                )
+                db.commit()
+
+            refreshed_snapshot = serialize_module_generation_workflow_snapshot(db, job.note_group.module_id)
+            self.assertEqual([event.event for event in published_events], ["stage_progress"])
+            self.assertEqual(refreshed_snapshot["jobs"][0]["current_stage"], JOB_STAGE_STUDY_CARDS)
+            self.assertEqual(refreshed_snapshot["jobs"][0]["job"]["progress_current"], 4)
+            self.assertEqual(refreshed_snapshot["jobs"][0]["job"]["progress_total"], 7)
+            self.assertEqual(refreshed_snapshot["jobs"][0]["logs"][-1]["message"], "Created 4 Study Cards")
+        finally:
+            db.close()
+
+    def test_generation_event_subscription_survives_heartbeat_timeout(self):
+        from app.generation_events import GenerationEvent, generation_event_bus
+
+        async def run_subscription_check():
+            module_id = "workflow-module-stream-idle"
+            subscription = generation_event_bus.open_subscription(module_id)
+            try:
+                with self.assertRaises(asyncio.TimeoutError):
+                    await asyncio.wait_for(subscription.get(), timeout=0.01)
+
+                generation_event_bus.publish(
+                    GenerationEvent(module_id=module_id, event="stage_progress", payload={"current": 1})
+                )
+                event = await asyncio.wait_for(subscription.get(), timeout=1)
+                self.assertEqual(event.event, "stage_progress")
+                self.assertEqual(event.payload, {"current": 1})
+            finally:
+                subscription.close()
+
+        asyncio.run(run_subscription_check())
+
     def test_delete_job_and_draft_cascades_stages_logs_draft(self):
         db = self.SessionLocal()
         try:
@@ -1493,10 +1550,13 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
             self.assertEqual(stored_job.stage_status, "failed")
             self.assertIsNotNone(preserved_embedding_json)
 
-            retried_job = retry_failed_job_stage(db, stored_job)
-            db.commit()
+            published_events = []
+            with patch("app.generation_events.generation_event_bus.publish", published_events.append):
+                retried_job = retry_failed_job_stage(db, stored_job)
+                db.commit()
 
             self.assertEqual(retried_job.id, job_id)
+            self.assertEqual([event.event for event in published_events], ["workflow_retry_queued"])
 
             db.expire_all()
             retried_job = db.get(Job, job_id)

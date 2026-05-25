@@ -28,6 +28,7 @@ from app.models import (
     Job,
     JobLog,
     JobStage,
+    NoteGroup,
     NoteGroupGenerationDraft,
 )
 
@@ -61,6 +62,8 @@ JOB_STAGE_LABELS = {
 }
 
 JOB_DELETE_REQUESTED_ERROR = "Generation deletion requested"
+MODULE_WORKFLOW_JOB_STATUSES = ("queued", "running", "failed", "cancelled")
+MODULE_WORKFLOW_JOB_TYPE = "NOTE_GROUP_AUTO_GENERATION"
 
 
 def _publish_generation_event(db: Session, job: Job, event_type: str) -> None:
@@ -70,6 +73,10 @@ def _publish_generation_event(db: Session, job: Job, event_type: str) -> None:
         publish_generation_event(db, job, event_type)
     except Exception:
         pass
+
+
+def publish_job_workflow_event(db: Session, job: Job, event_type: str) -> None:
+    _publish_generation_event(db, job, event_type)
 
 
 def _stage_label(stage: str) -> str:
@@ -396,6 +403,24 @@ def serialize_generation_workflow(db: Session, job: Job) -> dict[str, Any]:
     }
 
 
+def serialize_module_generation_workflow_snapshot(db: Session, module_id: str) -> dict[str, Any]:
+    jobs = (
+        db.query(Job)
+        .join(NoteGroup, Job.note_group_id == NoteGroup.id)
+        .filter(
+            Job.type == MODULE_WORKFLOW_JOB_TYPE,
+            Job.status.in_(MODULE_WORKFLOW_JOB_STATUSES),
+            NoteGroup.module_id == module_id,
+        )
+        .order_by(Job.created_at.desc())
+        .all()
+    )
+    return {
+        "module_id": module_id,
+        "jobs": [serialize_generation_workflow(db, job) for job in jobs],
+    }
+
+
 def delete_job_and_draft(db: Session, job: Job) -> None:
     db.delete(job)
     db.flush()
@@ -407,6 +432,7 @@ def delete_unfinished_job_workflow(db: Session, job: Job) -> None:
         raise ValueError("Completed jobs cannot be deleted")
     if note_group and note_group.generation_status == "complete":
         raise ValueError("Completed Note Groups cannot be deleted by job workflow cleanup")
+    _publish_generation_event(db, job, "workflow_deleted")
     delete_job_and_draft(db, job)
     if note_group is not None:
         db.delete(note_group)
@@ -558,4 +584,5 @@ def retry_failed_job_stage(
         job.note_group.generation_status = "queued"
     append_job_log(db, job, JOB_STAGE_QUEUED, f"Retry queued from {_stage_label(stage)}")
     db.flush()
+    _publish_generation_event(db, job, "workflow_retry_queued")
     return job
