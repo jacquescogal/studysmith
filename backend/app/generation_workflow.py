@@ -5,6 +5,15 @@ from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from app.models import (
+    DraftKnowledgeNode,
+    DraftMindMapRelation,
+    DraftNoteGroupTopicLink,
+    DraftQuestionCard,
+    DraftStudyCard,
+    DraftStudyCardKnowledgeNodeLink,
+    DraftStudyCardSourceRange,
+    DraftStudyCardTopicLink,
+    DraftTopic,
     JOB_STAGE_CLEANED_TEXT,
     JOB_STAGE_COMPLETE,
     JOB_STAGE_EMBEDDINGS,
@@ -50,6 +59,8 @@ JOB_STAGE_LABELS = {
     JOB_STAGE_PROMOTING: "Publish Note Group",
     JOB_STAGE_COMPLETE: "Complete",
 }
+
+JOB_DELETE_REQUESTED_ERROR = "Generation deletion requested"
 
 
 def _publish_generation_event(db: Session, job: Job, event_type: str) -> None:
@@ -390,14 +401,120 @@ def delete_job_and_draft(db: Session, job: Job) -> None:
     db.flush()
 
 
+def delete_unfinished_job_workflow(db: Session, job: Job) -> None:
+    note_group = job.note_group
+    if job.status == "completed":
+        raise ValueError("Completed jobs cannot be deleted")
+    if note_group and note_group.generation_status == "complete":
+        raise ValueError("Completed Note Groups cannot be deleted by job workflow cleanup")
+    delete_job_and_draft(db, job)
+    if note_group is not None:
+        db.delete(note_group)
+    db.flush()
+
+
+def request_unfinished_job_delete(db: Session, job: Job) -> bool:
+    if job.error == JOB_DELETE_REQUESTED_ERROR:
+        return False
+    if job.status == "running":
+        cancel_job_workflow(db, job, JOB_DELETE_REQUESTED_ERROR)
+        return False
+    delete_unfinished_job_workflow(db, job)
+    return True
+
+
+def _clear_draft_question_card_artifacts(db: Session, draft: NoteGroupGenerationDraft) -> None:
+    db.query(DraftQuestionCard).filter(DraftQuestionCard.draft_id == draft.id).delete(
+        synchronize_session=False
+    )
+
+
+def _clear_draft_topic_artifacts(db: Session, draft: NoteGroupGenerationDraft) -> None:
+    db.query(DraftMindMapRelation).filter(DraftMindMapRelation.draft_id == draft.id).delete(
+        synchronize_session=False
+    )
+    db.query(DraftStudyCardKnowledgeNodeLink).filter(
+        DraftStudyCardKnowledgeNodeLink.draft_id == draft.id
+    ).delete(synchronize_session=False)
+    db.query(DraftStudyCardTopicLink).filter(
+        DraftStudyCardTopicLink.draft_id == draft.id
+    ).delete(synchronize_session=False)
+    db.query(DraftNoteGroupTopicLink).filter(
+        DraftNoteGroupTopicLink.draft_id == draft.id
+    ).delete(synchronize_session=False)
+    db.query(DraftKnowledgeNode).filter(DraftKnowledgeNode.draft_id == draft.id).delete(
+        synchronize_session=False
+    )
+    db.query(DraftTopic).filter(DraftTopic.draft_id == draft.id).delete(
+        synchronize_session=False
+    )
+
+
+def _clear_draft_knowledge_node_artifacts(db: Session, draft: NoteGroupGenerationDraft) -> None:
+    db.query(DraftMindMapRelation).filter(
+        DraftMindMapRelation.draft_id == draft.id,
+        (
+            (DraftMindMapRelation.source_draft_knowledge_node_id.isnot(None))
+            | (DraftMindMapRelation.target_draft_knowledge_node_id.isnot(None))
+        ),
+    ).delete(synchronize_session=False)
+    db.query(DraftStudyCardKnowledgeNodeLink).filter(
+        DraftStudyCardKnowledgeNodeLink.draft_id == draft.id
+    ).delete(synchronize_session=False)
+    db.query(DraftKnowledgeNode).filter(DraftKnowledgeNode.draft_id == draft.id).delete(
+        synchronize_session=False
+    )
+    db.query(DraftTopic).filter(DraftTopic.draft_id == draft.id).update(
+        {
+            DraftTopic.knowledge_node_status: "not_generated",
+            DraftTopic.knowledge_node_review_reason: None,
+        },
+        synchronize_session=False,
+    )
+
+
 def clear_draft_after_stage(db: Session, draft: NoteGroupGenerationDraft, failed_stage: str) -> None:
     if failed_stage not in JOB_STAGE_SEQUENCE:
         raise ValueError(f"Unknown failed stage: {failed_stage}")
     failed_index = JOB_STAGE_SEQUENCE.index(failed_stage)
-    later_stages = set(JOB_STAGE_SEQUENCE[failed_index + 1 :])
+    stages_to_reset = set(JOB_STAGE_SEQUENCE[failed_index:])
     now = datetime.utcnow()
+    if failed_index <= JOB_STAGE_SEQUENCE.index(JOB_STAGE_TITLE):
+        draft.title = None
+        draft.suggested_titles_json = None
+    if failed_index <= JOB_STAGE_SEQUENCE.index(JOB_STAGE_CLEANED_TEXT):
+        draft.cleaned_text_markdown = None
+    if failed_index <= JOB_STAGE_SEQUENCE.index(JOB_STAGE_FORMATTED_TEXT):
+        draft.formatted_sections_json = None
+        draft.formatted_text = None
+    if failed_index <= JOB_STAGE_SEQUENCE.index(JOB_STAGE_STUDY_CARDS):
+        draft_study_card_ids = [
+            row[0]
+            for row in db.query(DraftStudyCard.id)
+            .filter(DraftStudyCard.draft_id == draft.id)
+            .all()
+        ]
+        if draft_study_card_ids:
+            db.query(DraftStudyCardSourceRange).filter(
+                DraftStudyCardSourceRange.draft_study_card_id.in_(draft_study_card_ids)
+            ).delete(synchronize_session=False)
+        db.query(DraftStudyCard).filter(DraftStudyCard.draft_id == draft.id).delete(
+            synchronize_session=False
+        )
+    if failed_index <= JOB_STAGE_SEQUENCE.index(JOB_STAGE_EMBEDDINGS):
+        db.query(DraftStudyCard).filter(DraftStudyCard.draft_id == draft.id).update(
+            {DraftStudyCard.embedding_json: None},
+            synchronize_session=False,
+        )
+    if failed_index <= JOB_STAGE_SEQUENCE.index(JOB_STAGE_QUESTION_CARDS):
+        _clear_draft_question_card_artifacts(db, draft)
+    if failed_index <= JOB_STAGE_SEQUENCE.index(JOB_STAGE_MIND_MAP_TOPICS):
+        _clear_draft_topic_artifacts(db, draft)
+    elif failed_index <= JOB_STAGE_SEQUENCE.index(JOB_STAGE_TOPIC_KNOWLEDGE_NODES):
+        _clear_draft_knowledge_node_artifacts(db, draft)
+
     for stage_record in draft.job.stages:
-        if stage_record.stage not in later_stages:
+        if stage_record.stage not in stages_to_reset:
             continue
         stage_record.status = "pending"
         stage_record.started_at = None
@@ -406,11 +523,39 @@ def clear_draft_after_stage(db: Session, draft: NoteGroupGenerationDraft, failed
         stage_record.progress_current = None
         stage_record.progress_total = None
         stage_record.updated_at = now
-    if later_stages:
+    if stages_to_reset:
         db.query(JobLog).filter(
             JobLog.job_id == draft.job_id,
-            JobLog.stage.in_(later_stages),
+            JobLog.stage.in_(stages_to_reset),
         ).delete(synchronize_session=False)
-    # Draft content clearing is stage-specific and will be added when later stages
-    # own the draft artifacts they need to invalidate.
     db.flush()
+
+
+def retry_failed_job_stage(
+    db: Session,
+    job: Job,
+    retry_stage: Optional[str] = None,
+) -> Job:
+    if job.status != "failed":
+        raise ValueError("Job is not retryable")
+    draft = _get_workflow_draft(db, job)
+    if draft is None:
+        raise ValueError("Job has no generation draft")
+    stage = retry_stage or draft.current_stage or job.current_stage
+    if not stage:
+        raise ValueError("Job has no failed stage to retry")
+    stage_record = _get_stage(db, job, stage)
+    if stage_record.status != "failed":
+        raise ValueError("Only failed stages can be retried")
+    if job.note_group and job.note_group.generation_status == "complete":
+        raise ValueError("Completed Note Groups cannot be retried")
+
+    clear_draft_after_stage(db, draft, stage)
+    draft.current_stage = stage
+    job.status = "queued"
+    job.error = None
+    if job.note_group:
+        job.note_group.generation_status = "queued"
+    append_job_log(db, job, JOB_STAGE_QUEUED, f"Retry queued from {_stage_label(stage)}")
+    db.flush()
+    return job
