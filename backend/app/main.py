@@ -42,6 +42,11 @@ from app.access import (
 )
 from app.auth import optional_user, require_admin, require_creator, require_user
 from app.auto_queue import enqueue_auto_job, remove_auto_job, resume_auto_jobs, start_auto_worker
+from app.generation_workflow import (
+    cancel_job_workflow,
+    request_unfinished_job_delete,
+    retry_failed_job_stage,
+)
 from app.jobs import (
     JOB_TYPE_MIND_MAP_GENERATION,
     JOB_TYPE_NOTE_GROUP_QUESTION_GENERATION,
@@ -2399,14 +2404,35 @@ def cancel_job(
 
     if job.status == "queued":
         remove_auto_job(job.id)
-    job.status = "cancelled"
-    if job.note_group_id:
-        note_group = db.get(NoteGroup, job.note_group_id)
-        if note_group:
-            note_group.generation_status = "cancelled"
+    if job.generation_draft or job.stages:
+        cancel_job_workflow(db, job, "Generation cancelled")
+    else:
+        job.status = "cancelled"
+        if job.note_group_id:
+            note_group = db.get(NoteGroup, job.note_group_id)
+            if note_group:
+                note_group.generation_status = "cancelled"
     db.commit()
     db.refresh(job)
     return job
+
+
+@app.delete("/jobs/{job_id}")
+def delete_job(
+    job_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    job = require_job_edit(db, current_user, job_id)
+    if job.type != JOB_TYPE_NOTE_GROUP_AUTO_GENERATION:
+        raise HTTPException(status_code=400, detail="Only auto jobs can be deleted")
+    try:
+        remove_auto_job(job.id)
+        deleted = request_unfinished_job_delete(db, job)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    return {"deleted": deleted, "delete_requested": not deleted}
 
 
 @app.post("/jobs/{job_id}/retry", response_model=JobOut)
@@ -2418,26 +2444,16 @@ def retry_job(
     job = require_job_edit(db, current_user, job_id)
     if job.type != JOB_TYPE_NOTE_GROUP_AUTO_GENERATION:
         raise HTTPException(status_code=400, detail="Only auto jobs can be retried")
-    if job.status not in {"failed", "cancelled"}:
+    if job.status != "failed":
         raise HTTPException(status_code=400, detail="Job is not retryable")
-    note_group = job.note_group
-    if not note_group:
-        raise HTTPException(status_code=404, detail="Note group not found")
-
-    study_card_ids = _reset_note_group_for_retry(db, note_group)
-    new_job = Job(
-        type=JOB_TYPE_NOTE_GROUP_AUTO_GENERATION,
-        note_group_id=note_group.id,
-        payload_json=job.payload_json,
-    )
-    db.add(new_job)
-    db.flush()
-    note_group.title = new_job.id
+    try:
+        retry_failed_job_stage(db, job)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()
-    db.refresh(new_job)
-
-    enqueue_auto_job(new_job.id)
-    return new_job
+    db.refresh(job)
+    enqueue_auto_job(job.id)
+    return job
 
 
 @app.get("/note-groups/{note_group_id}/study-cards", response_model=StudyCardList)

@@ -14,9 +14,12 @@ from app.mind_map import (
 )
 
 from app.generation_workflow import (
+    JOB_DELETE_REQUESTED_ERROR,
+    JOB_STAGE_SEQUENCE,
     append_job_log,
     cancel_job_workflow,
     delete_job_and_draft,
+    delete_unfinished_job_workflow,
     fail_job_stage,
     initialize_job_workflow,
     start_job_stage,
@@ -39,6 +42,7 @@ from app.models import (
     JOB_STAGE_FORMATTED_TEXT,
     JOB_STAGE_MIND_MAP_TOPICS,
     JOB_STAGE_PROMOTING,
+    JOB_STAGE_QUEUED,
     JOB_STAGE_QUESTION_CARDS,
     JOB_STAGE_STUDY_CARDS,
     JOB_STAGE_TITLE,
@@ -428,6 +432,43 @@ def _cleanup_note_group(db: Session, note_group: NoteGroup) -> list[str]:
     note_group.suggested_titles_json = None
     note_group.generation_status = "cancelled"
     return study_card_ids
+
+
+def _next_auto_generation_stage(job: Job) -> str:
+    succeeded_stages = {
+        stage.stage
+        for stage in job.stages
+        if stage.status == "succeeded"
+    }
+    for stage in JOB_STAGE_SEQUENCE:
+        if stage == JOB_STAGE_QUEUED:
+            continue
+        if stage not in succeeded_stages:
+            return stage
+    return JOB_STAGE_COMPLETE
+
+
+def _load_draft_study_cards(
+    db: Session,
+    draft: NoteGroupGenerationDraft,
+) -> list[DraftStudyCard]:
+    return (
+        db.query(DraftStudyCard)
+        .filter(DraftStudyCard.draft_id == draft.id)
+        .order_by(DraftStudyCard.sort_order.asc(), DraftStudyCard.created_at.asc())
+        .all()
+    )
+
+
+def _build_draft_study_card_context(draft_study_cards: list[DraftStudyCard]) -> list[dict]:
+    return [
+        {
+            "id": card.id,
+            "title": card.title,
+            "content": card.content,
+        }
+        for card in draft_study_cards
+    ]
 
 
 def _cleanup_note_group_by_id(db: Session, note_group_id: str) -> list[str]:
@@ -1210,6 +1251,12 @@ def run_auto_note_group_generation(job_id: str) -> None:
             db.delete(existing_draft)
             db.flush()
 
+        had_existing_workflow = (
+            db.query(NoteGroupGenerationDraft.id)
+            .filter(NoteGroupGenerationDraft.job_id == job.id)
+            .first()
+            is not None
+        )
         draft = initialize_job_workflow(
             db,
             job,
@@ -1220,303 +1267,334 @@ def run_auto_note_group_generation(job_id: str) -> None:
         draft.raw_text = raw_text
         draft.unique_id = note_group.source
         draft.additional_generation_instructions = additional_instructions
-        _clear_draft_generation_artifacts(db, draft)
-        db.commit()
-
-        current_stage = JOB_STAGE_TITLE
-        _start_auto_job_stage(db, job, current_stage)
-        db.commit()
-        suggestions: list[str] = []
-        try:
-            suggestions = generate_note_group_title_suggestions(module.title, raw_text)
-        except Exception:
-            suggestions = []
-        existing_titles = {
-            (group.title or "").strip().lower()
-            for group in db.query(NoteGroup.title)
-            .filter(NoteGroup.module_id == module.id)
-            .all()
-            if group[0]
-        }
-        base_title = ""
-        if suggestions and isinstance(suggestions, list):
-            for candidate in suggestions:
-                candidate_title = str(candidate).strip()
-                if candidate_title:
-                    base_title = candidate_title
-                    break
-        if not base_title:
-            words = raw_text.split()
-            base_title = " ".join(words[:6]).strip() or "Study notes"
-        title = base_title
-        if title.lower() in existing_titles:
-            suffix = 2
-            while f"{base_title} ({suffix})".lower() in existing_titles:
-                suffix += 1
-            title = f"{base_title} ({suffix})"
-        _raise_if_cancelled(db, job)
-        draft.title = title
-        if suggestions:
-            draft.suggested_titles_json = json.dumps(suggestions[:3])
-        succeed_job_stage(db, job, current_stage, message="Draft title generated")
-        db.commit()
-        _raise_if_cancelled(db, job)
-
-        current_stage = JOB_STAGE_CLEANED_TEXT
-        _start_auto_job_stage(db, job, current_stage)
-        db.commit()
-        cleaned_text_markdown = generate_cleaned_text_markdown(raw_text)
-        _raise_if_cancelled(db, job)
-        draft.cleaned_text_markdown = cleaned_text_markdown
-        succeed_job_stage(db, job, current_stage, message="Draft Cleaned Text generated")
-        db.commit()
-        _raise_if_cancelled(db, job)
-
-        current_stage = JOB_STAGE_STUDY_CARDS
-        _start_auto_job_stage(db, job, current_stage)
-        db.commit()
-        study_card_payloads = generate_study_cards_with_context(
-            module_title=module.title,
-            module_description=module.description,
-            note_group_title=draft.title or note_group.title or "",
-            raw_text=cleaned_text_markdown,
-            additional_instructions=additional_instructions,
-            module_goal=module.goal,
-            module_scope=module.scope,
-            subject_title=subject.title,
-            subject_goal=subject.goal,
-            subject_scope=subject.scope,
+        resume_stage = _next_auto_generation_stage(job)
+        has_successful_generation_stage = any(
+            stage.stage != JOB_STAGE_QUEUED and stage.status == "succeeded"
+            for stage in job.stages
         )
-        _raise_if_cancelled(db, job)
-        if not study_card_payloads:
-            raise ValueError("No study cards generated")
+        if (
+            resume_stage == JOB_STAGE_TITLE
+            and (not had_existing_workflow or not has_successful_generation_stage)
+        ):
+            _clear_draft_generation_artifacts(db, draft)
+        db.commit()
 
-        db.query(DraftStudyCard).filter(DraftStudyCard.draft_id == draft.id).delete(
-            synchronize_session=False
-        )
-        db.flush()
-        draft_study_cards: list[DraftStudyCard] = []
-        card_payload_pairs = []
-        for sort_order, payload in enumerate(study_card_payloads):
-            content = (payload.get("content") or "").strip()
-            if not content:
-                continue
-            card_title = payload.get("title")
-            card = DraftStudyCard(
-                draft_id=draft.id,
-                title=card_title,
-                content=content,
-                sort_order=sort_order,
-            )
-            db.add(card)
-            draft_study_cards.append(card)
-            card_payload_pairs.append((card, payload))
+        stage_order = {stage: index for index, stage in enumerate(JOB_STAGE_SEQUENCE)}
 
-        if not draft_study_cards:
-            raise ValueError("Generated study cards were empty")
+        def should_run(stage: str) -> bool:
+            return stage_order[resume_stage] <= stage_order[stage]
 
-        _raise_if_cancelled(db, job)
-        db.flush()
-        for card, payload in card_payload_pairs:
-            _store_draft_study_card_source_ranges(
-                db,
-                card,
-                cleaned_text_markdown,
-                payload.get("evidence_snippets"),
-            )
-        study_card_context = [
-            {"id": card.id, "title": card.title, "content": card.content}
-            for card in draft_study_cards
-        ]
+        title = draft.title or ""
+        cleaned_text_markdown = draft.cleaned_text_markdown or ""
+        draft_study_cards = _load_draft_study_cards(db, draft)
+        study_card_context = _build_draft_study_card_context(draft_study_cards)
         study_card_contents = [card.content for card in draft_study_cards]
-        succeed_job_stage(
-            db,
-            job,
-            current_stage,
-            message=f"Created {len(draft_study_cards)} draft Study Cards",
-            progress_current=len(draft_study_cards),
-            progress_total=len(draft_study_cards),
-        )
-        db.commit()
-        _raise_if_cancelled(db, job)
 
-        current_stage = JOB_STAGE_FORMATTED_TEXT
-        _start_auto_job_stage(db, job, current_stage)
-        db.commit()
-        raw_sections = []
-        try:
-            raw_sections = generate_formatted_sections(raw_text, study_card_context)
-        except Exception:
-            raw_sections = []
-        formatted_sections = build_formatted_sections(raw_sections, study_card_context)
-        _raise_if_cancelled(db, job)
-        draft.formatted_sections_json = json.dumps(formatted_sections)
-        draft.formatted_text = sections_to_markdown(formatted_sections)
-        succeed_job_stage(db, job, current_stage, message="Draft Formatted Text generated")
-        db.commit()
-        _raise_if_cancelled(db, job)
+        if should_run(JOB_STAGE_TITLE):
+            current_stage = JOB_STAGE_TITLE
+            _start_auto_job_stage(db, job, current_stage)
+            db.commit()
+            suggestions: list[str] = []
+            try:
+                suggestions = generate_note_group_title_suggestions(module.title, raw_text)
+            except Exception:
+                suggestions = []
+            existing_titles = {
+                (group.title or "").strip().lower()
+                for group in db.query(NoteGroup.title)
+                .filter(NoteGroup.module_id == module.id)
+                .all()
+                if group[0]
+            }
+            base_title = ""
+            if suggestions and isinstance(suggestions, list):
+                for candidate in suggestions:
+                    candidate_title = str(candidate).strip()
+                    if candidate_title:
+                        base_title = candidate_title
+                        break
+            if not base_title:
+                words = raw_text.split()
+                base_title = " ".join(words[:6]).strip() or "Study notes"
+            title = base_title
+            if title.lower() in existing_titles:
+                suffix = 2
+                while f"{base_title} ({suffix})".lower() in existing_titles:
+                    suffix += 1
+                title = f"{base_title} ({suffix})"
+            _raise_if_cancelled(db, job)
+            draft.title = title
+            if suggestions:
+                draft.suggested_titles_json = json.dumps(suggestions[:3])
+            succeed_job_stage(db, job, current_stage, message="Draft title generated")
+            db.commit()
+            _raise_if_cancelled(db, job)
+        elif not title:
+            raise ValueError("Draft title missing for resumed generation stage")
 
-        current_stage = JOB_STAGE_EMBEDDINGS
-        _start_auto_job_stage(db, job, current_stage)
-        db.commit()
-        embeddings = embed_texts(study_card_contents)
-        if len(embeddings) != len(draft_study_cards):
-            raise ValueError(
-                f"Expected {len(draft_study_cards)} draft Study Card embeddings, received {len(embeddings)}"
+        if should_run(JOB_STAGE_CLEANED_TEXT):
+            current_stage = JOB_STAGE_CLEANED_TEXT
+            _start_auto_job_stage(db, job, current_stage)
+            db.commit()
+            cleaned_text_markdown = generate_cleaned_text_markdown(raw_text)
+            _raise_if_cancelled(db, job)
+            draft.cleaned_text_markdown = cleaned_text_markdown
+            succeed_job_stage(db, job, current_stage, message="Draft Cleaned Text generated")
+            db.commit()
+            _raise_if_cancelled(db, job)
+        elif not cleaned_text_markdown:
+            raise ValueError("Draft Cleaned Text missing for resumed generation stage")
+
+        if should_run(JOB_STAGE_STUDY_CARDS):
+            current_stage = JOB_STAGE_STUDY_CARDS
+            _start_auto_job_stage(db, job, current_stage)
+            db.commit()
+            study_card_payloads = generate_study_cards_with_context(
+                module_title=module.title,
+                module_description=module.description,
+                note_group_title=title or note_group.title or "",
+                raw_text=cleaned_text_markdown,
+                additional_instructions=additional_instructions,
+                module_goal=module.goal,
+                module_scope=module.scope,
+                subject_title=subject.title,
+                subject_goal=subject.goal,
+                subject_scope=subject.scope,
             )
-        _raise_if_cancelled(db, job)
-        for card, embedding in zip(draft_study_cards, embeddings):
-            card.embedding_json = json.dumps(list(embedding))
-        succeed_job_stage(
-            db,
-            job,
-            current_stage,
-            message=f"Prepared {len(embeddings)} draft Study Card embeddings",
-            progress_current=len(embeddings),
-            progress_total=len(draft_study_cards),
-        )
-        db.commit()
-        _raise_if_cancelled(db, job)
+            _raise_if_cancelled(db, job)
+            if not study_card_payloads:
+                raise ValueError("No study cards generated")
 
-        current_stage = JOB_STAGE_QUESTION_CARDS
-        _start_auto_job_stage(db, job, current_stage)
-        db.commit()
-        question_payloads = generate_question_cards(
-            study_cards=[
-                {
-                    "studyCardId": card["id"],
-                    "title": card["title"],
-                    "content": card["content"],
-                }
-                for card in study_card_context
-            ],
-            existing_questions=[],
-            difficulty="mixed",
-            additional_instructions=additional_instructions,
-            module_goal=module.goal,
-            module_scope=module.scope,
-            subject_title=subject.title,
-            subject_goal=subject.goal,
-            subject_scope=subject.scope,
-        )
-        question_payloads = question_payloads[:100]
-        _raise_if_cancelled(db, job)
-        draft_study_card_ids = {card.id for card in draft_study_cards}
-        db.query(DraftQuestionCard).filter(DraftQuestionCard.draft_id == draft.id).delete(
-            synchronize_session=False
-        )
-        created = 0
-        if question_payloads:
-            for sort_order, payload in enumerate(question_payloads):
-                normalized = _normalize_question_payload(payload)
-                if not normalized:
+            db.query(DraftStudyCard).filter(DraftStudyCard.draft_id == draft.id).delete(
+                synchronize_session=False
+            )
+            db.flush()
+            draft_study_cards = []
+            card_payload_pairs = []
+            for sort_order, payload in enumerate(study_card_payloads):
+                content = (payload.get("content") or "").strip()
+                if not content:
                     continue
-                draft_refs = [
-                    ref for ref in normalized["study_card_refs"] if ref in draft_study_card_ids
-                ]
-                if not draft_refs:
-                    continue
-                question_card = DraftQuestionCard(
+                card_title = payload.get("title")
+                card = DraftStudyCard(
                     draft_id=draft.id,
-                    type=normalized["type"],
-                    prompt=normalized["prompt"],
-                    options_json=json.dumps(normalized["options"]),
-                    correct_option_indices_json=json.dumps(
-                        normalized["correct_option_indices"]
-                    ),
-                    option_explanations_json=json.dumps(
-                        normalized.get("option_explanations") or []
-                    ),
-                    study_card_refs_json=json.dumps(draft_refs),
+                    title=card_title,
+                    content=content,
                     sort_order=sort_order,
                 )
-                db.add(question_card)
-                created += 1
+                db.add(card)
+                draft_study_cards.append(card)
+                card_payload_pairs.append((card, payload))
 
-        succeed_job_stage(
-            db,
-            job,
-            current_stage,
-            message=f"Created {created} draft Question Cards",
-            progress_current=created,
-            progress_total=len(question_payloads),
-        )
-        db.commit()
-        _raise_if_cancelled(db, job)
+            if not draft_study_cards:
+                raise ValueError("Generated study cards were empty")
 
-        current_stage = JOB_STAGE_MIND_MAP_TOPICS
-        _start_auto_job_stage(db, job, current_stage)
-        db.commit()
-        candidate_topic_payload = generate_mind_map_candidate_graph(
-            module_title=module.title,
-            note_group_title=draft.title or note_group.title or "",
-            study_cards=[
-                {
-                    "study_card_id": card["id"],
-                    "title": card["title"],
-                    "content": card["content"],
-                    "topic_labels": [],
-                }
-                for card in study_card_context
-            ],
-            existing_topics=_existing_topic_payloads(db, module.id),
-        )
-        _raise_if_cancelled(db, job)
-        _persist_draft_topic_graph(db, draft, candidate_topic_payload)
-        draft_topic_count = db.query(DraftTopic).filter(DraftTopic.draft_id == draft.id).count()
-        succeed_job_stage(
-            db,
-            job,
-            current_stage,
-            message=f"Prepared {draft_topic_count} draft Topics",
-            progress_current=draft_topic_count,
-            progress_total=draft_topic_count,
-        )
-        db.commit()
-        _raise_if_cancelled(db, job)
+            _raise_if_cancelled(db, job)
+            db.flush()
+            for card, payload in card_payload_pairs:
+                _store_draft_study_card_source_ranges(
+                    db,
+                    card,
+                    cleaned_text_markdown,
+                    payload.get("evidence_snippets"),
+                )
+            study_card_context = _build_draft_study_card_context(draft_study_cards)
+            study_card_contents = [card.content for card in draft_study_cards]
+            succeed_job_stage(
+                db,
+                job,
+                current_stage,
+                message=f"Created {len(draft_study_cards)} draft Study Cards",
+                progress_current=len(draft_study_cards),
+                progress_total=len(draft_study_cards),
+            )
+            db.commit()
+            _raise_if_cancelled(db, job)
+        elif not draft_study_cards:
+            raise ValueError("Draft Study Cards missing for resumed generation stage")
 
-        current_stage = JOB_STAGE_TOPIC_KNOWLEDGE_NODES
-        _start_auto_job_stage(db, job, current_stage)
-        db.commit()
-        try:
-            knowledge_payload = generate_knowledge_node_candidates(
+        if should_run(JOB_STAGE_FORMATTED_TEXT):
+            current_stage = JOB_STAGE_FORMATTED_TEXT
+            _start_auto_job_stage(db, job, current_stage)
+            db.commit()
+            raw_sections = []
+            try:
+                raw_sections = generate_formatted_sections(raw_text, study_card_context)
+            except Exception:
+                raw_sections = []
+            formatted_sections = build_formatted_sections(raw_sections, study_card_context)
+            _raise_if_cancelled(db, job)
+            draft.formatted_sections_json = json.dumps(formatted_sections)
+            draft.formatted_text = sections_to_markdown(formatted_sections)
+            succeed_job_stage(db, job, current_stage, message="Draft Formatted Text generated")
+            db.commit()
+            _raise_if_cancelled(db, job)
+
+        if should_run(JOB_STAGE_EMBEDDINGS):
+            current_stage = JOB_STAGE_EMBEDDINGS
+            _start_auto_job_stage(db, job, current_stage)
+            db.commit()
+            embeddings = embed_texts(study_card_contents)
+            if len(embeddings) != len(draft_study_cards):
+                raise ValueError(
+                    f"Expected {len(draft_study_cards)} draft Study Card embeddings, received {len(embeddings)}"
+                )
+            _raise_if_cancelled(db, job)
+            for card, embedding in zip(draft_study_cards, embeddings):
+                card.embedding_json = json.dumps(list(embedding))
+            succeed_job_stage(
+                db,
+                job,
+                current_stage,
+                message=f"Prepared {len(embeddings)} draft Study Card embeddings",
+                progress_current=len(embeddings),
+                progress_total=len(draft_study_cards),
+            )
+            db.commit()
+            _raise_if_cancelled(db, job)
+
+        if should_run(JOB_STAGE_QUESTION_CARDS):
+            current_stage = JOB_STAGE_QUESTION_CARDS
+            _start_auto_job_stage(db, job, current_stage)
+            db.commit()
+            question_payloads = generate_question_cards(
+                study_cards=[
+                    {
+                        "studyCardId": card["id"],
+                        "title": card["title"],
+                        "content": card["content"],
+                    }
+                    for card in study_card_context
+                ],
+                existing_questions=[],
+                difficulty="mixed",
+                additional_instructions=additional_instructions,
+                module_goal=module.goal,
+                module_scope=module.scope,
+                subject_title=subject.title,
+                subject_goal=subject.goal,
+                subject_scope=subject.scope,
+            )
+            question_payloads = question_payloads[:100]
+            _raise_if_cancelled(db, job)
+            draft_study_card_ids = {card.id for card in draft_study_cards}
+            db.query(DraftQuestionCard).filter(DraftQuestionCard.draft_id == draft.id).delete(
+                synchronize_session=False
+            )
+            created = 0
+            if question_payloads:
+                for sort_order, payload in enumerate(question_payloads):
+                    normalized = _normalize_question_payload(payload)
+                    if not normalized:
+                        continue
+                    draft_refs = [
+                        ref for ref in normalized["study_card_refs"] if ref in draft_study_card_ids
+                    ]
+                    if not draft_refs:
+                        continue
+                    question_card = DraftQuestionCard(
+                        draft_id=draft.id,
+                        type=normalized["type"],
+                        prompt=normalized["prompt"],
+                        options_json=json.dumps(normalized["options"]),
+                        correct_option_indices_json=json.dumps(
+                            normalized["correct_option_indices"]
+                        ),
+                        option_explanations_json=json.dumps(
+                            normalized.get("option_explanations") or []
+                        ),
+                        study_card_refs_json=json.dumps(draft_refs),
+                        sort_order=sort_order,
+                    )
+                    db.add(question_card)
+                    created += 1
+
+            succeed_job_stage(
+                db,
+                job,
+                current_stage,
+                message=f"Created {created} draft Question Cards",
+                progress_current=created,
+                progress_total=len(question_payloads),
+            )
+            db.commit()
+            _raise_if_cancelled(db, job)
+
+        if should_run(JOB_STAGE_MIND_MAP_TOPICS):
+            current_stage = JOB_STAGE_MIND_MAP_TOPICS
+            _start_auto_job_stage(db, job, current_stage)
+            db.commit()
+            candidate_topic_payload = generate_mind_map_candidate_graph(
                 module_title=module.title,
-                note_group_title=draft.title or note_group.title or "",
-                study_cards=study_card_context,
-                topics=_draft_topic_payloads(db, draft),
-                study_card_topic_links=_draft_study_card_topic_link_payloads(db, draft),
-                existing_concepts=_existing_concept_payloads(db, module.id),
+                note_group_title=title or note_group.title or "",
+                study_cards=[
+                    {
+                        "study_card_id": card["id"],
+                        "title": card["title"],
+                        "content": card["content"],
+                        "topic_labels": [],
+                    }
+                    for card in study_card_context
+                ],
                 existing_topics=_existing_topic_payloads(db, module.id),
             )
             _raise_if_cancelled(db, job)
-            draft_knowledge_count = _persist_draft_knowledge_graph(db, draft, knowledge_payload)
-            append_job_log(
+            _persist_draft_topic_graph(db, draft, candidate_topic_payload)
+            draft_topic_count = db.query(DraftTopic).filter(DraftTopic.draft_id == draft.id).count()
+            succeed_job_stage(
                 db,
                 job,
                 current_stage,
-                f"Prepared {draft_knowledge_count} draft Topic Knowledge Nodes",
-                {"knowledge_node_count": draft_knowledge_count},
+                message=f"Prepared {draft_topic_count} draft Topics",
+                progress_current=draft_topic_count,
+                progress_total=draft_topic_count,
             )
-        except Exception as exc:
-            for draft_topic in db.query(DraftTopic).filter(DraftTopic.draft_id == draft.id).all():
-                draft_topic.knowledge_node_status = "needs_review"
-                draft_topic.knowledge_node_review_reason = str(exc)
-            append_job_log(
+            db.commit()
+            _raise_if_cancelled(db, job)
+
+        if should_run(JOB_STAGE_TOPIC_KNOWLEDGE_NODES):
+            current_stage = JOB_STAGE_TOPIC_KNOWLEDGE_NODES
+            _start_auto_job_stage(db, job, current_stage)
+            db.commit()
+            try:
+                knowledge_payload = generate_knowledge_node_candidates(
+                    module_title=module.title,
+                    note_group_title=title or note_group.title or "",
+                    study_cards=study_card_context,
+                    topics=_draft_topic_payloads(db, draft),
+                    study_card_topic_links=_draft_study_card_topic_link_payloads(db, draft),
+                    existing_concepts=_existing_concept_payloads(db, module.id),
+                    existing_topics=_existing_topic_payloads(db, module.id),
+                )
+                _raise_if_cancelled(db, job)
+                draft_knowledge_count = _persist_draft_knowledge_graph(db, draft, knowledge_payload)
+                append_job_log(
+                    db,
+                    job,
+                    current_stage,
+                    f"Prepared {draft_knowledge_count} draft Topic Knowledge Nodes",
+                    {"knowledge_node_count": draft_knowledge_count},
+                )
+            except Exception as exc:
+                for draft_topic in db.query(DraftTopic).filter(DraftTopic.draft_id == draft.id).all():
+                    draft_topic.knowledge_node_status = "needs_review"
+                    draft_topic.knowledge_node_review_reason = str(exc)
+                append_job_log(
+                    db,
+                    job,
+                    current_stage,
+                    "Draft Topic Knowledge Nodes need review",
+                    {"level": "warning", "reason": str(exc)},
+                )
+            _raise_if_cancelled(db, job)
+            succeed_job_stage(
                 db,
                 job,
                 current_stage,
-                "Draft Topic Knowledge Nodes need review",
-                {"level": "warning", "reason": str(exc)},
+                message="Draft Topic Knowledge Node stage complete",
             )
-        _raise_if_cancelled(db, job)
-        succeed_job_stage(
-            db,
-            job,
-            current_stage,
-            message="Draft Topic Knowledge Node stage complete",
-        )
-        db.commit()
-        _raise_if_cancelled(db, job)
+            db.commit()
+            _raise_if_cancelled(db, job)
 
         current_stage = JOB_STAGE_PROMOTING
         _start_auto_job_stage(db, job, current_stage)
@@ -1540,7 +1618,10 @@ def run_auto_note_group_generation(job_id: str) -> None:
         db.rollback()
         job = db.get(Job, job_id)
         if job:
-            cancel_job_workflow(db, job, "Generation cancelled")
+            if job.error == JOB_DELETE_REQUESTED_ERROR:
+                delete_unfinished_job_workflow(db, job)
+            else:
+                cancel_job_workflow(db, job, "Generation cancelled")
             db.commit()
     except Exception as exc:
         db.rollback()
@@ -1551,7 +1632,10 @@ def run_auto_note_group_generation(job_id: str) -> None:
                 db.refresh(job)
                 if job.status == "cancelled":
                     was_cancelled = True
-                    cancel_job_workflow(db, job, "Generation cancelled")
+                    if job.error == JOB_DELETE_REQUESTED_ERROR:
+                        delete_unfinished_job_workflow(db, job)
+                    else:
+                        cancel_job_workflow(db, job, "Generation cancelled")
                 else:
                     fail_job_stage(db, job, current_stage, str(exc))
             except Exception:

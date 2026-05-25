@@ -50,16 +50,21 @@ from app.models import (
 )
 from app.schemas import JobLogOut, JobOut
 from app.generation_workflow import (
+    JOB_DELETE_REQUESTED_ERROR,
     JOB_STAGE_SEQUENCE,
     append_job_log,
     delete_job_and_draft,
+    delete_unfinished_job_workflow,
     fail_job_stage,
     initialize_job_workflow,
+    request_unfinished_job_delete,
+    retry_failed_job_stage,
     serialize_generation_workflow,
     set_stage_progress,
     start_job_stage,
     succeed_job_stage,
 )
+from app.jobs import JOB_TYPE_NOTE_GROUP_AUTO_GENERATION
 
 
 class GenerationWorkflowModelTests(unittest.TestCase):
@@ -917,6 +922,135 @@ class GenerationWorkflowServiceTests(unittest.TestCase):
             db.close()
 
 
+class AutoQueueModuleGatingTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+
+        @event.listens_for(self.engine, "connect")
+        def _set_sqlite_pragma(dbapi_connection, connection_record) -> None:
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
+        Base.metadata.create_all(bind=self.engine)
+        self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
+
+    def tearDown(self):
+        import app.auto_queue as auto_queue
+
+        with auto_queue._condition:
+            auto_queue._queue.clear()
+            auto_queue._queue_set.clear()
+        Base.metadata.drop_all(bind=self.engine)
+
+    def test_worker_defers_same_module_auto_job_until_running_job_finishes(self):
+        import app.auto_queue as auto_queue
+
+        db = self.SessionLocal()
+        try:
+            owner = User(
+                id="queue-owner",
+                supabase_user_id="queue-owner-sub",
+                email="queue-owner@example.com",
+                app_role="creator",
+            )
+            subject = Subject(id="queue-subject", title="Queue Subject", owner_user_id=owner.id)
+            module = Module(id="queue-module", subject_id=subject.id, title="Queue Module")
+            other_module = Module(id="queue-other-module", subject_id=subject.id, title="Other Module")
+            first_note_group = NoteGroup(
+                id="queue-note-group-1",
+                module_id=module.id,
+                title="Queued Note Group 1",
+                source="queue-source-1",
+                raw_text="raw 1",
+                generation_status="generating",
+            )
+            second_note_group = NoteGroup(
+                id="queue-note-group-2",
+                module_id=module.id,
+                title="Queued Note Group 2",
+                source="queue-source-2",
+                raw_text="raw 2",
+                generation_status="queued",
+            )
+            other_note_group = NoteGroup(
+                id="queue-note-group-3",
+                module_id=other_module.id,
+                title="Queued Note Group 3",
+                source="queue-source-3",
+                raw_text="raw 3",
+                generation_status="queued",
+            )
+            running_job = Job(
+                id="queue-job-running",
+                type=JOB_TYPE_NOTE_GROUP_AUTO_GENERATION,
+                status="running",
+                note_group_id=first_note_group.id,
+            )
+            queued_job = Job(
+                id="queue-job-queued",
+                type=JOB_TYPE_NOTE_GROUP_AUTO_GENERATION,
+                status="queued",
+                note_group_id=second_note_group.id,
+            )
+            other_queued_job = Job(
+                id="queue-job-other",
+                type=JOB_TYPE_NOTE_GROUP_AUTO_GENERATION,
+                status="queued",
+                note_group_id=other_note_group.id,
+            )
+            db.add_all(
+                [
+                    owner,
+                    subject,
+                    module,
+                    other_module,
+                    first_note_group,
+                    second_note_group,
+                    other_note_group,
+                    running_job,
+                    queued_job,
+                    other_queued_job,
+                ]
+            )
+            db.commit()
+
+            with auto_queue._condition:
+                auto_queue._queue.clear()
+                auto_queue._queue_set.clear()
+            with patch.object(auto_queue, "SessionLocal", self.SessionLocal):
+                self.assertTrue(auto_queue.enqueue_auto_job(queued_job.id))
+                self.assertTrue(auto_queue.enqueue_auto_job(other_queued_job.id))
+
+                self.assertEqual(
+                    auto_queue._dequeue_next_runnable_job(wait=False),
+                    other_queued_job.id,
+                )
+                with auto_queue._condition:
+                    self.assertEqual(list(auto_queue._queue), [queued_job.id])
+                db.expire_all()
+                self.assertEqual(db.get(Job, other_queued_job.id).status, "running")
+
+                running_job.status = "completed"
+                first_note_group.generation_status = "failed"
+                db.commit()
+
+                self.assertEqual(
+                    auto_queue._dequeue_next_runnable_job(wait=False),
+                    queued_job.id,
+                )
+                db.expire_all()
+                self.assertEqual(db.get(Job, queued_job.id).status, "running")
+                with auto_queue._condition:
+                    self.assertEqual(list(auto_queue._queue), [])
+        finally:
+            db.close()
+
+
 class DraftFirstAutoGenerationTests(unittest.TestCase):
     def setUp(self):
         self.engine = create_engine(
@@ -969,13 +1103,136 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
         )
         job = Job(
             id=f"auto-job-{suffix}",
-            type="NOTE_GROUP_GENERATION",
+            type=JOB_TYPE_NOTE_GROUP_AUTO_GENERATION,
             status="queued",
             note_group_id=note_group.id,
         )
         db.add_all([owner, subject, module, note_group, job])
         db.commit()
         return job
+
+    def test_delete_unfinished_job_removes_placeholder_note_group_and_workflow(self):
+        db = self.SessionLocal()
+        try:
+            job = self._create_auto_generation_job(db, "delete-unfinished")
+            job_id = job.id
+            note_group_id = job.note_group_id
+            initialize_job_workflow(db, job, "raw text", "unique-id", None)
+            draft = db.query(NoteGroupGenerationDraft).filter_by(job_id=job_id).one()
+            db.add(
+                DraftStudyCard(
+                    id="delete-draft-card",
+                    draft_id=draft.id,
+                    title="Draft Card",
+                    content="Draft card content",
+                    sort_order=0,
+                )
+            )
+            append_job_log(db, job, JOB_STAGE_STUDY_CARDS, "Created draft Study Card")
+            db.commit()
+
+            delete_unfinished_job_workflow(db, job)
+            db.commit()
+
+            self.assertIsNone(db.get(Job, job_id))
+            self.assertIsNone(db.get(NoteGroup, note_group_id))
+            self.assertEqual(db.query(NoteGroupGenerationDraft).filter_by(job_id=job_id).count(), 0)
+            self.assertEqual(db.query(JobStage).filter_by(job_id=job_id).count(), 0)
+            self.assertEqual(db.query(JobLog).filter_by(job_id=job_id).count(), 0)
+            self.assertEqual(db.query(DraftStudyCard).count(), 0)
+        finally:
+            db.close()
+
+    def test_delete_running_job_requests_cancel_and_worker_deletes_placeholder(self):
+        db = self.SessionLocal()
+        try:
+            job = self._create_auto_generation_job(db, "delete-running")
+            job_id = job.id
+            note_group_id = job.note_group_id
+            job.status = "running"
+            initialize_job_workflow(db, job, "raw text", "unique-id", None)
+            db.commit()
+
+            deleted = request_unfinished_job_delete(db, job)
+            db.commit()
+
+            self.assertFalse(deleted)
+            self.assertIsNotNone(db.get(Job, job_id))
+            self.assertIsNotNone(db.get(NoteGroup, note_group_id))
+            self.assertEqual(db.get(Job, job_id).status, "cancelled")
+            self.assertEqual(db.get(Job, job_id).error, JOB_DELETE_REQUESTED_ERROR)
+            db.close()
+
+            self._run_with_mocks(job_id)
+
+            db = self.SessionLocal()
+            self.assertIsNone(db.get(Job, job_id))
+            self.assertIsNone(db.get(NoteGroup, note_group_id))
+            self.assertEqual(db.query(NoteGroupGenerationDraft).filter_by(job_id=job_id).count(), 0)
+            self.assertEqual(db.query(JobStage).filter_by(job_id=job_id).count(), 0)
+            self.assertEqual(db.query(JobLog).filter_by(job_id=job_id).count(), 0)
+            self.assertEqual(db.query(StudyCard).filter_by(note_group_id=note_group_id).count(), 0)
+        finally:
+            db.close()
+
+    def test_delete_request_wins_when_running_stage_fails_before_cancel_check(self):
+        db = self.SessionLocal()
+        try:
+            job = self._create_auto_generation_job(db, "delete-running-failure")
+            job_id = job.id
+            note_group_id = job.note_group_id
+            db.close()
+
+            def request_delete_then_fail(*_args, **_kwargs):
+                delete_db = self.SessionLocal()
+                try:
+                    delete_job = delete_db.get(Job, job_id)
+                    request_unfinished_job_delete(delete_db, delete_job)
+                    delete_db.commit()
+                finally:
+                    delete_db.close()
+                raise RuntimeError("cleaning failed after delete request")
+
+            self._run_with_mocks(job_id, cleaned_text=request_delete_then_fail)
+
+            db = self.SessionLocal()
+            self.assertIsNone(db.get(Job, job_id))
+            self.assertIsNone(db.get(NoteGroup, note_group_id))
+            self.assertEqual(db.query(NoteGroupGenerationDraft).filter_by(job_id=job_id).count(), 0)
+            self.assertEqual(db.query(JobStage).filter_by(job_id=job_id).count(), 0)
+            self.assertEqual(db.query(JobLog).filter_by(job_id=job_id).count(), 0)
+        finally:
+            db.close()
+
+    def test_repeated_delete_request_keeps_running_job_tombstone_for_worker_cleanup(self):
+        db = self.SessionLocal()
+        try:
+            job = self._create_auto_generation_job(db, "delete-running-repeat")
+            job_id = job.id
+            note_group_id = job.note_group_id
+            job.status = "running"
+            initialize_job_workflow(db, job, "raw text", "unique-id", None)
+            db.commit()
+
+            first_deleted = request_unfinished_job_delete(db, job)
+            second_deleted = request_unfinished_job_delete(db, job)
+            db.commit()
+
+            self.assertFalse(first_deleted)
+            self.assertFalse(second_deleted)
+            self.assertIsNotNone(db.get(Job, job_id))
+            self.assertIsNotNone(db.get(NoteGroup, note_group_id))
+            self.assertEqual(db.get(Job, job_id).status, "cancelled")
+            self.assertEqual(db.get(Job, job_id).error, JOB_DELETE_REQUESTED_ERROR)
+            db.close()
+
+            self._run_with_mocks(job_id)
+
+            db = self.SessionLocal()
+            self.assertIsNone(db.get(Job, job_id))
+            self.assertIsNone(db.get(NoteGroup, note_group_id))
+        finally:
+            db.close()
 
     def _run_with_mocks(self, job_id: str, **overrides) -> None:
         import app.jobs as jobs
@@ -1208,6 +1465,113 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
             self.assertEqual(db.query(DraftStudyCard).filter_by(draft_id=draft.id).count(), 0)
             self.assertEqual(db.query(DraftQuestionCard).filter_by(draft_id=draft.id).count(), 0)
             self.assertEqual(db.query(DraftTopic).filter_by(draft_id=draft.id).count(), 0)
+        finally:
+            db.close()
+
+    def test_retry_from_failed_question_cards_preserves_earlier_draft_outputs_and_finishes_same_job(self):
+        db = self.SessionLocal()
+        try:
+            job = self._create_auto_generation_job(db, "retry-question-stage")
+            job_id = job.id
+            db.close()
+
+            self._run_with_mocks(
+                job_id,
+                questions=RuntimeError("question generation failed"),
+            )
+
+            db = self.SessionLocal()
+            stored_job = db.get(Job, job_id)
+            note_group_id = stored_job.note_group_id
+            draft = db.query(NoteGroupGenerationDraft).filter_by(job_id=job_id).one()
+            draft_card = db.query(DraftStudyCard).filter_by(draft_id=draft.id).one()
+            preserved_draft_card_id = draft_card.id
+            preserved_embedding_json = draft_card.embedding_json
+
+            self.assertEqual(stored_job.status, "failed")
+            self.assertEqual(stored_job.current_stage, JOB_STAGE_QUESTION_CARDS)
+            self.assertEqual(stored_job.stage_status, "failed")
+            self.assertIsNotNone(preserved_embedding_json)
+
+            retried_job = retry_failed_job_stage(db, stored_job)
+            db.commit()
+
+            self.assertEqual(retried_job.id, job_id)
+
+            db.expire_all()
+            retried_job = db.get(Job, job_id)
+            retried_draft = db.query(NoteGroupGenerationDraft).filter_by(job_id=job_id).one()
+            stages = {
+                stage.stage: stage
+                for stage in db.query(JobStage).filter(JobStage.job_id == job_id).all()
+            }
+            preserved_draft_card = (
+                db.query(DraftStudyCard).filter_by(draft_id=retried_draft.id).one()
+            )
+
+            self.assertEqual(retried_job.status, "queued")
+            self.assertIsNone(retried_job.error)
+            self.assertEqual(retried_job.note_group.generation_status, "queued")
+            self.assertEqual(retried_draft.current_stage, JOB_STAGE_QUESTION_CARDS)
+            self.assertEqual(stages[JOB_STAGE_STUDY_CARDS].status, "succeeded")
+            self.assertEqual(stages[JOB_STAGE_EMBEDDINGS].status, "succeeded")
+            self.assertEqual(stages[JOB_STAGE_QUESTION_CARDS].status, "pending")
+            self.assertEqual(stages[JOB_STAGE_MIND_MAP_TOPICS].status, "pending")
+            self.assertEqual(stages[JOB_STAGE_TOPIC_KNOWLEDGE_NODES].status, "pending")
+            self.assertEqual(preserved_draft_card.id, preserved_draft_card_id)
+            self.assertEqual(preserved_draft_card.embedding_json, preserved_embedding_json)
+            self.assertEqual(
+                db.query(DraftQuestionCard).filter_by(draft_id=retried_draft.id).count(),
+                0,
+            )
+            db.close()
+
+            def question_payloads(study_cards, **_kwargs):
+                return [
+                    {
+                        "type": "mcq",
+                        "prompt": "Which statement is correct?",
+                        "options": ["Concept content", "Other", "Wrong", "No"],
+                        "correct_option_indices": [0],
+                        "study_card_refs": [study_cards[0]["studyCardId"]],
+                    }
+                ]
+
+            self._run_with_extra_patches(
+                job_id,
+                [
+                    patch(
+                        "app.jobs.generate_note_group_title_suggestions",
+                        side_effect=AssertionError("title stage should not rerun"),
+                    ),
+                    patch(
+                        "app.jobs.generate_cleaned_text_markdown",
+                        side_effect=AssertionError("cleaned text stage should not rerun"),
+                    ),
+                    patch(
+                        "app.jobs.generate_study_cards_with_context",
+                        side_effect=AssertionError("study card stage should not rerun"),
+                    ),
+                    patch(
+                        "app.jobs.generate_formatted_sections",
+                        side_effect=AssertionError("formatted text stage should not rerun"),
+                    ),
+                    patch(
+                        "app.jobs.embed_texts",
+                        side_effect=AssertionError("embeddings stage should not rerun"),
+                    ),
+                ],
+                questions=question_payloads,
+            )
+
+            db = self.SessionLocal()
+            note_group = db.get(NoteGroup, note_group_id)
+
+            self.assertIsNone(db.get(Job, job_id))
+            self.assertEqual(note_group.generation_status, "complete")
+            self.assertEqual(db.query(StudyCard).filter_by(note_group_id=note_group_id).count(), 1)
+            self.assertEqual(db.query(QuestionCard).filter_by(note_group_id=note_group_id).count(), 1)
+            self.assertEqual(db.query(NoteGroupGenerationDraft).filter_by(note_group_id=note_group_id).count(), 0)
         finally:
             db.close()
 
