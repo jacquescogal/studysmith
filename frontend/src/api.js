@@ -350,6 +350,14 @@ export function listJobs({ type, status, moduleId } = {}) {
   return request(`/jobs${suffix}`);
 }
 
+export function getModuleGenerationWorkflow(moduleId) {
+  return request(`/modules/${moduleId}/generation-workflow`);
+}
+
+export function getJobWorkflow(jobId) {
+  return request(`/jobs/${jobId}/workflow`);
+}
+
 export function cancelJob(jobId) {
   return request(`/jobs/${jobId}/cancel`, {
     method: "POST"
@@ -360,6 +368,116 @@ export function retryAutoJob(jobId) {
   return request(`/jobs/${jobId}/retry`, {
     method: "POST"
   });
+}
+
+export function deleteJob(jobId) {
+  return request(`/jobs/${jobId}`, {
+    method: "DELETE"
+  });
+}
+
+export async function subscribeModuleGenerationWorkflow(
+  moduleId,
+  { onSnapshot, onError, signal } = {}
+) {
+  const accessToken = await getAccessToken();
+  const controller = new AbortController();
+  const abortStream = () => controller.abort();
+  if (signal?.aborted) {
+    abortStream();
+  } else if (signal) {
+    signal.addEventListener("abort", abortStream, { once: true });
+  }
+
+  let eventName = "message";
+  let dataLines = [];
+  const resetEvent = () => {
+    eventName = "message";
+    dataLines = [];
+  };
+  const dispatchEvent = () => {
+    if (!dataLines.length) {
+      resetEvent();
+      return;
+    }
+    if (eventName === "snapshot") {
+      try {
+        onSnapshot?.(JSON.parse(dataLines.join("\n")));
+      } catch (error) {
+        onError?.(error);
+      }
+    }
+    resetEvent();
+  };
+  const processLine = (line) => {
+    if (line === "") {
+      dispatchEvent();
+      return;
+    }
+    if (line.startsWith(":")) {
+      return;
+    }
+    const separatorIndex = line.indexOf(":");
+    const field = separatorIndex === -1 ? line : line.slice(0, separatorIndex);
+    let value = separatorIndex === -1 ? "" : line.slice(separatorIndex + 1);
+    if (value.startsWith(" ")) {
+      value = value.slice(1);
+    }
+    if (field === "event") {
+      eventName = value || "message";
+    } else if (field === "data") {
+      dataLines.push(value);
+    }
+  };
+
+  try {
+    const response = await fetch(`${API_BASE}/modules/${moduleId}/generation-workflow/events`, {
+      headers: {
+        Accept: "text/event-stream",
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
+      },
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw await parseErrorResponse(response);
+    }
+    if (!response.body) {
+      throw new Error("Workflow stream is unavailable");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || "";
+      lines.forEach(processLine);
+    }
+
+    buffer += decoder.decode();
+    if (buffer) {
+      processLine(buffer);
+    }
+    if (!controller.signal.aborted && !signal?.aborted) {
+      throw new Error("Workflow stream disconnected");
+    }
+  } catch (error) {
+    if (isAbortError(error) || signal?.aborted) {
+      return;
+    }
+    onError?.(error);
+  } finally {
+    if (signal) {
+      signal.removeEventListener("abort", abortStream);
+    }
+  }
 }
 
 export function listStudyCards(noteGroupId) {
