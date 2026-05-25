@@ -73,6 +73,7 @@ import {
   getNoteGroupCardTable,
   getJob,
   getModule,
+  getModuleGenerationWorkflow,
   getModuleMindMap,
   getModuleOverview,
   getModuleQuestionTimeline,
@@ -83,7 +84,6 @@ import {
   getStudyCard,
   getTopic,
   getTopicQuestionTimeline,
-  listJobs,
   listAllModules,
   listModuleReviewQuestionCards,
   listModules,
@@ -108,6 +108,7 @@ import {
   sendChat,
   sendModuleIntentChat,
   sendSubjectIntentChat,
+  subscribeModuleGenerationWorkflow,
   updateNoteGroupOrder,
   updateNoteGroupTitle,
   updateQuestionCard,
@@ -185,6 +186,16 @@ const resolveModuleForRouteRestore = async (moduleId) => {
 const showFetchToast = (error, fallback) => {
   toast.error(error?.message || fallback);
 };
+
+const AUTO_WORKFLOW_ACTIVE_STATUSES = new Set(["queued", "running"]);
+const AUTO_WORKFLOW_TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const WORKFLOW_STREAM_RECONNECT_DELAYS_MS = [1000, 2000, 5000];
+const WORKFLOW_DELETE_REQUESTED_ERROR = "Generation deletion requested";
+
+const normalizeGenerationWorkflowSnapshot = (snapshot) => ({
+  module_id: snapshot?.module_id || "",
+  jobs: Array.isArray(snapshot?.jobs) ? snapshot.jobs : []
+});
 
 export default function App() {
   const auth = useAuth();
@@ -330,6 +341,11 @@ export default function App() {
   const [draggedNoteGroupId, setDraggedNoteGroupId] = useState("");
   const [dragOverNoteGroupId, setDragOverNoteGroupId] = useState("");
   const [isReorderingNoteGroups, setIsReorderingNoteGroups] = useState(false);
+  const [moduleGenerationWorkflow, setModuleGenerationWorkflow] = useState(null);
+  const [moduleGenerationWorkflowError, setModuleGenerationWorkflowError] = useState("");
+  const [moduleGenerationWorkflowConnection, setModuleGenerationWorkflowConnection] = useState("idle");
+  const [generationWorkflowsByJobId, setGenerationWorkflowsByJobId] = useState({});
+  const [generationWorkflowsByNoteGroupId, setGenerationWorkflowsByNoteGroupId] = useState({});
   const [autoJobsByNoteGroupId, setAutoJobsByNoteGroupId] = useState({});
   const [autoJobActionId, setAutoJobActionId] = useState("");
 
@@ -416,7 +432,8 @@ export default function App() {
   const selectedSubjectIdRef = useRef(selectedSubjectId);
   const selectedModuleIdRef = useRef(selectedModuleId);
   const selectedNoteGroupIdRef = useRef(selectedNoteGroupId);
-  const activeAutoJobsRef = useRef(new Set());
+  const moduleGenerationWorkflowRef = useRef(null);
+  const notifiedAutoJobTerminalRef = useRef(new Set());
   const reviewDKeyTimeRef = useRef(0);
   const location = useLocation();
   const navigate = useNavigate();
@@ -513,6 +530,12 @@ export default function App() {
   useEffect(() => {
     if (!canManageSelectedSubject) {
       setIsSubjectManagementOpen(false);
+      moduleGenerationWorkflowRef.current = null;
+      setModuleGenerationWorkflow(null);
+      setModuleGenerationWorkflowError("");
+      setModuleGenerationWorkflowConnection("idle");
+      setGenerationWorkflowsByJobId({});
+      setGenerationWorkflowsByNoteGroupId({});
       setAutoJobsByNoteGroupId({});
     }
   }, [canManageSelectedSubject]);
@@ -544,6 +567,127 @@ export default function App() {
     () => questionCards.find((card) => card.id === focusQuestionCardId),
     [questionCards, focusQuestionCardId]
   );
+
+  const refreshModuleGeneratedData = (moduleId) => {
+    if (!moduleId || selectedModuleIdRef.current !== moduleId) {
+      return;
+    }
+    listTopicChips(moduleId)
+      .then((chips) => {
+        if (selectedModuleIdRef.current === moduleId) {
+          setTopicChips(chips);
+        }
+      })
+      .catch((error) => {
+        if (selectedModuleIdRef.current === moduleId) {
+          toast.error(error.message || "Failed to refresh generated note group.");
+        }
+      });
+    setReviewRefreshToken((prev) => prev + 1);
+    setMindMapRefreshToken((prev) => prev + 1);
+  };
+
+  const applyModuleGenerationWorkflowSnapshot = (snapshot, options = {}) => {
+    const { moduleId = selectedModuleIdRef.current, notify = true } = options;
+    const nextSnapshot = normalizeGenerationWorkflowSnapshot(snapshot);
+    if (
+      !moduleId ||
+      selectedModuleIdRef.current !== moduleId ||
+      nextSnapshot.module_id !== moduleId
+    ) {
+      return;
+    }
+
+    const previousSnapshot =
+      moduleGenerationWorkflowRef.current?.module_id === moduleId
+        ? moduleGenerationWorkflowRef.current
+        : null;
+    const previousWorkflowsById = new Map(
+      (previousSnapshot?.jobs || [])
+        .map((workflow) => [workflow?.job?.id, workflow])
+        .filter(([jobId]) => Boolean(jobId))
+    );
+    const nextWorkflowsById = new Map();
+    const nextWorkflowsByNoteGroupId = {};
+    const nextAutoJobsByNoteGroupId = {};
+
+    nextSnapshot.jobs.forEach((workflow) => {
+      const job = workflow?.job;
+      if (!job?.id) {
+        return;
+      }
+      const noteGroupId = job.note_group_id || workflow.note_group?.id;
+      nextWorkflowsById.set(job.id, workflow);
+      if (noteGroupId) {
+        nextWorkflowsByNoteGroupId[noteGroupId] = workflow;
+        nextAutoJobsByNoteGroupId[noteGroupId] = {
+          ...job,
+          note_group_id: noteGroupId,
+          current_stage: workflow.current_stage || job.current_stage
+        };
+      }
+
+      const previousWorkflow = previousWorkflowsById.get(job.id);
+      const previousStatus = previousWorkflow?.job?.status;
+      const nextStatus = job.status;
+      const terminalToastKey = `${job.id}:${nextStatus}`;
+      if (AUTO_WORKFLOW_ACTIVE_STATUSES.has(nextStatus)) {
+        AUTO_WORKFLOW_TERMINAL_STATUSES.forEach((status) => {
+          notifiedAutoJobTerminalRef.current.delete(`${job.id}:${status}`);
+        });
+      }
+      if (
+        notify &&
+        previousWorkflow &&
+        previousStatus !== nextStatus &&
+        AUTO_WORKFLOW_TERMINAL_STATUSES.has(nextStatus)
+      ) {
+        refreshModuleGeneratedData(moduleId);
+        if (!notifiedAutoJobTerminalRef.current.has(terminalToastKey)) {
+          notifiedAutoJobTerminalRef.current.add(terminalToastKey);
+          if (nextStatus === "failed") {
+            toast.error(job.error || "Note group creation failed.");
+          } else if (nextStatus === "cancelled") {
+            toast.info("Note group creation cancelled.");
+          } else if (nextStatus === "completed") {
+            toast.success("Note group ready.");
+          }
+        }
+      }
+    });
+
+    if (notify && previousSnapshot) {
+      previousWorkflowsById.forEach((previousWorkflow, jobId) => {
+        if (nextWorkflowsById.has(jobId)) {
+          return;
+        }
+        const previousJob = previousWorkflow?.job || {};
+        const wasActive = AUTO_WORKFLOW_ACTIVE_STATUSES.has(previousJob.status);
+        const wasDeleteRequested = previousJob.error === WORKFLOW_DELETE_REQUESTED_ERROR;
+        if (wasActive && !wasDeleteRequested) {
+          const terminalToastKey = `${jobId}:completed`;
+          if (!notifiedAutoJobTerminalRef.current.has(terminalToastKey)) {
+            notifiedAutoJobTerminalRef.current.add(terminalToastKey);
+            toast.success("Note group ready.");
+          }
+        }
+        refreshModuleGeneratedData(moduleId);
+      });
+    }
+
+    moduleGenerationWorkflowRef.current = nextSnapshot;
+    setModuleGenerationWorkflow(nextSnapshot);
+    setModuleGenerationWorkflowError("");
+    setGenerationWorkflowsByJobId(Object.fromEntries(nextWorkflowsById));
+    setGenerationWorkflowsByNoteGroupId(nextWorkflowsByNoteGroupId);
+    setAutoJobsByNoteGroupId(nextAutoJobsByNoteGroupId);
+  };
+
+  const refreshModuleGenerationWorkflowSnapshot = async (moduleId, options = {}) => {
+    const snapshot = await getModuleGenerationWorkflow(moduleId);
+    applyModuleGenerationWorkflowSnapshot(snapshot, { moduleId, ...options });
+    return snapshot;
+  };
 
   const filteredStudyCards = useMemo(() => {
     if (!chipFilterIds.length) {
@@ -1358,14 +1502,83 @@ export default function App() {
 
   useEffect(() => {
     if (!selectedModuleId || !canManageSelectedSubject) {
+      moduleGenerationWorkflowRef.current = null;
+      setModuleGenerationWorkflow(null);
+      setModuleGenerationWorkflowError("");
+      setModuleGenerationWorkflowConnection("idle");
+      setGenerationWorkflowsByJobId({});
+      setGenerationWorkflowsByNoteGroupId({});
+      setAutoJobsByNoteGroupId({});
       return;
     }
-    loadAutoJobs(selectedModuleId).catch((error) => {
-      if (error.message === "Not Found") {
+    const moduleId = selectedModuleId;
+    const controller = new AbortController();
+    let cancelled = false;
+    moduleGenerationWorkflowRef.current = null;
+    setModuleGenerationWorkflow(null);
+    setModuleGenerationWorkflowError("");
+    setModuleGenerationWorkflowConnection("connecting");
+    setGenerationWorkflowsByJobId({});
+    setGenerationWorkflowsByNoteGroupId({});
+    setAutoJobsByNoteGroupId({});
+
+    const connectWorkflowStream = async () => {
+      try {
+        await refreshModuleGenerationWorkflowSnapshot(moduleId, { notify: false });
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setModuleGenerationWorkflowError(
+          error.message || "Failed to load note group generation workflow."
+        );
+        setModuleGenerationWorkflowConnection("error");
+        toast.error(error.message || "Failed to check note group creation jobs.");
         return;
       }
-      toast.error(error.message || "Failed to check note group creation jobs.");
-    });
+      if (cancelled) {
+        return;
+      }
+      let reconnectAttempt = 0;
+      while (!cancelled && !controller.signal.aborted) {
+        await subscribeModuleGenerationWorkflow(moduleId, {
+          signal: controller.signal,
+          onSnapshot: (snapshot) => {
+            if (cancelled) {
+              return;
+            }
+            reconnectAttempt = 0;
+            setModuleGenerationWorkflowConnection("connected");
+            applyModuleGenerationWorkflowSnapshot(snapshot, { moduleId });
+          },
+          onError: (error) => {
+            if (cancelled) {
+              return;
+            }
+            setModuleGenerationWorkflowError(
+              error.message || "Note group generation workflow stream disconnected."
+            );
+            setModuleGenerationWorkflowConnection("error");
+          }
+        });
+        if (cancelled || controller.signal.aborted) {
+          break;
+        }
+        const delayMs =
+          WORKFLOW_STREAM_RECONNECT_DELAYS_MS[
+            Math.min(reconnectAttempt, WORKFLOW_STREAM_RECONNECT_DELAYS_MS.length - 1)
+          ];
+        reconnectAttempt += 1;
+        setModuleGenerationWorkflowConnection("connecting");
+        await sleep(delayMs);
+      }
+    };
+
+    connectWorkflowStream();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [selectedModuleId, canManageSelectedSubject]);
 
   useEffect(() => {
@@ -1974,79 +2187,6 @@ export default function App() {
         setNoteGroupMindMapGenerating(false);
       }
     }
-  };
-
-  const trackAutoNoteGroupJob = (jobId, moduleId) => {
-    if (activeAutoJobsRef.current.has(jobId)) {
-      return;
-    }
-    activeAutoJobsRef.current.add(jobId);
-    pollJob(jobId, () => null, { maxAttempts: 180, intervalMs: 2000 })
-      .then(async (job) => {
-        let toastLabel = "Note group ready.";
-        let resolvedModuleId = moduleId;
-        if (job.note_group_id) {
-          try {
-            const noteGroup = await getNoteGroup(job.note_group_id);
-            if (noteGroup?.title) {
-              toastLabel = `Note group ready: ${noteGroup.title}`;
-            }
-            if (noteGroup?.module_id) {
-              resolvedModuleId = noteGroup.module_id;
-            }
-          } catch (error) {
-            // Fallback to generic success toast.
-          }
-        }
-        toast.success(toastLabel);
-        if (resolvedModuleId && selectedModuleIdRef.current === resolvedModuleId) {
-          try {
-            const chips = await listTopicChips(resolvedModuleId);
-            setTopicChips(chips);
-          } catch (error) {
-            toast.error(error.message || "Failed to refresh generated note group.");
-          }
-        }
-        setReviewRefreshToken((prev) => prev + 1);
-        setMindMapRefreshToken((prev) => prev + 1);
-        if (resolvedModuleId) {
-          loadAutoJobs(resolvedModuleId).catch(() => null);
-        }
-      })
-      .catch((error) => {
-        if (error.message === "Job cancelled") {
-          toast.info("Note group creation cancelled.");
-        } else {
-          toast.error(error.message || "Note group creation failed.");
-        }
-        if (moduleId) {
-          loadAutoJobs(moduleId).catch(() => null);
-        }
-      })
-      .finally(() => {
-        activeAutoJobsRef.current.delete(jobId);
-      });
-  };
-
-  const loadAutoJobs = async (moduleId) => {
-    const jobs = await listJobs({
-      type: "NOTE_GROUP_AUTO_GENERATION",
-      status: "queued,running,failed,cancelled",
-      moduleId
-    });
-    const nextMap = {};
-    (jobs || []).forEach((job) => {
-      if (!job.note_group_id) {
-        return;
-      }
-      if (!nextMap[job.note_group_id]) {
-        nextMap[job.note_group_id] = job;
-      }
-      if (job.status === "queued" || job.status === "running") {
-        trackAutoNoteGroupJob(job.id, moduleId);
-      }
-    });
-    setAutoJobsByNoteGroupId(nextMap);
   };
 
   const handleSignIn = async (event) => {
@@ -2782,7 +2922,7 @@ export default function App() {
     setAutoCreateLoading(true);
     setAutoCreateError("");
     try {
-      const job = await autoCreateNoteGroup({
+      await autoCreateNoteGroup({
         module_id: selectedModuleId,
         source: trimmedSource,
         raw_text: autoRawText.trim(),
@@ -2796,8 +2936,7 @@ export default function App() {
       setIsChatOpen(false);
       setIsMetadataOpen(false);
       setIsModuleMetadataOpen(false);
-      trackAutoNoteGroupJob(job.id, selectedModuleId);
-      loadAutoJobs(selectedModuleId).catch(() => null);
+      refreshModuleGenerationWorkflowSnapshot(selectedModuleId).catch(() => null);
       navigate(
         selectedSubjectCode && selectedModuleCode
           ? modulePath(selectedSubjectCode, selectedModuleCode)
@@ -2985,10 +3124,11 @@ export default function App() {
     setAutoJobActionId(jobId);
     try {
       await cancelJob(jobId);
+      notifiedAutoJobTerminalRef.current.add(`${jobId}:cancelled`);
       toast.info("Note group creation job cancelled.");
       if (selectedModuleId) {
         setReviewRefreshToken((prev) => prev + 1);
-        await loadAutoJobs(selectedModuleId);
+        await refreshModuleGenerationWorkflowSnapshot(selectedModuleId);
       }
     } catch (error) {
       toast.error(error.message || "Failed to cancel note group creation job.");
@@ -3007,14 +3147,14 @@ export default function App() {
     }
     setAutoJobActionId(jobId);
     try {
-      const newJob = await retryAutoJob(jobId);
+      await retryAutoJob(jobId);
+      AUTO_WORKFLOW_TERMINAL_STATUSES.forEach((status) => {
+        notifiedAutoJobTerminalRef.current.delete(`${jobId}:${status}`);
+      });
       toast.info("Retrying note group creation.");
       if (selectedModuleId) {
         setReviewRefreshToken((prev) => prev + 1);
-        await loadAutoJobs(selectedModuleId);
-      }
-      if (newJob?.id) {
-        trackAutoNoteGroupJob(newJob.id, selectedModuleId);
+        await refreshModuleGenerationWorkflowSnapshot(selectedModuleId);
       }
     } catch (error) {
       toast.error(error.message || "Failed to retry note group creation job.");
