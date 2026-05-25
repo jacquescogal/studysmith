@@ -1503,6 +1503,47 @@ class RouteAccessEnforcementTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_readers_do_not_see_unfinished_note_group_generation_placeholders(self):
+        from app.main import get_module_overview, get_note_group, list_note_groups
+        from app.models import NoteGroup
+
+        db = self.SessionLocal()
+        try:
+            _, reader, maintainer, _ = self._seed_private_course(db)
+            db.add(
+                NoteGroup(
+                    id="note-group-generating",
+                    module_id="module-1",
+                    title="Generating placeholder",
+                    raw_text="raw",
+                    generation_status="generating",
+                )
+            )
+            db.commit()
+
+            reader_note_groups = list_note_groups("module-1", chip_ids=None, db=db, current_user=reader)
+            maintainer_note_groups = list_note_groups("module-1", chip_ids=None, db=db, current_user=maintainer)
+            reader_overview = get_module_overview("module-1", chip_ids=None, db=db, current_user=reader)
+
+            self.assertEqual([group.id for group in reader_note_groups], ["note-group-1"])
+            self.assertEqual(
+                {group.id for group in maintainer_note_groups},
+                {"note-group-1", "note-group-generating"},
+            )
+            self.assertEqual(
+                [group.id for group in reader_overview["note_groups"]],
+                ["note-group-1"],
+            )
+            with self.assertRaises(HTTPException) as exc:
+                get_note_group("note-group-generating", db=db, current_user=reader)
+            self.assertEqual(exc.exception.status_code, 404)
+            self.assertEqual(
+                get_note_group("note-group-generating", db=db, current_user=maintainer).id,
+                "note-group-generating",
+            )
+        finally:
+            db.close()
+
     def test_reader_cannot_mutate_subject_module_note_group_or_cards_but_maintainer_can(self):
         from app.main import (
             update_module,
