@@ -545,14 +545,19 @@ class JobLogOut(BaseModel):
 
 class NoteGroupGenerationWorkflowOut(BaseModel):
     job: JobOut
-    note_group: NoteGroupOut
+    note_group: Optional[NoteGroupOut] = None
     draft_title: Optional[str] = None
-    current_stage: str
-    stages: List[JobStageOut] = []
-    logs: List[JobLogOut] = []
+    current_stage: Optional[str] = None
+    stages: List[JobStageOut] = Field(default_factory=list)
+    logs: List[JobLogOut] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
+
+
+class ModuleGenerationWorkflowSnapshotOut(BaseModel):
+    module_id: str
+    jobs: List[NoteGroupGenerationWorkflowOut] = Field(default_factory=list)
 
 
 class StudyCardCreate(BaseModel):

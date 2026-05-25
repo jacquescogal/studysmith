@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from collections import Counter, defaultdict
@@ -5,13 +6,13 @@ from datetime import datetime, timezone, timedelta
 
 from typing import Optional
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fsrs import Rating
-from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import case, func, or_, text
+from sqlalchemy.orm import Session, joinedload, sessionmaker
 
 from app.db import Base, engine, get_db
 from sqlalchemy.exc import IntegrityError
@@ -42,10 +43,14 @@ from app.access import (
 )
 from app.auth import optional_user, require_admin, require_creator, require_user
 from app.auto_queue import enqueue_auto_job, remove_auto_job, resume_auto_jobs, start_auto_worker
+from app.generation_events import generation_event_bus
 from app.generation_workflow import (
     cancel_job_workflow,
+    publish_job_workflow_event,
     request_unfinished_job_delete,
     retry_failed_job_stage,
+    serialize_generation_workflow,
+    serialize_module_generation_workflow_snapshot,
 )
 from app.jobs import (
     JOB_TYPE_MIND_MAP_GENERATION,
@@ -131,6 +136,7 @@ from app.schemas import (
     IntentChatResponse,
     JobOut,
     MindMapResponse,
+    ModuleGenerationWorkflowSnapshotOut,
     ModuleCreate,
     ModuleOut,
     ModuleOverviewResponse,
@@ -138,6 +144,7 @@ from app.schemas import (
     NoteGroupOut,
     NoteGroupAutoRequest,
     NoteGroupCardTableResponse,
+    NoteGroupGenerationWorkflowOut,
     NoteGroupSourceCheckRequest,
     NoteGroupSourceCheckResponse,
     NoteGroupTitleUpdate,
@@ -175,6 +182,7 @@ from app.schemas import (
 MIND_MAP_ACTIVE_JOB_STATUSES = ("queued", "running")
 MIND_MAP_RUNNING_JOB_TIMEOUT = timedelta(minutes=30)
 STALE_MIND_MAP_JOB_ERROR = "Stale Concept Mind Map generation job superseded"
+SSE_HEARTBEAT_INTERVAL_SECONDS = 15
 
 
 def _normalize_source_text(value: str) -> str:
@@ -1810,6 +1818,7 @@ def auto_create_note_group(
         entity_id=note_group.id,
         entity_title=source_raw or note_group.title,
     )
+    publish_job_workflow_event(db, job, "workflow_queued")
     db.commit()
     db.refresh(job)
 
@@ -2354,6 +2363,88 @@ def delete_note_group(
     return {"deleted": True}
 
 
+def _require_module_generation_workflow_access(
+    db: Session,
+    current_user: User,
+    module_id: str,
+) -> Module:
+    module = require_module_read(db, current_user, module_id)
+    require_subject_maintainer(current_user, module.subject)
+    return module
+
+
+def _format_sse(event: str, payload: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, default=str)}\n\n"
+
+
+async def _module_generation_workflow_event_stream(
+    request: Request,
+    session_factory,
+    module_id: str,
+):
+    subscription = generation_event_bus.open_subscription(module_id)
+    try:
+        with session_factory() as snapshot_db:
+            yield _format_sse(
+                "snapshot",
+                serialize_module_generation_workflow_snapshot(snapshot_db, module_id),
+            )
+
+        while True:
+            if await request.is_disconnected():
+                break
+            try:
+                await asyncio.wait_for(
+                    subscription.get(),
+                    timeout=SSE_HEARTBEAT_INTERVAL_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                yield ": ping\n\n"
+                continue
+
+            with session_factory() as snapshot_db:
+                yield _format_sse(
+                    "snapshot",
+                    serialize_module_generation_workflow_snapshot(snapshot_db, module_id),
+                )
+    finally:
+        subscription.close()
+
+
+@app.get(
+    "/modules/{module_id}/generation-workflow",
+    response_model=ModuleGenerationWorkflowSnapshotOut,
+)
+def get_module_generation_workflow(
+    module_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    module = _require_module_generation_workflow_access(db, current_user, module_id)
+    return serialize_module_generation_workflow_snapshot(db, module.id)
+
+
+@app.get("/modules/{module_id}/generation-workflow/events")
+def stream_module_generation_workflow(
+    module_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    module = _require_module_generation_workflow_access(db, current_user, module_id)
+    bind = db.get_bind()
+    session_factory = sessionmaker(bind=bind, autoflush=False, autocommit=False)
+    return StreamingResponse(
+        _module_generation_workflow_event_stream(request, session_factory, module.id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.get("/jobs/{job_id}", response_model=JobOut)
 def get_job(
     job_id: str,
@@ -2362,6 +2453,18 @@ def get_job(
 ):
     job = require_job_read(db, current_user, job_id)
     return job
+
+
+@app.get("/jobs/{job_id}/workflow", response_model=NoteGroupGenerationWorkflowOut)
+def get_job_workflow(
+    job_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    job = require_job_read(db, current_user, job_id)
+    if job.type != JOB_TYPE_NOTE_GROUP_AUTO_GENERATION:
+        raise HTTPException(status_code=400, detail="Only auto jobs expose workflow snapshots")
+    return serialize_generation_workflow(db, job)
 
 
 @app.get("/jobs", response_model=list[JobOut])
@@ -2412,6 +2515,7 @@ def cancel_job(
             note_group = db.get(NoteGroup, job.note_group_id)
             if note_group:
                 note_group.generation_status = "cancelled"
+        publish_job_workflow_event(db, job, "workflow_cancelled")
     db.commit()
     db.refresh(job)
     return job

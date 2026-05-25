@@ -1,3 +1,5 @@
+import asyncio
+import json
 import os
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -1316,6 +1318,15 @@ class RouteAccessEnforcementTests(unittest.TestCase):
 
     def _client(self, db, user=None):
         from app.auth import AuthContext, get_auth_context
+        import app.db as db_module
+
+        original_engine = db_module.engine
+        original_session_kwargs = dict(db_module.SessionLocal.kw)
+        db_module.engine = db.get_bind()
+        db_module.SessionLocal.configure(bind=db.get_bind())
+        self.addCleanup(setattr, db_module, "engine", original_engine)
+        self.addCleanup(db_module.SessionLocal.configure, **original_session_kwargs)
+
         from app.db import get_db
         from app.main import app
 
@@ -1327,6 +1338,27 @@ class RouteAccessEnforcementTests(unittest.TestCase):
             app.dependency_overrides[get_auth_context] = lambda: AuthContext(user=user)
         self.addCleanup(app.dependency_overrides.clear)
         return TestClient(app)
+
+    def _read_sse_event(self, line_source):
+        event_name = None
+        data_lines = []
+        lines = line_source.iter_lines() if hasattr(line_source, "iter_lines") else line_source
+        for line in lines:
+            if isinstance(line, bytes):
+                line = line.decode("utf-8")
+            if line == "":
+                if event_name or data_lines:
+                    payload = json.loads("\n".join(data_lines)) if data_lines else None
+                    return event_name, payload
+                continue
+            if line.startswith(":"):
+                continue
+            if line.startswith("event:"):
+                event_name = line.split(":", 1)[1].strip()
+                continue
+            if line.startswith("data:"):
+                data_lines.append(line.split(":", 1)[1].lstrip())
+        self.fail("Stream closed before delivering an SSE event")
 
     def test_private_subject_read_requires_owner_or_grant(self):
         from app.main import get_subject
@@ -1659,6 +1691,144 @@ class RouteAccessEnforcementTests(unittest.TestCase):
             self.assertEqual(reader_job_response.status_code, 403)
         finally:
             db.close()
+
+    def test_module_generation_workflow_snapshot_and_stream_require_maintainer_access(self):
+        from app.generation_workflow import initialize_job_workflow, start_job_stage
+        from app.models import JOB_STAGE_TITLE, Job
+
+        db = self.SessionLocal()
+        try:
+            owner, reader, maintainer, outsider = self._seed_private_course(db)
+            job = db.get(Job, "job-1")
+            initialize_job_workflow(db, job, "raw text", "unique-id", "Stay in scope")
+            start_job_stage(db, job, JOB_STAGE_TITLE)
+            db.commit()
+
+            anonymous_snapshot = self._client(db).get("/modules/module-1/generation-workflow")
+            anonymous_stream = self._client(db).get("/modules/module-1/generation-workflow/events")
+            reader_snapshot = self._client(db, reader).get("/modules/module-1/generation-workflow")
+            reader_stream = self._client(db, reader).get("/modules/module-1/generation-workflow/events")
+            outsider_snapshot = self._client(db, outsider).get("/modules/module-1/generation-workflow")
+            outsider_stream = self._client(db, outsider).get("/modules/module-1/generation-workflow/events")
+            owner_snapshot = self._client(db, owner).get("/modules/module-1/generation-workflow")
+
+            self.assertEqual(anonymous_snapshot.status_code, 401)
+            self.assertEqual(anonymous_stream.status_code, 401)
+            self.assertEqual(reader_snapshot.status_code, 403)
+            self.assertEqual(reader_stream.status_code, 403)
+            self.assertEqual(outsider_snapshot.status_code, 404)
+            self.assertEqual(outsider_stream.status_code, 404)
+            self.assertEqual(owner_snapshot.status_code, 200)
+            self.assertEqual(owner_snapshot.json()["module_id"], "module-1")
+            self.assertEqual([item["job"]["id"] for item in owner_snapshot.json()["jobs"]], ["job-1"])
+            self.assertEqual(owner_snapshot.json()["jobs"][0]["current_stage"], JOB_STAGE_TITLE)
+            self.assertEqual(owner_snapshot.json()["jobs"][0]["note_group"]["title"], "Note Group")
+
+            from app.main import (
+                _module_generation_workflow_event_stream,
+                stream_module_generation_workflow,
+            )
+
+            class FakeRequest:
+                async def is_disconnected(self):
+                    return False
+
+            stream_response = stream_module_generation_workflow(
+                "module-1",
+                FakeRequest(),
+                db=db,
+                current_user=maintainer,
+            )
+            self.assertEqual(stream_response.media_type, "text/event-stream")
+
+            async def read_initial_snapshot():
+                stream = _module_generation_workflow_event_stream(FakeRequest(), self.SessionLocal, "module-1")
+                try:
+                    return await stream.__anext__()
+                finally:
+                    await stream.aclose()
+
+            event_name, payload = self._read_sse_event(
+                asyncio.run(read_initial_snapshot()).splitlines()
+            )
+            self.assertEqual(event_name, "snapshot")
+            self.assertEqual(payload["module_id"], "module-1")
+            self.assertEqual([item["job"]["id"] for item in payload["jobs"]], ["job-1"])
+            self.assertEqual(payload["jobs"][0]["current_stage"], JOB_STAGE_TITLE)
+        finally:
+            db.close()
+
+    def test_job_workflow_snapshot_returns_stages_and_logs_for_maintainers_only(self):
+        from app.generation_workflow import (
+            append_job_log,
+            initialize_job_workflow,
+            set_stage_progress,
+            start_job_stage,
+        )
+        from app.models import JOB_STAGE_STUDY_CARDS, Job
+
+        db = self.SessionLocal()
+        try:
+            _, reader, maintainer, _ = self._seed_private_course(db)
+            job = db.get(Job, "job-1")
+            initialize_job_workflow(db, job, "raw text", "unique-id", "Stay in scope")
+            start_job_stage(db, job, JOB_STAGE_STUDY_CARDS)
+            set_stage_progress(db, job, JOB_STAGE_STUDY_CARDS, 2, 5, message="Created 2 Study Cards")
+            append_job_log(db, job, JOB_STAGE_STUDY_CARDS, "Kept examples literal", {"level": "info"})
+            db.commit()
+
+            anonymous_response = self._client(db).get("/jobs/job-1/workflow")
+            reader_response = self._client(db, reader).get("/jobs/job-1/workflow")
+            maintainer_response = self._client(db, maintainer).get("/jobs/job-1/workflow")
+
+            self.assertEqual(anonymous_response.status_code, 401)
+            self.assertEqual(reader_response.status_code, 403)
+            self.assertEqual(maintainer_response.status_code, 200)
+
+            payload = maintainer_response.json()
+            self.assertEqual(payload["job"]["id"], "job-1")
+            self.assertEqual(payload["current_stage"], JOB_STAGE_STUDY_CARDS)
+            self.assertEqual(payload["note_group"]["title"], "Note Group")
+            study_cards_stage = next(stage for stage in payload["stages"] if stage["stage"] == JOB_STAGE_STUDY_CARDS)
+            self.assertEqual(study_cards_stage["progress_current"], 2)
+            self.assertEqual(study_cards_stage["progress_total"], 5)
+            self.assertEqual(payload["logs"][-1]["metadata"], {"level": "info"})
+        finally:
+            db.close()
+
+    def test_auto_job_queue_and_plain_cancel_publish_workflow_events(self):
+        db = self.SessionLocal()
+        try:
+            _, _, maintainer, _ = self._seed_private_course(db)
+            client = self._client(db, maintainer)
+
+            queued_events = []
+            with (
+                patch("app.generation_events.generation_event_bus.publish", queued_events.append),
+                patch("app.main.enqueue_auto_job", return_value=True),
+            ):
+                response = client.post(
+                    "/note-groups/auto",
+                    json={
+                        "module_id": "module-1",
+                        "raw_text": "A new source body for generation.",
+                        "source": "new-source",
+                    },
+                )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual([event.event for event in queued_events], ["workflow_queued"])
+
+            cancelled_events = []
+            with patch("app.generation_events.generation_event_bus.publish", cancelled_events.append):
+                cancel_response = client.post("/jobs/job-1/cancel")
+
+            self.assertEqual(cancel_response.status_code, 200)
+            self.assertEqual(cancel_response.json()["status"], "cancelled")
+            self.assertEqual([event.event for event in cancelled_events], ["workflow_cancelled"])
+        finally:
+            db.close()
+
 
     def test_source_check_filters_inaccessible_duplicate_metadata(self):
         from app.main import check_note_group_source
