@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, joinedload, sessionmaker
 from app.db import Base, engine, get_db
 from sqlalchemy.exc import IntegrityError
 from app.access import (
+    can_maintain_subject,
     grant_owner_access,
     readable_subject_filter,
     require_job_edit,
@@ -39,6 +40,7 @@ from app.access import (
     require_topic_edit,
     require_topic_read,
     require_topic_study,
+    READABLE_NOTE_GROUP_GENERATION_STATUSES,
     subject_access_level,
 )
 from app.auth import optional_user, require_admin, require_creator, require_user
@@ -1564,9 +1566,11 @@ def list_note_groups(
     db: Session = Depends(get_db),
     current_user: User | None = Depends(optional_user),
 ):
-    require_module_read(db, current_user, module_id)
+    module = require_module_read(db, current_user, module_id)
 
     query = db.query(NoteGroup).filter(NoteGroup.module_id == module_id)
+    if not can_maintain_subject(current_user, module.subject):
+        query = query.filter(NoteGroup.generation_status.in_(READABLE_NOTE_GROUP_GENERATION_STATUSES))
     if chip_ids:
         parsed_ids = [chip_id for chip_id in chip_ids.split(",") if chip_id]
         if parsed_ids:
@@ -1597,18 +1601,20 @@ def get_module_overview(
     db: Session = Depends(get_db),
     current_user: User | None = Depends(optional_user),
 ):
-    require_module_read(db, current_user, module_id)
+    module = require_module_read(db, current_user, module_id)
 
     sort_nulls_last = case((NoteGroup.sort_order.is_(None), 1), else_=0)
+    note_group_query = db.query(NoteGroup).filter(NoteGroup.module_id == module_id)
+    if not can_maintain_subject(current_user, module.subject):
+        note_group_query = note_group_query.filter(
+            NoteGroup.generation_status.in_(READABLE_NOTE_GROUP_GENERATION_STATUSES)
+        )
     note_groups = (
-        db.query(NoteGroup)
-        .filter(NoteGroup.module_id == module_id)
-        .order_by(
+        note_group_query.order_by(
             sort_nulls_last,
             NoteGroup.sort_order.asc(),
             NoteGroup.created_at.asc(),
-        )
-        .all()
+        ).all()
     )
     ensure_note_group_short_codes(db, note_groups)
     db.commit()
@@ -2173,15 +2179,7 @@ def get_note_group(
     db: Session = Depends(get_db),
     current_user: User | None = Depends(optional_user),
 ):
-    note_group = (
-        db.query(NoteGroup)
-        .options(joinedload(NoteGroup.module))
-        .filter(NoteGroup.id == note_group_id)
-        .first()
-    )
-    if not note_group:
-        raise HTTPException(status_code=404, detail="Note group not found")
-    require_subject_read(current_user, note_group.module.subject)
+    note_group = require_note_group_read(db, current_user, note_group_id)
     ensure_note_group_short_code(db, note_group)
     db.commit()
     return note_group

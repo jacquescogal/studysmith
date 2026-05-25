@@ -22,6 +22,7 @@ from app.models import (
 
 READ_LEVELS = {SUBJECT_ACCESS_READER, SUBJECT_ACCESS_MAINTAINER, SUBJECT_ACCESS_OWNER}
 MAINTAIN_LEVELS = {SUBJECT_ACCESS_MAINTAINER, SUBJECT_ACCESS_OWNER}
+READABLE_NOTE_GROUP_GENERATION_STATUSES = {"created", "complete"}
 
 
 def _access_level(user: User | None, subject: Subject) -> str | None:
@@ -155,6 +156,11 @@ def require_note_group_read(db: Session, user: User | None, note_group_id: str) 
     if not note_group:
         raise HTTPException(status_code=404, detail="Note group not found")
     require_subject_read(user, note_group.module.subject)
+    if (
+        note_group.generation_status not in READABLE_NOTE_GROUP_GENERATION_STATUSES
+        and not can_maintain_subject(user, note_group.module.subject)
+    ):
+        raise HTTPException(status_code=404, detail="Note group not found")
     return note_group
 
 

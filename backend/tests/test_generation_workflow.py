@@ -1838,6 +1838,100 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_promotion_failure_with_existing_topic_keeps_live_topic_surfaces_clean(self):
+        db = self.SessionLocal()
+        try:
+            job = self._create_auto_generation_job(db, "promotion-existing-topic-failure")
+            job_id = job.id
+            note_group_id = job.note_group_id
+            module_id = job.note_group.module_id
+            db.add(
+                TopicChip(
+                    id="existing-topic-for-failed-promotion",
+                    module_id=module_id,
+                    label="Existing Topic",
+                    description="Already live",
+                )
+            )
+            db.commit()
+            db.close()
+
+            def topic_payload(*_args, **kwargs):
+                study_card_id = kwargs["study_cards"][0]["study_card_id"]
+                return {
+                    "topics": [],
+                    "study_card_topic_links": [
+                        {
+                            "study_card_id": study_card_id,
+                            "topic_id": "existing-topic-for-failed-promotion",
+                            "role": "primary",
+                        }
+                    ],
+                }
+
+            def knowledge_payload(*_args, **kwargs):
+                study_card_id = kwargs["study_cards"][0]["id"]
+                return {
+                    "knowledge_nodes": [
+                        {
+                            "temp_id": "existing-topic-definition",
+                            "topic_id": "existing-topic-for-failed-promotion",
+                            "title": "Existing Topic definition",
+                            "summary": "A draft definition that should not go live.",
+                            "knowledge_type": "definition",
+                            "importance": "core",
+                        }
+                    ],
+                    "relations": [],
+                    "study_card_knowledge_node_links": [
+                        {
+                            "study_card_id": study_card_id,
+                            "knowledge_node_id": "existing-topic-definition",
+                            "role": "primary",
+                        }
+                    ],
+                }
+
+            self._run_with_extra_patches(
+                job_id,
+                [patch("app.generation_promotion.upsert_study_card_embeddings", side_effect=RuntimeError("embed write failed"))],
+                topics=topic_payload,
+                knowledge_nodes=knowledge_payload,
+            )
+
+            db = self.SessionLocal()
+            stored_job = db.get(Job, job_id)
+            draft = db.query(NoteGroupGenerationDraft).filter_by(job_id=job_id).one()
+
+            self.assertEqual(stored_job.status, "failed")
+            self.assertEqual(stored_job.current_stage, JOB_STAGE_PROMOTING)
+            self.assertEqual(db.query(TopicChip).filter_by(module_id=module_id).count(), 1)
+            self.assertEqual(db.query(StudyCard).filter_by(note_group_id=note_group_id).count(), 0)
+            self.assertEqual(db.query(QuestionCard).filter_by(note_group_id=note_group_id).count(), 0)
+            self.assertEqual(db.query(StudyCardEmbedding).filter_by(note_group_id=note_group_id).count(), 0)
+            self.assertEqual(db.query(MindMapConcept).filter_by(module_id=module_id).count(), 0)
+            self.assertEqual(db.query(MindMapRelation).filter_by(module_id=module_id).count(), 0)
+            self.assertIsNone(
+                db.execute(
+                    note_group_topic_chips.select().where(
+                        note_group_topic_chips.c.note_group_id == note_group_id,
+                        note_group_topic_chips.c.chip_id == "existing-topic-for-failed-promotion",
+                    )
+                ).first()
+            )
+            self.assertIsNone(
+                db.execute(
+                    study_card_topic_chips.select().where(
+                        study_card_topic_chips.c.chip_id == "existing-topic-for-failed-promotion",
+                    )
+                ).first()
+            )
+            self.assertEqual(db.query(DraftStudyCard).filter_by(draft_id=draft.id).count(), 1)
+            self.assertEqual(db.query(DraftStudyCardTopicLink).filter_by(draft_id=draft.id).count(), 1)
+            self.assertEqual(db.query(DraftKnowledgeNode).filter_by(draft_id=draft.id).count(), 1)
+        finally:
+            db.close()
+
     def test_promotion_reuses_existing_topic_for_direct_study_card_link(self):
         db = self.SessionLocal()
         try:
