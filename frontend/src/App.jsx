@@ -1,8 +1,14 @@
 import React from "react";
 
-import { LegacyApp } from "@/features/app-shell/LegacyApp";
+import { StudyAppShell } from "@/features/app-shell/StudyAppShell";
 import { AppRoutes } from "@/routes/appRoutes";
 
 export default function App() {
-  return <AppRoutes renderLegacyApp={() => <LegacyApp />} />;
+  return (
+    <AppRoutes
+      renderAppShell={({ routePageModels }) => (
+        <StudyAppShell routePageModels={routePageModels} />
+      )}
+    />
+  );
 }
