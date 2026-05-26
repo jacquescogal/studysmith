@@ -183,7 +183,7 @@ def require_note_group_study(db: Session, user: User | None, note_group_id: str)
 def require_topic_read(db: Session, user: User | None, topic_id: str):
     topic = db.get(TopicChip, topic_id)
     if not topic:
-        raise HTTPException(status_code=404, detail="Topic not found")
+        raise HTTPException(status_code=404, detail="Concept not found")
     require_subject_read(user, topic.module.subject)
     return topic
 
@@ -191,7 +191,7 @@ def require_topic_read(db: Session, user: User | None, topic_id: str):
 def require_topic_edit(db: Session, user: User | None, topic_id: str):
     topic = db.get(TopicChip, topic_id)
     if not topic:
-        raise HTTPException(status_code=404, detail="Topic not found")
+        raise HTTPException(status_code=404, detail="Concept not found")
     require_subject_edit(user, topic.module.subject)
     return topic
 
@@ -199,7 +199,7 @@ def require_topic_edit(db: Session, user: User | None, topic_id: str):
 def require_topic_study(db: Session, user: User | None, topic_id: str):
     topic = db.get(TopicChip, topic_id)
     if not topic:
-        raise HTTPException(status_code=404, detail="Topic not found")
+        raise HTTPException(status_code=404, detail="Concept not found")
     require_subject_study(user, topic.module.subject)
     return topic
 

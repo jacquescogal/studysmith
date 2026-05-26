@@ -3,11 +3,22 @@ import { ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
-export function PageHeader({ eyebrow = "Study System", title, description, breadcrumbs = [], actions }) {
+export function PageHeader({
+  eyebrow = "Study System",
+  title,
+  description,
+  pageType,
+  tone = "default",
+  breadcrumbs = [],
+  actions
+}) {
   const current = breadcrumbs.find((item) => item.current);
+  const headerClassName = ["study-page-header", tone ? `page-header-tone-${tone}` : "", "flex flex-col gap-4 border-b pb-5"]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <header className="flex flex-col gap-4 border-b pb-5">
+    <header className={headerClassName}>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 space-y-2">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{eyebrow}</p>
@@ -26,6 +37,7 @@ export function PageHeader({ eyebrow = "Study System", title, description, bread
             ))}
           </nav>
           <div className="flex flex-wrap items-center gap-2">
+            {pageType ? <span className="page-header-type-badge">{pageType}</span> : null}
             <h1 className="text-2xl font-semibold tracking-normal text-foreground">{title}</h1>
             {current?.badge ? <Badge variant="secondary">{current.badge}</Badge> : null}
           </div>

@@ -180,10 +180,13 @@ class MindMapNodeOut(BaseModel):
     node_type: str
     title: str
     summary: Optional[str] = None
+    parent_group_id: Optional[str] = None
+    parent_concept_id: Optional[str] = None
     parent_topic_id: Optional[str] = None
     concept_type: Optional[str] = None
     knowledge_type: Optional[str] = None
     importance: Optional[str] = None
+    concept_ids: List[str] = []
     topic_ids: List[str] = []
     study_card_ids: List[str] = []
     note_group_ids: List[str] = []
@@ -241,6 +244,11 @@ class TopicChipCreate(BaseModel):
     description: Optional[str] = None
 
 
+class ConceptCreate(BaseModel):
+    label: str
+    description: Optional[str] = None
+
+
 class TopicChipOut(BaseModel):
     id: str
     short_code: Optional[str] = None
@@ -255,8 +263,24 @@ class TopicChipOut(BaseModel):
         from_attributes = True
 
 
+class ConceptOut(BaseModel):
+    id: str
+    concept_id: str
+    short_code: Optional[str] = None
+    module_id: str
+    label: str
+    description: Optional[str] = None
+    parent_concept_id: Optional[str] = None
+    knowledge_node_status: str = "not_generated"
+    knowledge_node_review_reason: Optional[str] = None
+
+
 class TopicChipAttach(BaseModel):
     chip_ids: List[str]
+
+
+class ConceptAttach(BaseModel):
+    concept_ids: List[str]
 
 
 class QuestionCardOut(BaseModel):
@@ -427,6 +451,8 @@ class AppRouteContext(BaseModel):
     module_short_code: Optional[str] = None
     note_group_id: Optional[str] = None
     note_group_short_code: Optional[str] = None
+    concept_id: Optional[str] = None
+    concept_short_code: Optional[str] = None
     topic_id: Optional[str] = None
     topic_short_code: Optional[str] = None
 
@@ -435,6 +461,7 @@ class ChatRequest(BaseModel):
     module_id: str
     message: str
     note_group_id: Optional[str] = None
+    concept_id: Optional[str] = None
     question_prompt: Optional[str] = None
     user_answer: Optional[str] = None
     correct_answer: Optional[str] = None

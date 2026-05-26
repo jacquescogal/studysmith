@@ -116,6 +116,59 @@ class TopicScopeRoutesTests(unittest.TestCase):
         self.assertEqual(timeline_response["stale_count"], 1)
         self.assertEqual(timeline_response["timeline"]["due"], 1)
 
+    def test_concept_routes_return_concept_named_scope_data(self):
+        import app.db as db_module
+
+        with patch.object(db_module, "engine", self.engine):
+            from app.main import (
+                get_concept_question_timeline,
+                list_concept_question_cards,
+                list_concept_study_cards,
+                list_concepts,
+            )
+
+        db = self.seed_topic_scope()
+        try:
+            user = db.get(User, "user-1")
+            concepts = list_concepts("module-1", db=db, current_user=user)
+            study_response = list_concept_study_cards("topic-1", db=db, current_user=user)
+            question_response = list_concept_question_cards("topic-1", db=db, current_user=user)
+            timeline_response = get_concept_question_timeline("topic-1", db=db, current_user=user)
+        finally:
+            db.close()
+
+        self.assertEqual(concepts[0]["concept_id"], "topic-1")
+        self.assertEqual(concepts[0]["parent_concept_id"], None)
+        self.assertEqual(
+            [card.id for card in study_response["study_cards"]],
+            ["study-a", "study-b"],
+        )
+        self.assertEqual(
+            [card["id"] for card in question_response["question_cards"]],
+            ["question-a", "question-b"],
+        )
+        self.assertEqual(timeline_response["question_count"], 2)
+        self.assertEqual(timeline_response["stale_count"], 1)
+
+    def test_legacy_topic_routes_delegate_to_concept_handlers(self):
+        import app.db as db_module
+
+        with patch.object(db_module, "engine", self.engine):
+            from app.main import list_concept_study_cards, list_topic_study_cards
+
+        db = self.seed_topic_scope()
+        try:
+            user = db.get(User, "user-1")
+            concept_response = list_concept_study_cards("topic-1", db=db, current_user=user)
+            topic_response = list_topic_study_cards("topic-1", db=db, current_user=user)
+        finally:
+            db.close()
+
+        self.assertEqual(
+            [card.id for card in topic_response["study_cards"]],
+            [card.id for card in concept_response["study_cards"]],
+        )
+
     def test_topic_allowed_study_query_avoids_postgres_distinct_order_by_conflict(self):
         import app.db as db_module
 
@@ -142,7 +195,10 @@ class TopicScopeRoutesTests(unittest.TestCase):
         self.assertNotIn("select distinct study_cards.id", captured_sql[-1])
 
     def test_delete_topic_removes_associations_without_deleting_cards(self):
-        from app.main import delete_topic
+        import app.db as db_module
+
+        with patch.object(db_module, "engine", self.engine):
+            from app.main import delete_topic
         from app.models import note_group_topic_chips, study_card_topic_chips
 
         db = self.seed_topic_scope()

@@ -1,6 +1,7 @@
 import json
 import math
 import re
+import time
 import uuid
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime
@@ -41,11 +42,15 @@ RELATION_TYPES = {
 LINK_ROLES = {"primary", "supporting"}
 MIN_RELATION_CONFIDENCE = 0.55
 MAX_TOPIC_KNOWLEDGE_NODE_CONCURRENCY = 5
-TOPIC_KNOWLEDGE_NODE_CHILD_FAILURE_REASON = "Child Topic reconciliation failed"
+TOPIC_KNOWLEDGE_NODE_CHILD_FAILURE_REASON = "Child Concept reconciliation failed"
 
 
 class MindMapValidationError(ValueError):
     pass
+
+
+def _print_topic_knowledge_console_log(message: str) -> None:
+    print(f"[concept-knowledge-nodes] {message}", flush=True)
 
 
 def run_dependency_aware_topic_tasks(
@@ -60,8 +65,12 @@ def run_dependency_aware_topic_tasks(
     failed: set[str] = set()
     blocked: set[str] = set()
     running = {}
+    started_at_by_future = {}
     statuses = {topic_id: "pending" for topic_id in topic_ids}
     worker_count = max(1, min(max_workers, max(len(topic_ids), 1)))
+    _print_topic_knowledge_console_log(
+        f"Concept Knowledge Nodes batch started concepts={len(topic_ids)} max_workers={worker_count}"
+    )
 
     def fail_topic(topic_id: str, reason: str, status: str = "failed") -> None:
         if topic_id in completed or topic_id in failed or topic_id in blocked:
@@ -94,23 +103,44 @@ def run_dependency_aware_topic_tasks(
                 pending.remove(topic_id)
                 future = executor.submit(run_topic, topic_id)
                 running[future] = topic_id
+                started_at_by_future[future] = time.monotonic()
+                _print_topic_knowledge_console_log(
+                    "Concept Knowledge Node started "
+                    f"concept_id={topic_id} running={len(running)}/{worker_count}"
+                )
 
             if not running:
                 unresolved = sorted(pending)
                 for topic_id in unresolved:
-                    fail_topic(topic_id, "Topic dependency graph could not be resolved.", status="blocked")
+                    fail_topic(topic_id, "Concept dependency graph could not be resolved.", status="blocked")
+                    _print_topic_knowledge_console_log(
+                        "Concept Knowledge Node blocked "
+                        f"concept_id={topic_id} running=0/{worker_count}"
+                    )
                 break
 
             done, _not_done = wait(running, return_when=FIRST_COMPLETED)
             for future in done:
                 topic_id = running.pop(future)
+                started_at = started_at_by_future.pop(future, None)
+                elapsed_seconds = 0.0 if started_at is None else time.monotonic() - started_at
                 try:
                     future.result()
                 except Exception as exc:
-                    fail_topic(topic_id, f"Topic reconciliation failed: {exc}")
+                    fail_topic(topic_id, f"Concept reconciliation failed: {exc}")
+                    _print_topic_knowledge_console_log(
+                        "Concept Knowledge Node failed "
+                        f"concept_id={topic_id} elapsed_seconds={elapsed_seconds:.2f} "
+                        f"running={len(running)}/{worker_count}"
+                    )
                 else:
                     completed.add(topic_id)
                     statuses[topic_id] = "completed"
+                    _print_topic_knowledge_console_log(
+                        "Concept Knowledge Node completed "
+                        f"concept_id={topic_id} elapsed_seconds={elapsed_seconds:.2f} "
+                        f"running={len(running)}/{worker_count}"
+                    )
 
     return statuses
 
@@ -300,7 +330,7 @@ def _validate_topic_tree_candidate_graph(
     study_card_topic_links = payload.get("study_card_topic_links")
     study_card_knowledge_node_links = payload.get("study_card_knowledge_node_links", [])
     if not isinstance(topics, list):
-        raise MindMapValidationError("Candidate graph topics must be a list.")
+        raise MindMapValidationError("Candidate graph Concepts must be a list.")
     if not isinstance(knowledge_nodes, list):
         raise MindMapValidationError("Candidate graph knowledge_nodes must be a list.")
     if not isinstance(relations, list):
@@ -317,21 +347,21 @@ def _validate_topic_tree_candidate_graph(
     normalized_topics = []
     for index, topic in enumerate(topics):
         if not isinstance(topic, dict):
-            raise MindMapValidationError(f"Topic at index {index} must be an object.")
-        temp_id = _required_string(topic, "temp_id", f"Topic at index {index} is missing a temp_id.")
+            raise MindMapValidationError(f"Concept at index {index} must be an object.")
+        temp_id = _required_string(topic, "temp_id", f"Concept at index {index} is missing a temp_id.")
         if temp_id in topic_temp_ids:
-            raise MindMapValidationError(f"Duplicate topic temp_id: {temp_id}.")
+            raise MindMapValidationError(f"Duplicate Concept temp_id: {temp_id}.")
         topic_temp_ids.add(temp_id)
 
-        title = _required_string(topic, "title", f"Topic {temp_id} is missing a title.")
-        summary = _required_string(topic, "summary", f"Topic {temp_id} is missing a summary.")
+        title = _required_string(topic, "title", f"Concept {temp_id} is missing a title.")
+        summary = _required_string(topic, "summary", f"Concept {temp_id} is missing a summary.")
         matched_existing_topic_id = _optional_string_field(topic, "matched_existing_topic_id")
         if matched_existing_topic_id and matched_existing_topic_id not in existing_topic_ids:
-            raise MindMapValidationError(f"Unknown matched_existing_topic_id: {matched_existing_topic_id}.")
+            raise MindMapValidationError(f"Unknown matched_existing_topic_id for Concept: {matched_existing_topic_id}.")
 
         slug = slugify_concept_title(title)
         if slug in topic_slugs:
-            raise MindMapValidationError(f"Duplicate topic slug: {slug}.")
+            raise MindMapValidationError(f"Duplicate Concept slug: {slug}.")
         topic_slugs.add(slug)
         canonical_ref = matched_existing_topic_id or temp_id
         valid_topic_refs.add(temp_id)
@@ -352,12 +382,12 @@ def _validate_topic_tree_candidate_graph(
         if not parent_topic_id:
             continue
         if parent_topic_id not in valid_topic_refs:
-            raise MindMapValidationError(f"Topic parent does not resolve: {parent_topic_id}.")
+            raise MindMapValidationError(f"Concept parent does not resolve: {parent_topic_id}.")
         if _canonical_ref(parent_topic_id, topic_temp_to_canonical) == _canonical_ref(
             topic["temp_id"],
             topic_temp_to_canonical,
         ):
-            raise MindMapValidationError("Topic cannot be its own parent.")
+            raise MindMapValidationError("Concept cannot be its own parent.")
 
     knowledge_node_temp_ids: set[str] = set()
     knowledge_node_slugs: set[str] = set()
@@ -378,7 +408,7 @@ def _validate_topic_tree_candidate_graph(
             f"Knowledge Node {temp_id} is missing a topic_id.",
         )
         if topic_ref not in valid_topic_refs:
-            raise MindMapValidationError(f"Knowledge Node topic does not resolve: {topic_ref}.")
+            raise MindMapValidationError(f"Knowledge Node Concept does not resolve: {topic_ref}.")
         title = _required_string(node, "title", f"Knowledge Node {temp_id} is missing a title.")
         summary = _required_string(node, "summary", f"Knowledge Node {temp_id} is missing a summary.")
         knowledge_type = _required_string(
@@ -424,7 +454,7 @@ def _validate_topic_tree_candidate_graph(
         valid_topic_refs,
         topic_temp_to_canonical,
         "topic_id",
-        "Topic",
+        "Concept",
     )
     normalized_knowledge_node_links = _validate_study_card_links(
         study_card_knowledge_node_links,
@@ -641,15 +671,13 @@ def _regenerate_note_group_topic_tree_mind_map(
                 id=str(uuid.uuid4()),
                 module_id=note_group.module_id,
                 label=topic_data["title"],
-                description=topic_data["summary"],
             )
             db.add(topic)
             topics_by_id[topic.id] = topic
             topics_by_slug[topic_data["slug"]] = topic
         else:
             topic.label = topic_data["title"]
-            if not topic.description:
-                topic.description = topic_data["summary"]
+            topic.description = None
         resolved_topics[topic_data["temp_id"]] = topic
         resolved_topics[topic.id] = topic
 
@@ -663,6 +691,45 @@ def _regenerate_note_group_topic_tree_mind_map(
     resolved_concepts: dict[str, MindMapConcept] = {concept.id: concept for concept in existing_concepts}
     graph_concept_ids: set[str] = set()
     definition_topic_ids: set[str] = set()
+    candidate_definition_topic_refs = {
+        node_data["topic_id"]
+        for node_data in validated["knowledge_nodes"]
+        if node_data["knowledge_type"] == "definition"
+    }
+    existing_definition_topic_ids = {
+        concept.topic_id
+        for concept in existing_concepts
+        if concept.knowledge_type == "definition" and concept.topic_id
+    }
+    for topic_data in validated["topics"]:
+        topic = resolved_topics[topic_data["temp_id"]]
+        if (
+            not topic_data["summary"]
+            or topic.id in existing_definition_topic_ids
+            or topic.id in candidate_definition_topic_refs
+            or topic_data["temp_id"] in candidate_definition_topic_refs
+        ):
+            continue
+        concept = MindMapConcept(
+            id=str(uuid.uuid4()),
+            module_id=note_group.module_id,
+            topic_id=topic.id,
+            slug=_unique_slug(concepts_by_slug, f"{topic_data['slug']}_definition"),
+            title=f"{topic.label} definition",
+            summary=topic_data["summary"],
+            concept_type=_legacy_concept_type_for_knowledge_type("definition"),
+            knowledge_type="definition",
+            importance="core",
+            source_quote=None,
+        )
+        db.add(concept)
+        db.flush()
+        concepts_by_id[concept.id] = concept
+        concepts_by_slug[concept.slug] = concept
+        resolved_concepts[concept.id] = concept
+        graph_concept_ids.add(concept.id)
+        definition_topic_ids.add(topic.id)
+
     for node_data in validated["knowledge_nodes"]:
         concept = None
         matched_existing_node_id = node_data["matched_existing_knowledge_node_id"]
@@ -789,7 +856,7 @@ def _regenerate_note_group_topic_tree_mind_map(
 def build_topic_knowledge_node_generation_context(db: Session, topic_id: str) -> dict:
     topic = db.get(TopicChip, topic_id)
     if not topic:
-        raise MindMapValidationError("Topic not found")
+        raise MindMapValidationError("Concept not found")
 
     descendant_topic_ids = _descendant_topic_ids(topic)
     direct_study_cards = []
@@ -839,7 +906,7 @@ def build_topic_knowledge_node_generation_context(db: Session, topic_id: str) ->
 def regenerate_topic_knowledge_nodes(db: Session, topic_id: str, candidate_payload: dict) -> TopicChip:
     topic = db.get(TopicChip, topic_id)
     if not topic:
-        raise MindMapValidationError("Topic not found")
+        raise MindMapValidationError("Concept not found")
 
     context = build_topic_knowledge_node_generation_context(db, topic_id)
     study_card_ids = {card["study_card_id"] for card in context["study_cards"]}
@@ -852,6 +919,12 @@ def regenerate_topic_knowledge_nodes(db: Session, topic_id: str, candidate_paylo
     existing_concept_ids = {concept.id for concept in existing_concepts}
     concepts_by_id = {concept.id: concept for concept in existing_concepts}
     concepts_by_slug = {concept.slug: concept for concept in existing_concepts}
+    module_concepts_by_slug = {
+        concept.slug: concept
+        for concept in db.query(MindMapConcept)
+        .filter(MindMapConcept.module_id == topic.module_id)
+        .all()
+    }
     validation_payload = {
         "topics": [],
         "knowledge_nodes": candidate_payload.get("knowledge_nodes", []),
@@ -890,7 +963,7 @@ def regenerate_topic_knowledge_nodes(db: Session, topic_id: str, candidate_paylo
     definition_found = False
     for node_data in validated["knowledge_nodes"]:
         if node_data["topic_id"] != topic.id:
-            raise MindMapValidationError("Manual Knowledge Node regeneration can only update the selected Topic.")
+            raise MindMapValidationError("Manual Knowledge Node regeneration can only update the selected Concept.")
 
         concept = None
         matched_existing_node_id = node_data["matched_existing_knowledge_node_id"]
@@ -903,7 +976,7 @@ def regenerate_topic_knowledge_nodes(db: Session, topic_id: str, candidate_paylo
                 id=str(uuid.uuid4()),
                 module_id=topic.module_id,
                 topic_id=topic.id,
-                slug=_unique_slug(concepts_by_slug, node_data["slug"]),
+                slug=_unique_slug(module_concepts_by_slug, node_data["slug"]),
                 title=node_data["title"],
                 summary=node_data["summary"],
                 concept_type=_legacy_concept_type_for_knowledge_type(node_data["knowledge_type"]),
@@ -914,6 +987,7 @@ def regenerate_topic_knowledge_nodes(db: Session, topic_id: str, candidate_paylo
             db.add(concept)
             concepts_by_id[concept.id] = concept
             concepts_by_slug[concept.slug] = concept
+            module_concepts_by_slug[concept.slug] = concept
         else:
             concept.topic_id = topic.id
             concept.title = node_data["title"]
@@ -948,7 +1022,7 @@ def regenerate_topic_knowledge_nodes(db: Session, topic_id: str, candidate_paylo
     for link in validated["study_card_knowledge_node_links"]:
         concept = resolved_concepts[link["knowledge_node_id"]]
         if concept.topic_id != topic.id:
-            raise MindMapValidationError("Study Card Knowledge Node link must target the selected Topic.")
+            raise MindMapValidationError("Study Card Knowledge Node link must target the selected Concept.")
         card = cards_by_id[link["study_card_id"]]
         link_key = (card.id, concept.id)
         if link_key in seen_links:
@@ -1066,6 +1140,173 @@ def build_module_mind_map_response(db: Session, module_id: str) -> MindMapRespon
         status=status,
         stale=stale,
         generated_at=max(generated_times) if generated_times else None,
+    )
+
+
+def _topic_map_knowledge_title(concept: MindMapConcept) -> str:
+    if concept.knowledge_type == "definition":
+        return "Definition"
+    if concept.concept_type == "example":
+        return "Example"
+    return concept.title or (concept.knowledge_type or "Knowledge Node").replace("_", " ").title()
+
+
+def build_topic_mind_map_response(db: Session, topic_id: str) -> MindMapResponse:
+    topic = db.get(TopicChip, topic_id)
+    if topic is None:
+        raise MindMapValidationError(f"Concept not found: {topic_id}.")
+
+    nodes = []
+    edges = []
+    current_group_id = f"topic-map-current-group:{topic.id}"
+    parent_group_id = f"topic-map-parent-group:{topic.id}"
+    children_group_id = f"topic-map-children-group:{topic.id}"
+
+    def topic_node(node_topic: TopicChip, node_type: str, parent_group_id_value: str | None = None) -> dict:
+        return {
+            "id": node_topic.id,
+            "node_type": node_type,
+            "title": node_topic.label,
+            "summary": None,
+            "parent_group_id": parent_group_id_value,
+            "parent_concept_id": node_topic.parent_topic_id,
+            "parent_topic_id": node_topic.parent_topic_id,
+            "knowledge_node_status": node_topic.knowledge_node_status,
+            "knowledge_node_review_reason": node_topic.knowledge_node_review_reason,
+        }
+
+    if topic.parent_topic_id:
+        parent = db.get(TopicChip, topic.parent_topic_id)
+        if parent and parent.module_id == topic.module_id:
+            nodes.append(
+                {
+                    "id": parent_group_id,
+                    "node_type": "concept_parent_group",
+                    "title": "Parent",
+                    "summary": None,
+                }
+            )
+            nodes.append(topic_node(parent, "concept_parent", parent_group_id))
+            edges.append(
+                {
+                    "id": f"topic-map-edge:{parent_group_id}:{current_group_id}",
+                    "source": parent_group_id,
+                    "target": current_group_id,
+                    "relation_type": "parent_of",
+                    "label": None,
+                }
+            )
+
+    nodes.append(
+        {
+            "id": current_group_id,
+            "node_type": "concept_current_group",
+            "title": topic.label,
+            "summary": None,
+            "concept_ids": [topic.id],
+            "topic_ids": [topic.id],
+            "parent_concept_id": topic.parent_topic_id,
+            "parent_topic_id": topic.parent_topic_id,
+            "knowledge_node_status": topic.knowledge_node_status,
+            "knowledge_node_review_reason": topic.knowledge_node_review_reason,
+        }
+    )
+
+    knowledge_nodes = (
+        db.query(MindMapConcept)
+        .filter(MindMapConcept.module_id == topic.module_id, MindMapConcept.topic_id == topic.id)
+        .order_by(MindMapConcept.knowledge_type.asc(), MindMapConcept.created_at.asc(), MindMapConcept.id.asc())
+        .all()
+    )
+    for concept in knowledge_nodes:
+        nodes.append(
+            {
+                "id": concept.id,
+                "node_type": "knowledge_node",
+                "title": _topic_map_knowledge_title(concept),
+                "summary": concept.summary,
+                "parent_group_id": current_group_id,
+                "parent_concept_id": topic.id,
+                "parent_topic_id": topic.id,
+                "concept_type": concept.concept_type,
+                "knowledge_type": concept.knowledge_type,
+                "importance": concept.importance,
+            }
+        )
+
+    children = (
+        db.query(TopicChip)
+        .filter(TopicChip.module_id == topic.module_id, TopicChip.parent_topic_id == topic.id)
+        .order_by(TopicChip.sort_order.asc(), TopicChip.label.asc(), TopicChip.id.asc())
+        .all()
+    )
+    if children:
+        nodes.append(
+            {
+                "id": children_group_id,
+                "node_type": "concept_children_group",
+                "title": "Children",
+                "summary": None,
+            }
+        )
+        edges.append(
+            {
+                "id": f"topic-map-edge:{current_group_id}:{children_group_id}",
+                "source": current_group_id,
+                "target": children_group_id,
+                "relation_type": "parent_of",
+                "label": None,
+            }
+        )
+        for child in children:
+            nodes.append(topic_node(child, "concept_child", children_group_id))
+
+    study_cards = (
+        db.query(StudyCard)
+        .join(NoteGroup, StudyCard.note_group_id == NoteGroup.id)
+        .join(study_card_topic_chips, StudyCard.id == study_card_topic_chips.c.study_card_id)
+        .filter(NoteGroup.module_id == topic.module_id, study_card_topic_chips.c.chip_id == topic.id)
+        .order_by(StudyCard.created_at.asc(), StudyCard.id.asc())
+        .all()
+    )
+    if study_cards:
+        for card in study_cards:
+            study_node_id = f"topic-map-study-card:{card.id}"
+            nodes.append(
+                {
+                    "id": study_node_id,
+                    "node_type": "study_card",
+                    "title": card.title or "Untitled Study Card",
+                    "summary": card.content,
+                    "study_card_ids": [card.id],
+                }
+            )
+            edges.append(
+                {
+                    "id": f"topic-map-edge:{current_group_id}:{study_node_id}",
+                    "source": current_group_id,
+                    "target": study_node_id,
+                    "relation_type": "has_study_card",
+                    "label": None,
+                }
+            )
+
+    return MindMapResponse(
+        scope="concept",
+        module_id=topic.module_id,
+        status="complete",
+        stale=False,
+        nodes=nodes,
+        edges=edges,
+        study_cards=[
+            {
+                "id": card.id,
+                "note_group_id": card.note_group_id,
+                "title": card.title,
+                "content": card.content,
+            }
+            for card in study_cards
+        ],
     )
 
 
@@ -1209,10 +1450,12 @@ def _build_mind_map_response(
     topic_nodes = [
         {
             "id": topic.id,
-            "node_type": "topic",
+            "node_type": "concept",
             "title": topic.label,
             "summary": topic.description,
+            "parent_concept_id": topic.parent_topic_id,
             "parent_topic_id": topic.parent_topic_id,
+            "concept_ids": [topic.id],
             "study_card_ids": sorted(study_card_ids_by_topic_id.get(topic.id, set())),
             "note_group_ids": sorted(note_group_ids_by_topic_id.get(topic.id, set())),
             "study_card_count": len(study_card_ids_by_topic_id.get(topic.id, set())),
@@ -1228,10 +1471,12 @@ def _build_mind_map_response(
             "node_type": "knowledge_node" if concept.topic_id or concept.knowledge_type else "concept",
             "title": concept.title,
             "summary": concept.summary,
+            "parent_concept_id": concept.topic_id,
             "parent_topic_id": concept.topic_id,
             "concept_type": concept.concept_type,
             "knowledge_type": concept.knowledge_type,
             "importance": concept.importance,
+            "concept_ids": sorted(topic_ids_by_concept_id.get(concept.id, set())),
             "topic_ids": sorted(topic_ids_by_concept_id.get(concept.id, set())),
             "study_card_ids": sorted(study_card_ids_by_concept_id.get(concept.id, set())),
             "note_group_ids": sorted(note_group_ids_by_concept_id.get(concept.id, set())),

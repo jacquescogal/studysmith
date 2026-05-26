@@ -8,18 +8,18 @@ Paste lecture notes, textbook excerpts, articles, or exam material into a note
 group. The app cleans the source text, derives atomic study cards, generates
 assessment questions, embeds the cards for retrieval, and schedules review with
 FSRS. The result is a study system that keeps generation, provenance, review,
-and chat tied to the same source-of-truth knowledge objects.
+  and chat tied to the same source-of-truth knowledge objects.
 
 ## Why This Project Is Interesting
 
 - **End-to-end AI workflow orchestration**: a single Auto Workflow handles
-  source validation, title suggestions, topic assignment, study card generation,
+  source validation, title suggestions, Concept assignment, study card generation,
   question card generation, embedding, and background job recovery.
 - **Grounded retrieval design**: Tutor Chat retrieves from study cards within a
-  module-level RAG Boundary, can narrow to a note group or topics, and returns
+  module-level RAG Boundary, can narrow to a note group or Concepts, and returns
   study card references used in the answer.
 - **Learning-aware data model**: Subjects, modules, note groups, study cards,
-  question cards, topics, source ranges, short codes, and jobs are modeled as
+  question cards, Concepts, source ranges, short codes, and jobs are modeled as
   explicit domain concepts instead of being folded into generic blobs.
 - **Spaced repetition built in**: question cards store FSRS scheduling state,
   support due/review-next/review-all modes, and become stale when supporting
@@ -28,8 +28,8 @@ and chat tied to the same source-of-truth knowledge objects.
   in cleaned text, which supports a reading view aligned with the generated
   cards.
 - **Production-shaped local app**: FastAPI serves the API and, after build, the
-  Vite frontend from one process; Docker Compose provides a repeatable local
-  runtime with persisted SQLite and ChromaDB data.
+  Vite frontend from one process; Supabase local development provides Postgres,
+  Auth, and pgvector through Docker.
 
 ## Product Flow
 
@@ -46,10 +46,10 @@ Subject
 1. Create a subject and module, optionally using Intent Chat to shape the title,
    goal, and scope.
 2. Create a note group from raw text and a unique ID.
-3. Let the background Auto Workflow generate cleaned text, topics, study cards,
+3. Let the background Auto Workflow generate cleaned text, Concepts, study cards,
    formatted sections, and question cards.
 4. Review question cards by due date, queue order, or full drill mode.
-5. Ask Tutor Chat questions against the selected module, note group, or topics.
+5. Ask Tutor Chat questions against the selected module, note group, or Concepts.
 
 ## Core Features
 
@@ -60,7 +60,7 @@ Subject
 - Cleaned Text generation that preserves source meaning while normalizing
   formatting.
 - Formatted Sections that map readable source sections to specific study cards.
-- Topic assignment using a module-owned reusable topic pool.
+- Concept assignment using a module-owned reusable Concept pool.
 - Retry, cancel, resume, and status tracking for background generation jobs.
 
 ### Study Cards And Provenance
@@ -70,7 +70,7 @@ Subject
 - Source ranges connect generated study cards back to evidence spans in cleaned
   text.
 - Editing a study card marks dependent question cards as stale.
-- Study cards are embedded in ChromaDB for similarity search.
+- Study cards are embedded in pgvector for similarity search.
 
 ### Question Cards And Review
 
@@ -78,25 +78,25 @@ Subject
 - Question cards reference the study cards that support their answers.
 - FSRS scheduling fields are persisted per card.
 - Review modes support due cards, upcoming queue cards, and all cards.
-- Module, note group, and topic review scopes share the same scheduling model.
+- Module, note group, and Concept review scopes share the same scheduling model.
 - Timelines summarize due, week, month, six-month, and long-term review load.
 
 ### Tutor Chat
 
 - Retrieval-grounded answers from study card context.
 - Module-level default RAG Boundary with optional note group narrowing.
-- Topic filtering for focused explanations.
+- Concept filtering for focused explanations.
 - Conversation history support.
 - Responses return the study card references used to answer.
 
 ### Navigation And UI
 
-- React + Vite single-page app with subject, module, note group, and topic
+- React + Vite single-page app with subject, module, note group, and Concept
   routes.
 - Stable short-code routes for user-facing navigation.
 - Module overview with note group stats, due counts, stale counts, and review
   timeline.
-- Topic pages for cross-note-group study and review.
+- Concept pages for cross-note-group study and review.
 - Reading dialog aligned to generated study cards.
 
 ## Architecture
@@ -110,9 +110,9 @@ FastAPI application
        |
        | SQLAlchemy ORM
        v
-SQLite domain database
+Supabase Postgres domain database
        |
-       +--> ChromaDB vector collection
+       +--> Postgres pgvector embeddings
        |
        +--> OpenAI Responses API and embeddings
        |
@@ -128,7 +128,7 @@ SQLite domain database
 - `backend/app/jobs.py`: Auto Workflow and question generation job execution.
 - `backend/app/openai_client.py`: OpenAI prompt orchestration, JSON response
   parsing, generation, chat, and embeddings.
-- `backend/app/chroma.py`: persistent ChromaDB collection setup.
+- `backend/app/vector_store.py`: pgvector-backed embedding persistence and similarity search.
 - `backend/app/fsrs_utils.py`: FSRS initialization and review transitions.
 - `backend/app/source_ranges.py`: source evidence matching for generated cards.
 - `backend/app/short_codes.py`: compact URL-safe route aliases.
@@ -139,7 +139,7 @@ SQLite domain database
   coordination.
 - `frontend/src/api.js`: typed API client functions for backend routes.
 - `frontend/src/features/*`: feature views for subjects, modules, note groups,
-  study cards, question cards, review, reading, topics, and Tutor Chat.
+  study cards, question cards, review, reading, Concepts, and Tutor Chat.
 - `frontend/src/components/*`: shared layout, dialog, feedback, and UI
   primitives.
 
@@ -147,10 +147,10 @@ SQLite domain database
 
 The FastAPI app exposes routes for:
 
-- Subjects, modules, note groups, topics, study cards, and question cards.
+- Subjects, modules, note groups, Concepts, study cards, and question cards.
 - Intent Chat for subject and module setup.
 - Auto Workflow job creation, retry, cancel, and status polling.
-- Module, note group, and topic overviews.
+- Module, note group, and Concept overviews.
 - Review queues and question timelines.
 - Stable app route resolution through short codes.
 - Tutor Chat over retrieved study card context.
@@ -164,12 +164,12 @@ OpenAPI docs are available from a running backend at
 | --- | --- |
 | Frontend | React 18, Vite, React Router, shadcn-style UI primitives, Tailwind CSS |
 | Backend | Python, FastAPI, SQLAlchemy, Pydantic |
-| Relational storage | SQLite |
-| Vector storage | ChromaDB |
+| Relational storage | Supabase Postgres |
+| Vector storage | pgvector |
 | AI generation | OpenAI Responses API |
 | Embeddings | OpenAI `text-embedding-3-small` by default |
 | Spaced repetition | FSRS |
-| Local runtime | Docker Compose or Makefile-driven development |
+| Local runtime | Supabase local stack plus Makefile-driven development |
 
 Default model settings are configured in `backend/app/config.py` and can be
 overridden with environment variables:
@@ -184,31 +184,116 @@ OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 
 ### Requirements
 
-- Docker with Compose, or Python 3.10+ and Node.js 18+
+- Docker Desktop, Python 3.10+, and Node.js 18+
 - An OpenAI API key
 
-### Fastest Path With Docker
+### Local Environment Files
+
+Environment variable names are mostly the same in local and production, but the
+values are different.
+
+| File | Purpose |
+| --- | --- |
+| `.env.local.example` | Template for local development with the Supabase Docker stack |
+| `.env.prod.example` | Checklist for Render and the remote Supabase project |
+| `.env` | Your ignored local config, read by both backend and frontend dev servers |
+
+Create your local config first:
 
 ```bash
-cp .env.example .env
-# edit .env and set OPENAI_API_KEY
-
-docker compose up --build
+cp .env.local.example .env
 ```
 
-Open `http://localhost:8000`.
+Then edit `.env` and set:
 
-Docker Compose reads configuration from the repo-root `.env`, builds the
-frontend, serves the API and frontend from one container, and stores SQLite plus
-ChromaDB data in the named Docker volume `studysmith_study-data`.
+- `OPENAI_API_KEY`
+- `ADMIN_EMAILS`
+- the local Supabase publishable and secret keys from `make supabase-status`
 
-Reset Docker data with:
+### Local Supabase
+
+Local Supabase is a Docker stack managed by the Supabase CLI. It provides:
+
+- Postgres database
+- Supabase Auth
+- Mailpit inbox for local magic-link emails
+- Supabase Studio
+
+Start it after Docker Desktop is running:
 
 ```bash
-docker compose down -v
+make supabase-start
 ```
 
-### Manual Development
+Print the local URLs and keys:
+
+```bash
+make supabase-status
+```
+
+Use that output to fill these `.env` values:
+
+```env
+SUPABASE_SECRET_KEY=...
+VITE_SUPABASE_PUBLISHABLE_KEY=...
+```
+
+Local magic-link emails are captured in Mailpit, not sent to a real inbox:
+
+```text
+http://127.0.0.1:54324
+```
+
+Open Supabase Studio at:
+
+```text
+http://127.0.0.1:54323
+```
+
+Reset local Supabase data with:
+
+```bash
+npx supabase@latest db reset
+```
+
+### Local App Servers
+
+`make run` does not start Supabase. It starts only the application servers:
+
+- FastAPI backend on `http://localhost:8000`
+- Vite frontend on `http://localhost:5173`
+
+Run this after `make supabase-start`:
+
+```bash
+make run
+```
+
+Open:
+
+```text
+http://localhost:5173
+```
+
+The local development shape is:
+
+```text
+Browser -> Vite frontend :5173
+Browser -> local Supabase Auth :54321
+FastAPI backend :8000 -> local Supabase Postgres :54322
+```
+
+### Local Command Summary
+
+| Command | What it does |
+| --- | --- |
+| `make supabase-start` | Starts the local Supabase Docker stack |
+| `make supabase-status` | Prints local Supabase URLs, database URL, publishable key, and secret key |
+| `make supabase-stop` | Stops the local Supabase Docker stack |
+| `make run` | Starts the local FastAPI and Vite app servers |
+| `make stop` | Stops app servers listening on ports `8000` and `5173` |
+
+### Manual Dependency Setup
 
 Install backend dependencies:
 
@@ -220,12 +305,6 @@ pip install -r requirements.txt
 cd ..
 ```
 
-Create `backend/.env`:
-
-```env
-OPENAI_API_KEY=sk-...
-```
-
 Install frontend dependencies:
 
 ```bash
@@ -234,14 +313,15 @@ npm install
 cd ..
 ```
 
-Run both dev servers:
+### Docker App Container
 
 ```bash
-make run
+make supabase-start
+docker compose up --build
 ```
 
-Open `http://localhost:5173` for the Vite frontend. The backend runs on
-`http://localhost:8000`.
+Open `http://localhost:8000`. The container connects to the local Supabase
+database through `host.docker.internal` unless `DOCKER_DATABASE_URL` is set.
 
 ### Production-Style Local Run
 
@@ -262,33 +342,30 @@ python -m pytest tests
 ```
 
 The current test suite covers route exposure, note group creation constraints,
-module overview aggregation, topic-scoped review behavior, short-code routes,
+module overview aggregation, Concept-scoped review behavior, short-code routes,
 OpenAI model routing, unique ID creation behavior, and source range matching.
 
-There is not currently a frontend test runner configured.
+Run frontend tests from `frontend/`:
+
+```bash
+npm test -- --run
+```
 
 ## Data And Reset Notes
 
-Manual local data lives under `backend/`:
+Local app data lives in the Supabase Docker stack. Reset it with:
 
-- `backend/study.db`: SQLite database
-- `backend/chroma/`: ChromaDB persistence
-
-Docker local data lives in the `studysmith_study-data` named volume.
-
-If schema changes produce local startup errors, delete `backend/study.db` and
-`backend/chroma/`, then restart the app. For Docker, run
-`docker compose down -v` and rebuild.
+```bash
+npx supabase@latest db reset
+```
 
 ## Current Boundaries
 
-- The app is designed for local single-user study workflows. It does not include
-  authentication, authorization, or multi-user tenancy.
+- The app uses Supabase Auth plus FastAPI authorization. The frontend does not
+  query app tables directly.
 - The AI integration is OpenAI-first. Model names are configurable, but replacing
   the provider requires changing `backend/app/openai_client.py`.
-- SQLite and ChromaDB are intentionally simple local storage choices, not a
-  hosted production deployment strategy.
-- Frontend tests have not been added yet.
+- Supabase migrations are the source of truth for Postgres schema changes.
 
 ## Roadmap
 
@@ -298,5 +375,5 @@ If schema changes produce local startup errors, delete `backend/study.db` and
 - [ ] Richer analytics on review history, mastery, and stale card resolution.
 - [x] Single-process production-style local run.
 - [x] Module-level review and timeline views.
-- [x] Topic-scoped study and review pages.
+- [x] Concept-scoped study and review pages.
 - [x] Short-code app routes.

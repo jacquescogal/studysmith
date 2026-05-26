@@ -12,20 +12,81 @@ describe("ContextSidebar permission controls", () => {
         scope="note-groups"
         onScopeChange={() => {}}
         noteGroupSearch=""
-        topicSearch=""
+        conceptSearch=""
         onNoteGroupSearchChange={() => {}}
-        onTopicSearchChange={() => {}}
+        onConceptSearchChange={() => {}}
         noteGroups={[]}
-        topics={[]}
+        concepts={[]}
         showCreateNoteGroup
         canCreateNoteGroup={false}
         onSelectNoteGroup={() => {}}
-        onSelectTopic={() => {}}
+        onSelectConcept={() => {}}
         onCreateNoteGroup={() => {}}
       />
     );
 
     expect(html).toContain('aria-label="Create note group"');
     expect(html).toContain('disabled=""');
+  });
+
+  test("renders concept directory rows with child indentation", () => {
+    const html = renderToStaticMarkup(
+      <ContextSidebar
+        subjectTitle="Biology"
+        moduleTitle="Cell biology"
+        scope="concepts"
+        onScopeChange={() => {}}
+        noteGroupSearch=""
+        conceptSearch=""
+        onNoteGroupSearchChange={() => {}}
+        onConceptSearchChange={() => {}}
+        noteGroups={[]}
+        concepts={[
+          { value: "", label: "..", directoryRole: "up", directoryDepth: 0 },
+          { value: "root-1", label: "root_1", directoryRole: "current", directoryDepth: 0 },
+          { value: "a", label: "a", directoryRole: "concept", directoryDepth: 1 }
+        ]}
+        selectedConceptId="root-1"
+        showCreateNoteGroup={false}
+        onSelectNoteGroup={() => {}}
+        onSelectConcept={() => {}}
+        onCreateNoteGroup={() => {}}
+      />
+    );
+
+    expect(html).toContain("..");
+    expect(html).toContain("root_1");
+    expect(html).toContain("lucide-undo-2");
+    expect(html).toContain("lucide-corner-down-right");
+    expect(html).not.toContain("|- a");
+  });
+
+  test("does not style the concept up row as selected", () => {
+    const html = renderToStaticMarkup(
+      <ContextSidebar
+        subjectTitle="Biology"
+        moduleTitle="Cell biology"
+        scope="concepts"
+        onScopeChange={() => {}}
+        noteGroupSearch=""
+        conceptSearch=""
+        onNoteGroupSearchChange={() => {}}
+        onConceptSearchChange={() => {}}
+        noteGroups={[]}
+        concepts={[
+          { value: "", label: "..", directoryRole: "up", directoryDepth: 0 },
+          { value: "root-1", label: "root_1", directoryRole: "current", directoryDepth: 0 },
+          { value: "a", label: "a", directoryRole: "concept", directoryDepth: 1 }
+        ]}
+        selectedNoteGroupId=""
+        selectedConceptId="root-1"
+        showCreateNoteGroup={false}
+        onSelectNoteGroup={() => {}}
+        onSelectConcept={() => {}}
+        onCreateNoteGroup={() => {}}
+      />
+    );
+
+    expect(html.match(/border-primary/g) ?? []).toHaveLength(1);
   });
 });

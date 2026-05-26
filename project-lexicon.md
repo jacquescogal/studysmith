@@ -23,8 +23,23 @@ Subject
 ```
 
 `Subject`, `Module`, and `Note Group` are hierarchy levels. `Study Card` and
-`Question Card` are content artifacts under a note group. `Topic` is a
-module-owned concept scope, not another source hierarchy level.
+`Question Card` are content artifacts under a note group. `Concept` is a
+module-owned conceptual scope, not another source hierarchy level.
+
+The conceptual map hierarchy is separate from the source hierarchy:
+
+```text
+Context Root
+`-- Concept
+    `-- Concept
+        |-- Knowledge Nodes
+        `-- Study Cards
+```
+
+`Context Root` is the current view root: a Module on module mind maps, a Note
+Group on note-group mind maps, or a Concept on concept-focused views. Concepts are
+the first-class intermediary nodes. Knowledge Nodes are leaf nodes. Study Cards
+attach primarily to the deepest relevant Concept.
 
 ## Learning Hierarchy
 
@@ -38,7 +53,7 @@ Examples: a certification exam, a course, a textbook, or a major knowledge area.
 ### Module
 
 A scoped learning unit within a subject. A module contains note groups and owns
-the reusable topic pool for those note groups and their study cards.
+the reusable Concept pool for those note groups and their study cards.
 
 A module is the primary review and retrieval boundary. Tutor chat searches study
 cards within a module by default, and module-level review can span multiple note
@@ -58,7 +73,7 @@ its parent module.
 ### Raw Text
 
 The actual study material pasted or supplied by the user. Raw text is the input
-for cleaning, title suggestion, topic suggestion, study card generation, and
+for cleaning, title suggestion, Concept suggestion, study card generation, and
 question card generation.
 
 Raw text should not be treated as an identifier. Use `Unique ID` for duplicate
@@ -119,31 +134,103 @@ truth.
 
 ## Classification
 
-### Topic
+### Concept
 
-A reusable concept scope owned by a module. Topics attach to individual study
-cards and may also be associated with note groups as generation metadata.
+A reusable conceptual scope owned by a module. Concepts are first-class
+intermediary nodes for browsing, filtering, review, retrieval, and mind maps.
+Concepts can contain child Concepts, Knowledge Nodes, and Study Cards.
 
-Topics are used to browse, filter, review, and retrieve study cards and question
-cards across a module. A Topic page is scoped by study cards tagged with that
-Topic, regardless of the note group that owns each study card.
+A Concept has zero or one parent Concept within its module. A Concept with no
+parent is a root Concept. The parent is the strongest conceptual parent; do not
+model Concept lineage as a DAG. If a Concept relates to another Concept outside
+its parent chain, represent that as a graph relationship, not as a second parent.
 
-Topic pages are read/review scopes for cards. Users can rename or delete the
-Topic from the Topic page. Deleting a Topic deletes the topic row and removes
+Concepts are not leaf nodes. A leaf idea under a Concept is a Knowledge Node.
+Study Cards attach primarily to the deepest relevant Concept.
+Study Cards may also reference the Knowledge Nodes they teach.
+
+Concepts are used to browse, filter, review, and retrieve study cards and
+question cards across a module. A Concept page is scoped by study cards tagged
+with that Concept, regardless of the note group that owns each study card.
+
+Concept pages are read/review scopes for cards. Users can rename or delete the
+Concept from the Concept page. Deleting a Concept deletes the concept row and removes
 note-group and study-card associations, but does not delete study cards or
 question cards.
 
 The backend may still use the legacy `TopicChip` model and `topic_chips` table
-names. User-facing UI must say `Topic` or `Topics`, not `Topic Chip`.
+names while this model is being migrated. User-facing UI must say `Concept` or
+`Concepts`, not `Topic`, `Topics`, or `Topic Chip`.
+
+### Concept Tree
+
+The single-parent hierarchy of Concepts within a module. The Concept Tree is
+the primary conceptual structure for module-level mind maps. It is generated
+from source material and can later be curated by owners or maintainers.
+
+The Concept Tree is not the source hierarchy. Note Groups are provenance and
+filter contexts, not intermediary conceptual nodes in module-level mind maps.
+
+### Knowledge Node
+
+A typed leaf knowledge item under a Concept. Knowledge Nodes represent the
+specific pieces of understanding inside a Concept, such as a definition,
+mechanism, rule, or fact.
+
+Knowledge Nodes do not contain child Concepts or child Knowledge Nodes. They can
+relate to other Knowledge Nodes or Concepts through graph relationships, but
+those relationships do not make them intermediary scope nodes.
+
+Knowledge Nodes support mind map structure, retrieval diagnostics, and future
+learning analytics. They are not the primary user-facing review scope; Concepts
+and Study Cards remain the main review and navigation surfaces.
+
+The backend may still use `MindMapConcept`, `mind_map_concepts`, or `concept`
+field names for Knowledge Node storage while this model is being migrated.
+User-facing UI should prefer `Knowledge Node` or specific Knowledge Type labels
+for leaf nodes, not `Concept`.
+
+### Knowledge Type
+
+The role of a Knowledge Node. Initial Knowledge Types are:
+
+- `definition`: explains what something is.
+- `mechanism`: explains how something works or unfolds.
+- `rule`: explains a constraint, condition, invariant, formula, or required
+  relationship.
+- `fact`: records a standalone detail worth remembering.
+
+`definition` is the baseline Knowledge Type. When a Concept introduces a named
+idea, the generator should prefer at least one Definition Knowledge Node when
+the source material supports it.
+
+Avoid using `topic`, `subtopic`, `term`, `process`, `principle`, `example`, or
+`detail` as user-facing Knowledge Types. Concept nesting is a scope position in
+the Concept Tree, not a leaf Knowledge Type.
+
+### Mind Map
+
+A visual and stored graph of a context root, its relevant Concept Tree, leaf
+Knowledge Nodes, Study Cards, and graph relationships.
+
+For module-level mind maps, the root is the Module and the intermediary nodes
+are Concepts. Note Groups should appear as provenance metadata or filters, not as
+main intermediary nodes.
+
+For note-group-level mind maps, the root is the Note Group and the visible
+Concept Tree is filtered to Concepts, Knowledge Nodes, and Study Cards supported
+by that Note Group. These are still module-owned Concepts; the Note Group does
+not own a separate Concept vocabulary.
 
 ## Generation Workflows
 
 ### Auto Workflow
 
 The canonical note group generation path. The user supplies or generates a
-unique ID, supplies raw text, then the system chooses a title, attaches or
-creates topics, generates study cards, and generates question cards in the
-background.
+unique ID and supplies raw text. The system then derives or updates the Concept
+Tree and Knowledge Nodes, attaches or creates the deepest relevant Concepts,
+generates Study Cards, attaches Study Cards to Concepts, and generates Question
+Cards in the background.
 
 The user-facing action should be `Create note group`; `Auto Workflow` names the
 underlying generation behavior.
@@ -216,7 +303,7 @@ event records the answer result, timing, selected answer, FSRS rating, and the
 before/after scheduling state for the Question Card.
 
 Review History belongs to Question Cards and can be aggregated by Note Group,
-Module, or Topic for progress analytics. Review History is not a scheduling
+Module, or Concept for progress analytics. Review History is not a scheduling
 model; FSRS remains the scheduling model.
 
 ## Retrieval And Chat
@@ -225,7 +312,7 @@ model; FSRS remains the scheduling model.
 
 The scope limit used when retrieving study card context for tutor chat. The
 module is the default retrieval boundary. Retrieval can optionally narrow to a
-specific note group and/or selected topics.
+specific note group and/or selected Concepts.
 
 ### Tutor Chat
 
@@ -257,7 +344,7 @@ references.
 
 ### Short Code
 
-A compact, URL-safe route alias for a subject, module, note group, or topic.
+A compact, URL-safe route alias for a subject, module, note group, or Concept.
 Short codes use the `[a-zA-Z0-9_-]` character set and are case-sensitive.
 
 Short codes are URL plumbing only. They are not the internal ID, not a
@@ -272,7 +359,7 @@ in one response.
 
 Module overview is an API and UI aggregation boundary. It does not create a new
 domain hierarchy level and should not replace `Module`, `Note Group`, `Study
-Card`, `Question Card`, or `Topic` as model terms.
+Card`, `Question Card`, or `Concept` as model terms.
 
 ### Job
 
@@ -298,10 +385,10 @@ A vector representation of study card content used for similarity search.
 Embeddings are implementation details that support retrieval-grounded tutor
 chat.
 
-### Chroma Collection
+### Pgvector Embedding Store
 
-The local vector database collection that stores study card embeddings,
-documents, and metadata for retrieval.
+The Postgres pgvector-backed storage for study card embeddings, documents, and
+metadata used for retrieval.
 
 This is an infrastructure term, not product vocabulary.
 
@@ -322,9 +409,12 @@ start as `reader`.
 
 ### Subject Access
 
-An explicit grant that gives a user `read`, `edit`, or `owner` access to a
-specific Subject. Subject Access applies to resources inside the Subject:
-Modules, Note Groups, Study Cards, Question Cards, Topics, Review History
+An explicit grant that gives a user `reader`, `maintainer`, or `owner` access
+to a specific Subject. Readers can read and study. Maintainers can manage
+Subject content and sharing, but cannot delete the Subject or transfer owner
+status. Owners have full Subject authority, including Subject deletion and
+owner transfer. Subject Access applies to resources inside the Subject:
+Modules, Note Groups, Study Cards, Question Cards, Concepts, Review History
 views, and Tutor Chat.
 
 ### Subject Visibility
@@ -345,15 +435,23 @@ Question Card content.
 - Use `Subject`, `Module`, and `Note Group` only for hierarchy levels.
 - Use `Study Card` for atomic knowledge and retrieval truth.
 - Use `Question Card` for assessment and spaced repetition.
-- Use `Topic` for reusable module-owned concept scopes in user-facing language.
-  `TopicChip` is a legacy implementation name only.
+- Use `Concept` for reusable module-owned conceptual scopes and intermediary
+  mind map nodes in user-facing language. `TopicChip` is a legacy
+  implementation name only.
+- Use `Concept Tree` for the single-parent Concept hierarchy within a module.
+- Use `Knowledge Node` for typed leaf knowledge items under Concepts. Avoid
+  using `Concept` when referring to these leaf nodes.
+- Use `Knowledge Type` for leaf node roles such as `definition`, `mechanism`,
+  `rule`, and `fact`.
+- Use `Mind Map` for the visual/stored graph rooted at a Module, Note Group, or
+  Concept.
 - Use `Unique ID` for note group identifiers and duplicate detection; use `Raw
   Text` for pasted material.
 - Use `Cleaned Text` for source-preserving markdown and `Formatted Text` for
   study-card-aligned display output.
 - Use `Tutor Chat` for retrieval-grounded study answers and `Intent Chat` for
   title, goal, and scope extraction.
-- Treat `Job`, `Embedding`, and `Chroma Collection` as implementation terms
+- Treat `Job`, `Embedding`, and `Pgvector Embedding Store` as implementation terms
   unless the user needs to reason about technical internals.
 - When introducing a new term, define its owner, scope, lifecycle, and how it
   differs from nearby concepts before using it widely.

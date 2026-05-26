@@ -1662,6 +1662,91 @@ class RouteAccessEnforcementTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_chat_accepts_concept_context_and_limits_study_card_refs(self):
+        from app.main import chat
+        from app.models import TopicChip, study_card_topic_chips
+        from app.schemas import ChatRequest
+
+        db = self.SessionLocal()
+        try:
+            _, reader, _, _ = self._seed_private_course(db)
+            db.add(TopicChip(id="concept-1", module_id="module-1", label="Private Concept"))
+            db.execute(
+                study_card_topic_chips.insert().values(
+                    study_card_id="study-card-1",
+                    chip_id="concept-1",
+                )
+            )
+            db.commit()
+
+            captured = {}
+
+            def fake_generate(question, context_blocks, history, ref_ids):
+                captured["question"] = question
+                captured["context_blocks"] = context_blocks
+                captured["ref_ids"] = ref_ids
+                return {"answer": "concept ok", "used_ref_ids": ["study-card-1", "study-card-other"]}
+
+            with patch(
+                "app.main.query_study_card_embeddings",
+                return_value=[
+                    SimpleNamespace(study_card_id="study-card-other", content="Other"),
+                    SimpleNamespace(study_card_id="study-card-1", content="Content"),
+                ],
+            ) as query_embeddings, patch("app.main.embed_texts", return_value=[[0.1]]), patch(
+                "app.main.generate_chat_response",
+                side_effect=fake_generate,
+            ):
+                result = chat(
+                    ChatRequest(module_id="module-1", concept_id="concept-1", message="Hi"),
+                    db=db,
+                    current_user=reader,
+                )
+
+            self.assertEqual(result["answer"], "concept ok")
+            self.assertEqual(result["study_card_refs"], ["study-card-1"])
+            self.assertEqual(captured["ref_ids"], ["study-card-1"])
+            self.assertIn("Content", captured["context_blocks"][0])
+            self.assertNotIn("Other", "\n".join(captured["context_blocks"]))
+            self.assertIsNone(query_embeddings.call_args.kwargs["note_group_id"])
+        finally:
+            db.close()
+
+    def test_chat_rejects_ambiguous_or_mismatched_concept_context(self):
+        from app.main import chat
+        from app.models import TopicChip
+        from app.schemas import ChatRequest
+
+        db = self.SessionLocal()
+        try:
+            _, reader, _, _ = self._seed_private_course(db)
+            db.add(TopicChip(id="concept-1", module_id="module-1", label="Private Concept"))
+            db.commit()
+
+            with self.assertRaises(HTTPException) as exc:
+                chat(
+                    ChatRequest(
+                        module_id="module-1",
+                        note_group_id="note-group-1",
+                        concept_id="concept-1",
+                        message="Hi",
+                    ),
+                    db=db,
+                    current_user=reader,
+                )
+            self.assertEqual(exc.exception.status_code, 400)
+
+            with self.assertRaises(HTTPException) as exc:
+                chat(
+                    ChatRequest(module_id="public-module", concept_id="concept-1", message="Hi"),
+                    db=db,
+                    current_user=reader,
+                )
+            self.assertEqual(exc.exception.status_code, 404)
+            self.assertEqual(exc.exception.detail, "Concept not found")
+        finally:
+            db.close()
+
     def test_reader_review_uses_personal_learning_state_without_mutating_shared_question_card(self):
         from app.main import list_review_question_cards, review_question
         from app.models import QuestionCard, QuestionCardLearningState, QuestionCardReviewEvent

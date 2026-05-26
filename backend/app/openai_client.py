@@ -22,7 +22,7 @@ STUDY_CARD_CONTEXT_PROMPT = (
     "Convert raw study text into atomic study cards for effective learning and retrieval. "
     "Do not invent facts. Split by concept; each card must be coherent alone. "
     "Focus only on content relevant to the module's learning goal and scope — skip the rest. "
-    "Assign zero or more topic chips to each study card using only the provided chip list."
+    "Assign zero or more Concepts to each study card using only the provided Concept list."
 )
 
 QUESTION_SYSTEM_PROMPT = (
@@ -87,8 +87,8 @@ CLEANED_TEXT_SYSTEM_PROMPT = (
 
 MIND_MAP_SYSTEM_PROMPT = (
     "Extract a learning mind map from Study Cards. Return strict JSON only. "
-    "Derive or reuse a single-parent Topic Tree, then derive leaf Knowledge Nodes under the deepest relevant Topic. "
-    "Do not invent facts beyond the Study Cards. Every Study Card must link to at least one primary Topic."
+    "Derive or reuse a single-parent Concept Tree, then derive leaf Knowledge Nodes under the deepest relevant Concept. "
+    "Do not invent facts beyond the Study Cards. Every Study Card must link to at least one primary Concept."
 )
 
 
@@ -395,56 +395,70 @@ def generate_topic_tree_candidate_graph(
     user_prompt = (
         f"Module title: {module_title}\n"
         f"Note Group title: {note_group_title}\n\n"
-        "Existing module Topics:\n"
+        "Existing module Concepts:\n"
         f"{existing_topics_json}\n\n"
         "Study Cards:\n"
         f"{study_cards_json}\n\n"
-        "Return strict JSON with exactly these top-level keys: topics, study_card_topic_links.\n"
-        "Topic objects must include temp_id, title, summary, optional parent_topic_id, "
-        "and optional matched_existing_topic_id. parent_topic_id may reference a topic temp_id or existing Topic ID. "
-        "Each Topic must have at most one parent. Topics are intermediary scope nodes and are never leaf nodes. "
-        "Study Card Topic links must include study_card_id, topic_id, and role. "
-        "Every provided Study Card must have at least one Topic link with role primary; use the deepest relevant Topic. "
+        "Return strict JSON with exactly these top-level keys: concepts, study_card_concept_links.\n"
+        "Concept objects must include temp_id, title, summary, optional parent_concept_id, "
+        "and optional matched_existing_concept_id. parent_concept_id may reference a Concept temp_id or existing Concept ID. "
+        "Each Concept must have at most one parent. Concepts are intermediary scope nodes and are never leaf nodes. "
+        "Study Card Concept links must include study_card_id, concept_id, and role. "
+        "Every provided Study Card must have at least one Concept link with role primary; use the deepest relevant Concept. "
         "Use only provided Study Card IDs in links."
     )
     payload = _strong_high_json(MIND_MAP_SYSTEM_PROMPT, user_prompt)
+    concepts = payload.get("concepts") or payload.get("topics")
+    if isinstance(concepts, list):
+        concepts = [
+            {
+                **concept,
+                "parent_topic_id": concept.get("parent_concept_id") or concept.get("parent_topic_id"),
+                "matched_existing_topic_id": concept.get("matched_existing_concept_id")
+                or concept.get("matched_existing_topic_id"),
+            }
+            for concept in concepts
+            if isinstance(concept, dict)
+        ]
+    study_card_concept_links = payload.get("study_card_concept_links") or payload.get("study_card_topic_links")
+    if isinstance(study_card_concept_links, list):
+        study_card_concept_links = [
+            {
+                **link,
+                "topic_id": link.get("concept_id") or link.get("topic_id"),
+            }
+            for link in study_card_concept_links
+            if isinstance(link, dict)
+        ]
     return {
-        "topics": payload.get("topics"),
-        "study_card_topic_links": payload.get("study_card_topic_links"),
+        "topics": concepts,
+        "study_card_topic_links": study_card_concept_links,
     }
 
 
-def generate_knowledge_node_candidates(
+def generate_topic_knowledge_node_candidates(
     module_title: str,
     note_group_title: str,
     study_cards: List[dict],
-    topics: List[dict],
-    study_card_topic_links: List[dict],
-    existing_concepts: List[dict],
-    existing_topics: Optional[List[dict]] = None,
+    selected_topic: dict,
+    existing_knowledge_nodes: List[dict],
 ) -> dict:
-    existing_concepts_json = json.dumps(existing_concepts, ensure_ascii=True)
-    existing_topics_json = json.dumps(existing_topics or [], ensure_ascii=True)
-    topics_json = json.dumps(topics, ensure_ascii=True)
-    study_card_topic_links_json = json.dumps(study_card_topic_links, ensure_ascii=True)
+    existing_knowledge_nodes_json = json.dumps(existing_knowledge_nodes, ensure_ascii=True)
+    selected_topic_json = json.dumps(selected_topic, ensure_ascii=True)
     study_cards_json = json.dumps(study_cards, ensure_ascii=True)
     user_prompt = (
         f"Module title: {module_title}\n"
         f"Note Group title: {note_group_title}\n\n"
-        "Existing module Topics:\n"
-        f"{existing_topics_json}\n\n"
-        "Existing module Knowledge Nodes:\n"
-        f"{existing_concepts_json}\n\n"
-        "Resolved candidate Topic Tree:\n"
-        f"{topics_json}\n\n"
-        "Study Card Topic links:\n"
-        f"{study_card_topic_links_json}\n\n"
-        "Study Cards:\n"
+        "Selected Concept:\n"
+        f"{selected_topic_json}\n\n"
+        "Connected Study Cards where this selected Concept is the deepest relevant Concept:\n"
         f"{study_cards_json}\n\n"
+        "Existing Knowledge Node context:\n"
+        f"{existing_knowledge_nodes_json}\n\n"
         "Return strict JSON with exactly these top-level keys: knowledge_nodes, relations, study_card_knowledge_node_links.\n"
         "Knowledge Node objects must include temp_id, topic_id, title, summary, knowledge_type, importance, "
         "optional source_quote, and optional matched_existing_knowledge_node_id. "
-        "topic_id may reference a topic temp_id or existing Topic ID. "
+        "Every returned Knowledge Node must use the selected Concept's topic_id field for storage compatibility. "
         "Allowed knowledge_type values: "
         f"{sorted(KNOWLEDGE_NODE_TYPES)}.\n"
         "Allowed importance values: "
@@ -457,11 +471,14 @@ def generate_knowledge_node_candidates(
         "Relation endpoints may reference a Knowledge Node temp_id or an existing Knowledge Node ID. "
         "Study Card Knowledge Node links must include study_card_id, knowledge_node_id, and role when a Study Card teaches a leaf node. "
         "Use only provided Study Card IDs in links. "
-        "For each touched Topic, reconcile Knowledge Nodes using Study Cards directly linked to that Topic as the deepest Topic. "
-        "Work from deepest child Topics upward. Immediate child Topic definitions may be used as dependency context for the parent Topic. "
-        "Immediate child Topic definitions should inform parent definitions, but parent Topics should not absorb all descendant Study Cards. "
-        "Prefer at least one definition Knowledge Node for each touched Topic when the Study Cards or child definitions support it. "
-        "If a definition is not supported, omit it; the backend will mark the Topic as needs_review. "
+        "Reconcile Knowledge Nodes for exactly one selected Concept. "
+        "You must return at least one definition Knowledge Node for the selected Concept. "
+        "Create that definition from the connected Study Cards and any existing Knowledge Node context with context_role "
+        "immediate_child_topic_definition. "
+        "If there are no connected Study Cards, synthesize the selected Concept definition from the immediate_child_topic_definition "
+        "items. If child definitions exist, the selected Concept definition must use them as dependency context. "
+        "Do not omit the selected Concept definition. "
+        "Do not return Knowledge Nodes for child Concepts; child Concept definitions are context only. "
         "Do not create relations that are unsupported by the Study Cards. "
         "Do not use topic, subtopic, term, process, principle, example, or detail as knowledge_type values."
     )
@@ -471,6 +488,25 @@ def generate_knowledge_node_candidates(
         "relations": payload.get("relations"),
         "study_card_knowledge_node_links": payload.get("study_card_knowledge_node_links", []),
     }
+
+
+def generate_knowledge_node_candidates(
+    module_title: str,
+    note_group_title: str,
+    study_cards: List[dict],
+    topics: List[dict],
+    study_card_topic_links: List[dict],
+    existing_concepts: List[dict],
+    existing_topics: Optional[List[dict]] = None,
+) -> dict:
+    selected_topic = topics[0] if topics else {}
+    return generate_topic_knowledge_node_candidates(
+        module_title=module_title,
+        note_group_title=note_group_title,
+        study_cards=study_cards,
+        selected_topic=selected_topic,
+        existing_knowledge_nodes=existing_concepts,
+    )
 
 
 def generate_mind_map_candidate_graph(
@@ -488,15 +524,39 @@ def generate_mind_map_candidate_graph(
     )
     topics = topic_payload.get("topics") or []
     study_card_topic_links = topic_payload.get("study_card_topic_links") or []
-    knowledge_payload = generate_knowledge_node_candidates(
-        module_title=module_title,
-        note_group_title=note_group_title,
-        study_cards=study_cards,
-        topics=topics,
-        study_card_topic_links=study_card_topic_links,
-        existing_concepts=existing_concepts,
-        existing_topics=existing_topics,
-    )
+    knowledge_payloads = []
+    for selected_topic in topics:
+        selected_topic_id = selected_topic.get("temp_id") or selected_topic.get("topic_id") or selected_topic.get("id")
+        selected_study_card_ids = {
+            link.get("study_card_id")
+            for link in study_card_topic_links
+            if link.get("topic_id") == selected_topic_id
+        }
+        selected_study_cards = [
+            card
+            for card in study_cards
+            if (card.get("study_card_id") or card.get("id")) in selected_study_card_ids
+        ]
+        knowledge_payloads.append(
+            generate_topic_knowledge_node_candidates(
+                module_title=module_title,
+                note_group_title=note_group_title,
+                study_cards=selected_study_cards or study_cards,
+                selected_topic=selected_topic,
+                existing_knowledge_nodes=existing_concepts,
+            )
+        )
+    knowledge_payload = {
+        "knowledge_nodes": [],
+        "relations": [],
+        "study_card_knowledge_node_links": [],
+    }
+    for payload in knowledge_payloads:
+        knowledge_payload["knowledge_nodes"].extend(payload.get("knowledge_nodes") or [])
+        knowledge_payload["relations"].extend(payload.get("relations") or [])
+        knowledge_payload["study_card_knowledge_node_links"].extend(
+            payload.get("study_card_knowledge_node_links") or []
+        )
     return {
         "topics": topics,
         "knowledge_nodes": knowledge_payload.get("knowledge_nodes") or [],

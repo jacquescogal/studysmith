@@ -85,7 +85,11 @@ class ShortCodeRoutesTests(unittest.TestCase):
         self.assertEqual(code, "AAAAAB")
 
     def test_route_resolver_validates_nested_hierarchy(self):
-        from app.main import resolve_note_group_app_route, resolve_topic_app_route
+        from app.main import (
+            resolve_concept_app_route,
+            resolve_note_group_app_route,
+            resolve_topic_app_route,
+        )
         from app.models import (
             ModuleShortCode,
             NoteGroupShortCode,
@@ -148,6 +152,13 @@ class ShortCodeRoutesTests(unittest.TestCase):
                 db=db,
                 current_user=user,
             )
+            concept_ok = resolve_concept_app_route(
+                subject_code="Sub_1",
+                module_code="Mod_01",
+                concept_code="Topic_1",
+                db=db,
+                current_user=user,
+            )
             with self.assertRaises(HTTPException) as bad_topic:
                 resolve_topic_app_route(
                     subject_code="Sub_2",
@@ -180,6 +191,17 @@ class ShortCodeRoutesTests(unittest.TestCase):
                 "module_short_code": "Mod_01",
                 "topic_id": "topic-1",
                 "topic_short_code": "Topic_1",
+            },
+        )
+        self.assertEqual(
+            concept_ok,
+            {
+                "subject_id": "subject-1",
+                "subject_short_code": "Sub_1",
+                "module_id": "module-1",
+                "module_short_code": "Mod_01",
+                "concept_id": "topic-1",
+                "concept_short_code": "Topic_1",
             },
         )
         self.assertEqual(bad_topic.exception.status_code, 404)

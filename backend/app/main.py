@@ -65,6 +65,7 @@ from app.jobs import (
 from app.mind_map import (
     build_module_mind_map_response,
     build_note_group_mind_map_response,
+    build_topic_mind_map_response,
     build_topic_knowledge_node_generation_context,
     mark_note_group_mind_map_stale,
     regenerate_topic_knowledge_nodes,
@@ -75,14 +76,18 @@ from app.models import (
     APP_ROLES,
     DEFAULT_MODULE_SETTINGS,
     Job,
+    MindMapConcept,
+    MindMapRelation,
     Module,
     ModuleShortCode,
+    NoteGroupMindMapConcept,
     NoteGroup,
     NoteGroupShortCode,
     QuestionCard,
     QuestionCardLearningState,
     QuestionCardReviewEvent,
     StudyCard,
+    StudyCardMindMapConcept,
     StudyCardSourceRange,
     Subject,
     SubjectAccess,
@@ -121,7 +126,7 @@ from app.progress import build_note_group_progress, build_question_card_performa
 from app.openai_client import (
     embed_texts,
     generate_chat_response,
-    generate_knowledge_node_candidates,
+    generate_topic_knowledge_node_candidates,
     generate_module_intent_response,
     generate_subject_intent_response,
 )
@@ -152,6 +157,9 @@ from app.schemas import (
     NoteGroupTitleUpdate,
     NoteGroupOrderUpdate,
     NoteGroupProgressResponse,
+    ConceptAttach,
+    ConceptCreate,
+    ConceptOut,
     QuestionCardCreate,
     QuestionCardGenerate,
     QuestionCardPerformanceResponse,
@@ -320,7 +328,45 @@ def _ensure_pgvector_extension(target_engine=engine) -> None:
         conn.commit()
 
 
+def _ensure_postgres_create_all_parent_constraints(target_engine=engine) -> None:
+    if target_engine.url.get_backend_name() != "postgresql":
+        return
+    constraints = [
+        ("note_groups", "uq_note_groups_module_id_id", "module_id, id"),
+        ("study_cards", "uq_study_cards_note_group_id_id", "note_group_id, id"),
+        ("mind_map_concepts", "uq_mind_map_concepts_module_id", "module_id, id"),
+        ("topic_chips", "uq_topic_chips_module_id_id", "module_id, id"),
+        ("jobs", "uq_jobs_id_note_group_id", "id, note_group_id"),
+    ]
+    with target_engine.connect() as conn:
+        for table_name, constraint_name, column_list in constraints:
+            conn.execute(
+                text(
+                    f"""
+                    DO $$
+                    BEGIN
+                      IF to_regclass('public.{table_name}') IS NOT NULL
+                         AND NOT EXISTS (
+                           SELECT 1
+                           FROM pg_constraint c
+                           JOIN pg_class t ON c.conrelid = t.oid
+                           JOIN pg_namespace n ON t.relnamespace = n.oid
+                           WHERE c.conname = '{constraint_name}'
+                             AND t.relname = '{table_name}'
+                             AND n.nspname = 'public'
+                         ) THEN
+                        ALTER TABLE public.{table_name}
+                          ADD CONSTRAINT {constraint_name} UNIQUE ({column_list});
+                      END IF;
+                    END $$;
+                    """
+                )
+            )
+        conn.commit()
+
+
 _ensure_pgvector_extension()
+_ensure_postgres_create_all_parent_constraints()
 Base.metadata.create_all(bind=engine)
 _ensure_note_group_source_columns()
 _ensure_module_settings_column()
@@ -610,6 +656,54 @@ def _next_note_group_sort_order(db: Session, module_id: str) -> Optional[int]:
     return max_order + 1
 
 
+def _delete_orphan_topics(db: Session, topic_ids: list[str]) -> None:
+    if not topic_ids:
+        return
+    unique_topic_ids = sorted(set(topic_ids))
+    still_owned_rows = db.execute(
+        note_group_topic_chips.select().where(
+            note_group_topic_chips.c.chip_id.in_(unique_topic_ids)
+        )
+    ).all()
+    still_owned_topic_ids = {row.chip_id for row in still_owned_rows}
+    orphan_topic_ids = [
+        topic_id for topic_id in unique_topic_ids if topic_id not in still_owned_topic_ids
+    ]
+    if not orphan_topic_ids:
+        return
+    db.execute(
+        study_card_topic_chips.delete().where(
+            study_card_topic_chips.c.chip_id.in_(orphan_topic_ids)
+        )
+    )
+    db.execute(
+        note_group_topic_chips.delete().where(
+            note_group_topic_chips.c.chip_id.in_(orphan_topic_ids)
+        )
+    )
+    db.query(TopicChipShortCode).filter(
+        TopicChipShortCode.topic_chip_id.in_(orphan_topic_ids)
+    ).delete(synchronize_session=False)
+    db.query(TopicChip).filter(TopicChip.id.in_(orphan_topic_ids)).delete(
+        synchronize_session=False
+    )
+
+
+def _delete_module_mind_map_artifacts(db: Session, module_id: str) -> None:
+    db.query(MindMapRelation).filter(MindMapRelation.module_id == module_id).delete(
+        synchronize_session=False
+    )
+    db.query(StudyCardMindMapConcept).filter(
+        StudyCardMindMapConcept.module_id == module_id
+    ).delete(synchronize_session=False)
+    db.query(NoteGroupMindMapConcept).filter(
+        NoteGroupMindMapConcept.module_id == module_id
+    ).delete(synchronize_session=False)
+    db.query(MindMapConcept).filter(MindMapConcept.module_id == module_id).delete(
+        synchronize_session=False
+    )
+
+
 def _delete_note_groups(db: Session, note_group_ids: list[str]) -> list[str]:
     if not note_group_ids:
         return []
@@ -633,6 +727,12 @@ def _delete_note_groups(db: Session, note_group_ids: list[str]) -> list[str]:
         .all()
     )
     study_card_ids = [row[0] for row in study_card_rows]
+    topic_rows = db.execute(
+        note_group_topic_chips.select().where(
+            note_group_topic_chips.c.note_group_id.in_(note_group_ids)
+        )
+    ).all()
+    touched_topic_ids = [row.chip_id for row in topic_rows]
 
     if study_card_ids:
         delete_study_card_embeddings(db, study_card_ids)
@@ -650,6 +750,7 @@ def _delete_note_groups(db: Session, note_group_ids: list[str]) -> list[str]:
             note_group_topic_chips.c.note_group_id.in_(note_group_ids)
         )
     )
+    _delete_orphan_topics(db, touched_topic_ids)
     db.query(NoteGroupShortCode).filter(
         NoteGroupShortCode.note_group_id.in_(note_group_ids)
     ).delete(synchronize_session=False)
@@ -839,6 +940,37 @@ def resolve_note_group_app_route(
 
 
 @app.get(
+    "/routes/app/subject/{subject_code}/module/{module_code}/concepts/{concept_code}",
+    response_model=AppRouteContext,
+)
+def resolve_concept_app_route(
+    subject_code: str,
+    module_code: str,
+    concept_code: str,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(optional_user),
+):
+    subject_record = _get_subject_short_code_record(db, subject_code)
+    require_subject_read(current_user, subject_record.subject)
+    module_record = _get_module_short_code_record(db, module_code)
+    module = db.get(Module, module_record.module_id)
+    if not module or module.subject_id != subject_record.subject_id:
+        _not_found_route()
+    topic_record = _get_topic_short_code_record(db, concept_code)
+    topic = db.get(TopicChip, topic_record.topic_chip_id)
+    if not topic or topic.module_id != module_record.module_id:
+        _not_found_route()
+    return {
+        "subject_id": subject_record.subject_id,
+        "subject_short_code": subject_record.short_code,
+        "module_id": module_record.module_id,
+        "module_short_code": module_record.short_code,
+        "concept_id": topic_record.topic_chip_id,
+        "concept_short_code": topic_record.short_code,
+    }
+
+
+@app.get(
     "/routes/app/subject/{subject_code}/module/{module_code}/topics/{topic_code}",
     response_model=AppRouteContext,
 )
@@ -849,23 +981,20 @@ def resolve_topic_app_route(
     db: Session = Depends(get_db),
     current_user: User | None = Depends(optional_user),
 ):
-    subject_record = _get_subject_short_code_record(db, subject_code)
-    require_subject_read(current_user, subject_record.subject)
-    module_record = _get_module_short_code_record(db, module_code)
-    module = db.get(Module, module_record.module_id)
-    if not module or module.subject_id != subject_record.subject_id:
-        _not_found_route()
-    topic_record = _get_topic_short_code_record(db, topic_code)
-    topic = db.get(TopicChip, topic_record.topic_chip_id)
-    if not topic or topic.module_id != module_record.module_id:
-        _not_found_route()
+    context = resolve_concept_app_route(
+        subject_code,
+        module_code,
+        topic_code,
+        db=db,
+        current_user=current_user,
+    )
     return {
-        "subject_id": subject_record.subject_id,
-        "subject_short_code": subject_record.short_code,
-        "module_id": module_record.module_id,
-        "module_short_code": module_record.short_code,
-        "topic_id": topic_record.topic_chip_id,
-        "topic_short_code": topic_record.short_code,
+        "subject_id": context["subject_id"],
+        "subject_short_code": context["subject_short_code"],
+        "module_id": context["module_id"],
+        "module_short_code": context["module_short_code"],
+        "topic_id": context["concept_id"],
+        "topic_short_code": context["concept_short_code"],
     }
 
 
@@ -1539,6 +1668,7 @@ def delete_module(
     note_group_ids = [row[0] for row in note_group_rows]
 
     study_card_ids = _delete_note_groups(db, note_group_ids)
+    _delete_module_mind_map_artifacts(db, module_id)
     db.query(ModuleShortCode).filter(ModuleShortCode.module_id == module_id).delete(
         synchronize_session=False
     )
@@ -1853,6 +1983,43 @@ def update_note_group_title(
     return note_group
 
 
+def _serialize_concept(topic: TopicChip) -> dict:
+    return {
+        "id": topic.id,
+        "concept_id": topic.id,
+        "short_code": getattr(topic.short_code_record, "short_code", None),
+        "module_id": topic.module_id,
+        "label": topic.label,
+        "description": topic.description,
+        "parent_topic_id": topic.parent_topic_id,
+        "parent_concept_id": topic.parent_topic_id,
+        "knowledge_node_status": topic.knowledge_node_status,
+        "knowledge_node_review_reason": topic.knowledge_node_review_reason,
+    }
+
+
+def _serialize_concepts(topics: list[TopicChip]) -> list[dict]:
+    return [_serialize_concept(topic) for topic in topics]
+
+
+@app.get("/modules/{module_id}/concepts", response_model=list[ConceptOut])
+def list_concepts(
+    module_id: str,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(optional_user),
+):
+    require_module_read(db, current_user, module_id)
+    topics = (
+        db.query(TopicChip)
+        .filter(TopicChip.module_id == module_id)
+        .order_by(TopicChip.label.asc())
+        .all()
+    )
+    ensure_topic_chip_short_codes(db, topics)
+    db.commit()
+    return _serialize_concepts(topics)
+
+
 @app.get("/modules/{module_id}/topic-chips", response_model=list[TopicChipOut])
 def list_topic_chips(
     module_id: str,
@@ -1871,10 +2038,10 @@ def list_topic_chips(
     return topics
 
 
-@app.post("/modules/{module_id}/topic-chips", response_model=TopicChipOut)
-def create_topic_chip(
+@app.post("/modules/{module_id}/concepts", response_model=ConceptOut)
+def create_concept(
     module_id: str,
-    payload: TopicChipCreate,
+    payload: ConceptCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_user),
 ):
@@ -1883,13 +2050,35 @@ def create_topic_chip(
     if not label:
         raise HTTPException(status_code=400, detail="Label cannot be empty")
     _validate_chip_label(label)
-    chip = TopicChip(module_id=module_id, label=label, description=payload.description)
+    chip = TopicChip(module_id=module_id, label=label, description=None)
     db.add(chip)
     db.commit()
     db.refresh(chip)
     ensure_topic_chip_short_code(db, chip)
     db.commit()
-    return chip
+    return _serialize_concept(chip)
+
+
+@app.post("/modules/{module_id}/topic-chips", response_model=TopicChipOut)
+def create_topic_chip(
+    module_id: str,
+    payload: TopicChipCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    return create_concept(module_id, payload=ConceptCreate(**payload.model_dump()), db=db, current_user=current_user)
+
+
+@app.get("/concepts/{concept_id}", response_model=ConceptOut)
+def get_concept(
+    concept_id: str,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(optional_user),
+):
+    topic = require_topic_read(db, current_user, concept_id)
+    ensure_topic_chip_short_code(db, topic)
+    db.commit()
+    return _serialize_concept(topic)
 
 
 @app.get("/topics/{topic_id}", response_model=TopicChipOut)
@@ -1898,10 +2087,47 @@ def get_topic(
     db: Session = Depends(get_db),
     current_user: User | None = Depends(optional_user),
 ):
-    topic = require_topic_read(db, current_user, topic_id)
+    return get_concept(topic_id, db=db, current_user=current_user)
+
+
+@app.get("/concepts/{concept_id}/mind-map", response_model=MindMapResponse)
+def get_concept_mind_map(
+    concept_id: str,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(optional_user),
+):
+    topic = require_topic_read(db, current_user, concept_id)
+    return build_topic_mind_map_response(db, topic.id)
+
+
+@app.get("/topics/{topic_id}/mind-map", response_model=MindMapResponse)
+def get_topic_mind_map(
+    topic_id: str,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(optional_user),
+):
+    return get_concept_mind_map(topic_id, db=db, current_user=current_user)
+
+
+@app.put("/concepts/{concept_id}", response_model=ConceptOut)
+def update_concept(
+    concept_id: str,
+    payload: ConceptCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    topic = require_topic_edit(db, current_user, concept_id)
+    label = payload.label.strip()
+    if not label:
+        raise HTTPException(status_code=400, detail="Label cannot be empty")
+    _validate_chip_label(label)
+    topic.label = label
+    topic.description = None
+    db.commit()
+    db.refresh(topic)
     ensure_topic_chip_short_code(db, topic)
     db.commit()
-    return topic
+    return _serialize_concept(topic)
 
 
 @app.put("/topics/{topic_id}", response_model=TopicChipOut)
@@ -1911,36 +2137,17 @@ def update_topic(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_user),
 ):
-    topic = require_topic_edit(db, current_user, topic_id)
-    label = payload.label.strip()
-    if not label:
-        raise HTTPException(status_code=400, detail="Label cannot be empty")
-    _validate_chip_label(label)
-    topic.label = label
-    topic.description = payload.description
-    db.commit()
-    db.refresh(topic)
-    ensure_topic_chip_short_code(db, topic)
-    db.commit()
-    return topic
+    return update_concept(topic_id, payload=ConceptCreate(**payload.model_dump()), db=db, current_user=current_user)
 
 
-@app.post("/topics/{topic_id}/knowledge-nodes/regenerate", response_model=TopicChipOut)
-def regenerate_topic_knowledge_nodes_route(
-    topic_id: str,
+@app.post("/concepts/{concept_id}/knowledge-nodes/regenerate", response_model=ConceptOut)
+def regenerate_concept_knowledge_nodes_route(
+    concept_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_user),
 ):
-    topic = require_topic_edit(db, current_user, topic_id)
+    topic = require_topic_edit(db, current_user, concept_id)
     context = build_topic_knowledge_node_generation_context(db, topic.id)
-    study_card_topic_links = [
-        {
-            "study_card_id": card["study_card_id"],
-            "topic_id": topic.id,
-            "role": "primary",
-        }
-        for card in context["study_cards"]
-    ]
     existing_concepts = [
         {
             "concept_id": node["knowledge_node_id"],
@@ -1965,33 +2172,54 @@ def regenerate_topic_knowledge_nodes_route(
         }
         for node in context["child_definition_context"]
     )
-    existing_topics = [
-        context["topic"],
-        *[
-            {
-                "topic_id": child.id,
-                "title": child.label,
-                "summary": child.description or "",
-                "parent_topic_id": child.parent_topic_id,
-            }
-            for child in topic.child_topics
-        ],
-    ]
-    candidate_payload = generate_knowledge_node_candidates(
+    candidate_payload = generate_topic_knowledge_node_candidates(
         module_title=topic.module.title,
-        note_group_title=f"Topic: {topic.label}",
+        note_group_title=f"Concept: {topic.label}",
         study_cards=context["study_cards"],
-        topics=[context["topic"]],
-        study_card_topic_links=study_card_topic_links,
-        existing_concepts=existing_concepts,
-        existing_topics=existing_topics,
+        selected_topic=context["topic"],
+        existing_knowledge_nodes=existing_concepts,
     )
     topic = regenerate_topic_knowledge_nodes(db, topic.id, candidate_payload)
     db.commit()
     db.refresh(topic)
     ensure_topic_chip_short_code(db, topic)
     db.commit()
-    return topic
+    return _serialize_concept(topic)
+
+
+@app.post("/topics/{topic_id}/knowledge-nodes/regenerate", response_model=TopicChipOut)
+def regenerate_topic_knowledge_nodes_route(
+    topic_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    return regenerate_concept_knowledge_nodes_route(topic_id, db=db, current_user=current_user)
+
+
+@app.delete("/concepts/{concept_id}")
+def delete_concept(
+    concept_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    topic = require_topic_edit(db, current_user, concept_id)
+
+    db.execute(
+        study_card_topic_chips.delete().where(
+            study_card_topic_chips.c.chip_id == concept_id
+        )
+    )
+    db.execute(
+        note_group_topic_chips.delete().where(
+            note_group_topic_chips.c.chip_id == concept_id
+        )
+    )
+    db.query(TopicChipShortCode).filter(
+        TopicChipShortCode.topic_chip_id == concept_id
+    ).delete(synchronize_session=False)
+    db.delete(topic)
+    db.commit()
+    return {"deleted": True}
 
 
 @app.delete("/topics/{topic_id}")
@@ -2000,24 +2228,7 @@ def delete_topic(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_user),
 ):
-    topic = require_topic_edit(db, current_user, topic_id)
-
-    db.execute(
-        study_card_topic_chips.delete().where(
-            study_card_topic_chips.c.chip_id == topic_id
-        )
-    )
-    db.execute(
-        note_group_topic_chips.delete().where(
-            note_group_topic_chips.c.chip_id == topic_id
-        )
-    )
-    db.query(TopicChipShortCode).filter(
-        TopicChipShortCode.topic_chip_id == topic_id
-    ).delete(synchronize_session=False)
-    db.delete(topic)
-    db.commit()
-    return {"deleted": True}
+    return delete_concept(topic_id, db=db, current_user=current_user)
 
 
 def _topic_allowed_study_ids(db: Session, topic: TopicChip) -> list[str]:
@@ -2056,13 +2267,13 @@ def _topic_question_cards(db: Session, topic: TopicChip) -> list[QuestionCard]:
     ]
 
 
-@app.get("/topics/{topic_id}/study-cards", response_model=StudyCardList)
-def list_topic_study_cards(
-    topic_id: str,
+@app.get("/concepts/{concept_id}/study-cards", response_model=StudyCardList)
+def list_concept_study_cards(
+    concept_id: str,
     db: Session = Depends(get_db),
     current_user: User | None = Depends(optional_user),
 ):
-    topic = require_topic_read(db, current_user, topic_id)
+    topic = require_topic_read(db, current_user, concept_id)
     cards = (
         db.query(StudyCard)
         .join(NoteGroup, StudyCard.note_group_id == NoteGroup.id)
@@ -2072,7 +2283,7 @@ def list_topic_study_cards(
         )
         .filter(
             NoteGroup.module_id == topic.module_id,
-            study_card_topic_chips.c.chip_id == topic_id,
+            study_card_topic_chips.c.chip_id == concept_id,
         )
         .order_by(StudyCard.created_at.asc())
         .distinct()
@@ -2081,16 +2292,57 @@ def list_topic_study_cards(
     return {"study_cards": cards}
 
 
-@app.get("/topics/{topic_id}/question-cards", response_model=QuestionCardList)
+@app.get("/topics/{topic_id}/study-cards", response_model=StudyCardList)
+def list_topic_study_cards(
+    topic_id: str,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(optional_user),
+):
+    return list_concept_study_cards(topic_id, db=db, current_user=current_user)
+
+
+@app.get("/concepts/{concept_id}/question-cards", response_model=QuestionCardList)
+def list_concept_question_cards(
+    concept_id: str,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(optional_user),
+):
+    topic = require_topic_read(db, current_user, concept_id)
+    cards = _topic_question_cards(db, topic)
+    state_by_card_id = _question_card_learning_state_map(db, cards, current_user)
+    return {"question_cards": _serialize_question_cards_for_user(cards, state_by_card_id)}
+
+
+@app.get(
+    "/topics/{topic_id}/question-cards",
+    response_model=QuestionCardList,
+)
 def list_topic_question_cards(
     topic_id: str,
     db: Session = Depends(get_db),
     current_user: User | None = Depends(optional_user),
 ):
-    topic = require_topic_read(db, current_user, topic_id)
+    return list_concept_question_cards(topic_id, db=db, current_user=current_user)
+
+
+@app.get(
+    "/concepts/{concept_id}/question-cards/timeline",
+    response_model=QuestionTimelineResponse,
+)
+def get_concept_question_timeline(
+    concept_id: str,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(optional_user),
+):
+    topic = require_topic_read(db, current_user, concept_id)
     cards = _topic_question_cards(db, topic)
     state_by_card_id = _question_card_learning_state_map(db, cards, current_user)
-    return {"question_cards": _serialize_question_cards_for_user(cards, state_by_card_id)}
+    timeline = _build_question_timeline(cards, datetime.now(timezone.utc), state_by_card_id)
+    return {
+        "timeline": timeline,
+        "question_count": len(cards),
+        "stale_count": sum(1 for card in cards if card.stale),
+    }
 
 
 @app.get(
@@ -2102,15 +2354,23 @@ def get_topic_question_timeline(
     db: Session = Depends(get_db),
     current_user: User | None = Depends(optional_user),
 ):
-    topic = require_topic_read(db, current_user, topic_id)
+    return get_concept_question_timeline(topic_id, db=db, current_user=current_user)
+
+
+@app.get("/concepts/{concept_id}/question-cards/review", response_model=QuestionCardList)
+def list_concept_review_question_cards(
+    concept_id: str,
+    mode: str = Query(default="due"),
+    limit: int = Query(default=10, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    topic = require_topic_study(db, current_user, concept_id)
+    now = datetime.now(timezone.utc)
     cards = _topic_question_cards(db, topic)
     state_by_card_id = _question_card_learning_state_map(db, cards, current_user)
-    timeline = _build_question_timeline(cards, datetime.now(timezone.utc), state_by_card_id)
-    return {
-        "timeline": timeline,
-        "question_count": len(cards),
-        "stale_count": sum(1 for card in cards if card.stale),
-    }
+    cards = _review_cards_for_mode(cards, mode, limit, state_by_card_id, now)
+    return {"question_cards": _serialize_question_cards_for_user(cards, state_by_card_id)}
 
 
 @app.get("/topics/{topic_id}/question-cards/review", response_model=QuestionCardList)
@@ -2121,12 +2381,42 @@ def list_topic_review_question_cards(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_user),
 ):
-    topic = require_topic_study(db, current_user, topic_id)
-    now = datetime.now(timezone.utc)
-    cards = _topic_question_cards(db, topic)
-    state_by_card_id = _question_card_learning_state_map(db, cards, current_user)
-    cards = _review_cards_for_mode(cards, mode, limit, state_by_card_id, now)
-    return {"question_cards": _serialize_question_cards_for_user(cards, state_by_card_id)}
+    return list_concept_review_question_cards(
+        topic_id,
+        mode=mode,
+        limit=limit,
+        db=db,
+        current_user=current_user,
+    )
+
+
+@app.post("/note-groups/{note_group_id}/concepts", response_model=list[ConceptOut])
+def attach_concepts(
+    note_group_id: str,
+    payload: ConceptAttach,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    note_group = require_note_group_edit(db, current_user, note_group_id)
+    if not payload.concept_ids:
+        ensure_topic_chip_short_codes(db, note_group.topic_chips)
+        db.commit()
+        return _serialize_concepts(note_group.topic_chips)
+
+    chips = (
+        db.query(TopicChip)
+        .filter(TopicChip.id.in_(payload.concept_ids))
+        .all()
+    )
+    for chip in chips:
+        if chip.module_id != note_group.module_id:
+            continue
+        if chip not in note_group.topic_chips:
+            note_group.topic_chips.append(chip)
+    db.commit()
+    ensure_topic_chip_short_codes(db, note_group.topic_chips)
+    db.commit()
+    return _serialize_concepts(note_group.topic_chips)
 
 
 @app.post("/note-groups/{note_group_id}/topic-chips", response_model=list[TopicChipOut])
@@ -2136,22 +2426,34 @@ def attach_topic_chips(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_user),
 ):
-    note_group = require_note_group_edit(db, current_user, note_group_id)
-    if not payload.chip_ids:
-        return note_group.topic_chips
-
-    chips = (
-        db.query(TopicChip)
-        .filter(TopicChip.id.in_(payload.chip_ids))
-        .all()
+    return attach_concepts(
+        note_group_id,
+        payload=ConceptAttach(concept_ids=payload.chip_ids),
+        db=db,
+        current_user=current_user,
     )
-    for chip in chips:
-        if chip.module_id != note_group.module_id:
-            continue
-        if chip not in note_group.topic_chips:
-            note_group.topic_chips.append(chip)
+
+
+@app.delete(
+    "/note-groups/{note_group_id}/concepts/{concept_id}",
+    response_model=list[ConceptOut],
+)
+def detach_concept(
+    note_group_id: str,
+    concept_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    note_group = require_note_group_edit(db, current_user, note_group_id)
+    chip = db.get(TopicChip, concept_id)
+    if not chip:
+        raise HTTPException(status_code=404, detail="Concept not found")
+    if chip in note_group.topic_chips:
+        note_group.topic_chips.remove(chip)
+        db.commit()
+    ensure_topic_chip_short_codes(db, note_group.topic_chips)
     db.commit()
-    return note_group.topic_chips
+    return _serialize_concepts(note_group.topic_chips)
 
 
 @app.delete(
@@ -2164,14 +2466,7 @@ def detach_topic_chip(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_user),
 ):
-    note_group = require_note_group_edit(db, current_user, note_group_id)
-    chip = db.get(TopicChip, chip_id)
-    if not chip:
-        raise HTTPException(status_code=404, detail="Topic chip not found")
-    if chip in note_group.topic_chips:
-        note_group.topic_chips.remove(chip)
-        db.commit()
-    return note_group.topic_chips
+    return detach_concept(note_group_id, chip_id, db=db, current_user=current_user)
 
 
 @app.get("/note-groups/{note_group_id}", response_model=NoteGroupOut)
@@ -3259,11 +3554,25 @@ def chat(
     current_user: User = Depends(require_user),
 ):
     module = require_module_read(db, current_user, payload.module_id)
+    concept_allowed_study_ids: set[str] | None = None
 
     if payload.note_group_id:
+        if payload.concept_id:
+            raise HTTPException(status_code=400, detail="Use either Note Group or Concept chat context")
         note_group = require_note_group_read(db, current_user, payload.note_group_id)
         if not note_group or note_group.module_id != payload.module_id:
             raise HTTPException(status_code=404, detail="Note group not found")
+
+    if payload.concept_id:
+        concept = require_topic_read(db, current_user, payload.concept_id)
+        if concept.module_id != module.id:
+            raise HTTPException(status_code=404, detail="Concept not found")
+        concept_allowed_study_ids = set(_topic_allowed_study_ids(db, concept))
+        if not concept_allowed_study_ids:
+            return {
+                "answer": "I couldn't find that in your study cards yet.",
+                "study_card_refs": [],
+            }
 
     query_embedding = embed_texts([payload.message])[0]
     results = query_study_card_embeddings(
@@ -3283,6 +3592,10 @@ def chat(
         (result.study_card_id, result.content)
         for result in results
         if result.study_card_id and result.content
+        and (
+            concept_allowed_study_ids is None
+            or result.study_card_id in concept_allowed_study_ids
+        )
     ]
     if not filtered:
         return {

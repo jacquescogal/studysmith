@@ -27,10 +27,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { formatDurationMs, formatPercent } from "@/lib/format";
 import { renderMarkdownBlocks } from "@/lib/text-rendering";
 
+const cardConcepts = (card) => card?.concept_chips || card?.topic_chips || [];
+
 export function NoteGroupViewCards({
   rows = [],
   studyCards = [],
   questionCards = [],
+  conceptChips = [],
   topicChips = [],
   canEdit = false,
   showEditControls = canEdit,
@@ -45,6 +48,7 @@ export function NoteGroupViewCards({
     refs: [],
   },
   unlinkedQuestionCount = 0,
+  fixedConceptFilter = null,
   fixedTopicFilter = null,
   loading = false,
   error = "",
@@ -59,12 +63,14 @@ export function NoteGroupViewCards({
   onCancelQuestionCardEdit,
   onDeleteQuestionCard,
 }) {
+  const availableConceptChips = conceptChips.length ? conceptChips : topicChips;
+  const activeFixedConceptFilter = fixedConceptFilter || fixedTopicFilter;
   const [selectedStudyCardId, setSelectedStudyCardId] = useState("");
   const [selectedQuestionCardId, setSelectedQuestionCardId] = useState("");
   const [masteryFilter, setMasteryFilter] = useState("all");
   const [reviewedFilter, setReviewedFilter] = useState("all");
   const [dueFilter, setDueFilter] = useState("all");
-  const [selectedTopicFilters, setSelectedTopicFilters] = useState([]);
+  const [selectedConceptFilters, setSelectedConceptFilters] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortConfig, setSortConfig] = useState({ key: "default", direction: "asc" });
   const questionCount = rows.reduce(
@@ -76,35 +82,35 @@ export function NoteGroupViewCards({
     () => new Map(questionCards.map((card) => [card.id, card])),
     [questionCards]
   );
-  const availableTopicFilters = useMemo(() => {
-    if (topicChips.length) {
-      return topicChips;
+  const availableConceptFilters = useMemo(() => {
+    if (availableConceptChips.length) {
+      return availableConceptChips;
     }
-    const topicsById = new Map();
+    const conceptsById = new Map();
     studyCards.forEach((card) => {
-      (card.topic_chips || []).forEach((topic) => {
-        if (topic?.id && !topicsById.has(topic.id)) {
-          topicsById.set(topic.id, topic);
+      cardConcepts(card).forEach((concept) => {
+        if (concept?.id && !conceptsById.has(concept.id)) {
+          conceptsById.set(concept.id, concept);
         }
       });
     });
-    return Array.from(topicsById.values()).sort((a, b) =>
+    return Array.from(conceptsById.values()).sort((a, b) =>
       String(a.label || "").localeCompare(String(b.label || ""))
     );
-  }, [studyCards, topicChips]);
-  const isTopicFilterFixed = Boolean(fixedTopicFilter?.id);
-  const activeTopicFilters = useMemo(
-    () => (isTopicFilterFixed ? [fixedTopicFilter.id] : selectedTopicFilters),
-    [fixedTopicFilter, isTopicFilterFixed, selectedTopicFilters]
+  }, [studyCards, availableConceptChips]);
+  const isConceptFilterFixed = Boolean(activeFixedConceptFilter?.id);
+  const activeConceptFilters = useMemo(
+    () => (isConceptFilterFixed ? [activeFixedConceptFilter.id] : selectedConceptFilters),
+    [activeFixedConceptFilter, isConceptFilterFixed, selectedConceptFilters]
   );
-  const selectedTopicFilterLabels = useMemo(
+  const selectedConceptFilterLabels = useMemo(
     () =>
-      isTopicFilterFixed
-        ? [fixedTopicFilter]
-        : availableTopicFilters.filter((topic) =>
-            selectedTopicFilters.includes(topic.id)
+      isConceptFilterFixed
+        ? [activeFixedConceptFilter]
+        : availableConceptFilters.filter((concept) =>
+            selectedConceptFilters.includes(concept.id)
           ),
-    [availableTopicFilters, fixedTopicFilter, isTopicFilterFixed, selectedTopicFilters]
+    [availableConceptFilters, activeFixedConceptFilter, isConceptFilterFixed, selectedConceptFilters]
   );
   const selectedStudyCard = selectedStudyCardId ? studyCardsById.get(selectedStudyCardId) : null;
   const selectedRow = selectedStudyCardId
@@ -113,7 +119,7 @@ export function NoteGroupViewCards({
   const selectedQuestions = selectedRow?.question_cards || [];
   const selectedTitle =
     selectedStudyCard?.title || selectedRow?.study_card?.title || "Untitled Study Card";
-  const selectedTopics = selectedStudyCard?.topic_chips || [];
+  const selectedConcepts = cardConcepts(selectedStudyCard);
   const isEditingSelected = editingStudyCardId === selectedStudyCardId;
   const selectedQuestionCard = selectedQuestionCardId
     ? questionCardsById.get(selectedQuestionCardId)
@@ -224,15 +230,17 @@ export function NoteGroupViewCards({
     const nextRows = rows
       .map((row) => {
         const fullStudyCard = studyCardsById.get(row.study_card.id);
-        const studyTopicIds = new Set(
-          (fullStudyCard?.topic_chips || row.study_card.topic_chips || []).map((topic) => topic.id)
+        const studyConceptIds = new Set(
+          (cardConcepts(fullStudyCard).length ? cardConcepts(fullStudyCard) : cardConcepts(row.study_card)).map(
+            (concept) => concept.id
+          )
         );
-        const topicMatches =
-          activeTopicFilters.length === 0 ||
-          activeTopicFilters.some((topicId) => studyTopicIds.has(topicId));
+        const conceptMatches =
+          activeConceptFilters.length === 0 ||
+          activeConceptFilters.some((conceptId) => studyConceptIds.has(conceptId));
         const studyTitle = row.study_card.title || "Untitled Study Card";
         const studyMatches = !query || studyTitle.toLowerCase().includes(query);
-        if (!topicMatches) {
+        if (!conceptMatches) {
           return null;
         }
         const questions = (row.question_cards || []).filter((question) => {
@@ -290,7 +298,7 @@ export function NoteGroupViewCards({
     masteryFilter,
     reviewedFilter,
     dueFilter,
-    activeTopicFilters,
+    activeConceptFilters,
     searchQuery,
     sortConfig,
   ]);
@@ -309,11 +317,11 @@ export function NoteGroupViewCards({
     });
   };
 
-  const toggleTopicFilter = (topicId) => {
-    setSelectedTopicFilters((current) =>
-      current.includes(topicId)
-        ? current.filter((id) => id !== topicId)
-        : [...current, topicId]
+  const toggleConceptFilter = (conceptId) => {
+    setSelectedConceptFilters((current) =>
+      current.includes(conceptId)
+        ? current.filter((id) => id !== conceptId)
+        : [...current, conceptId]
     );
   };
 
@@ -368,13 +376,13 @@ export function NoteGroupViewCards({
     }
   };
 
-  const toggleEditingTopic = (topicId) => {
+  const toggleEditingConcept = (conceptId) => {
     const currentIds = editingStudyCard.chipIds || [];
     onEditingStudyCardChange?.({
       ...editingStudyCard,
-      chipIds: currentIds.includes(topicId)
-        ? currentIds.filter((id) => id !== topicId)
-        : [...currentIds, topicId],
+      chipIds: currentIds.includes(conceptId)
+        ? currentIds.filter((id) => id !== conceptId)
+        : [...currentIds, conceptId],
     });
   };
 
@@ -467,10 +475,10 @@ export function NoteGroupViewCards({
           </Select>
         </div>
         <div className="space-y-2">
-          <label className="text-sm font-medium">Topic</label>
-          {isTopicFilterFixed ? (
+          <label className="text-sm font-medium">Concept</label>
+          {isConceptFilterFixed ? (
             <div className="flex h-9 items-center">
-              <Badge variant="secondary">Fixed topic: {fixedTopicFilter.label}</Badge>
+              <Badge variant="secondary">Fixed concept: {activeFixedConceptFilter.label}</Badge>
             </div>
           ) : (
             <Popover>
@@ -480,45 +488,45 @@ export function NoteGroupViewCards({
                   variant: "outline",
                   className: "h-9 w-56 justify-between",
                 })}
-                aria-label="Filter Study Cards by topics"
+                aria-label="Filter Study Cards by concepts"
               >
-                {selectedTopicFilters.length
-                  ? `${selectedTopicFilters.length} topics selected`
-                  : "All topics"}
+                {selectedConceptFilters.length
+                  ? `${selectedConceptFilters.length} concepts selected`
+                  : "All concepts"}
               </PopoverTrigger>
               <PopoverContent align="start" className="w-64 p-2">
-                {availableTopicFilters.length ? (
+                {availableConceptFilters.length ? (
                   <div className="space-y-1">
-                    {availableTopicFilters.map((topic) => (
+                    {availableConceptFilters.map((concept) => (
                       <label
-                        key={topic.id}
+                        key={concept.id}
                         className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
                       >
                         <Checkbox
-                          checked={selectedTopicFilters.includes(topic.id)}
-                          onCheckedChange={() => toggleTopicFilter(topic.id)}
+                          checked={selectedConceptFilters.includes(concept.id)}
+                          onCheckedChange={() => toggleConceptFilter(concept.id)}
                         />
-                        {topic.label}
+                        {concept.label}
                       </label>
                     ))}
                   </div>
                 ) : (
                   <p className="px-2 py-1.5 text-sm text-muted-foreground">
-                    No topics available.
+                    No concepts available.
                   </p>
                 )}
               </PopoverContent>
             </Popover>
           )}
-          {selectedTopicFilterLabels.length && !isTopicFilterFixed ? (
+          {selectedConceptFilterLabels.length && !isConceptFilterFixed ? (
             <div className="flex max-w-56 flex-wrap gap-1">
-              {selectedTopicFilterLabels.map((topic) => (
-                <Badge key={topic.id} variant="outline">
-                  {topic.label}
+              {selectedConceptFilterLabels.map((concept) => (
+                <Badge key={concept.id} variant="outline">
+                  {concept.label}
                   <button
                     type="button"
-                    aria-label={`Remove ${topic.label} topic filter`}
-                    onClick={() => toggleTopicFilter(topic.id)}
+                    aria-label={`Remove ${concept.label} concept filter`}
+                    onClick={() => toggleConceptFilter(concept.id)}
                   >
                     <X className="size-3" />
                   </button>
@@ -562,8 +570,8 @@ export function NoteGroupViewCards({
             setMasteryFilter("all");
             setReviewedFilter("all");
             setDueFilter("all");
-            if (!isTopicFilterFixed) {
-              setSelectedTopicFilters([]);
+            if (!isConceptFilterFixed) {
+              setSelectedConceptFilters([]);
             }
             setSortConfig({ key: "default", direction: "asc" });
           }}
@@ -711,21 +719,21 @@ export function NoteGroupViewCards({
                     aria-label="Study Card content"
                   />
                   <div className="space-y-2">
-                    <p className="text-sm font-medium">Topics</p>
-                    {topicChips.length ? (
+                    <p className="text-sm font-medium">Concepts</p>
+                    {availableConceptChips.length ? (
                       <div className="flex flex-wrap gap-3">
-                        {topicChips.map((topic) => (
-                          <label key={topic.id} className="flex items-center gap-2 text-sm">
+                        {availableConceptChips.map((concept) => (
+                          <label key={concept.id} className="flex items-center gap-2 text-sm">
                             <Checkbox
-                              checked={(editingStudyCard.chipIds || []).includes(topic.id)}
-                              onCheckedChange={() => toggleEditingTopic(topic.id)}
+                              checked={(editingStudyCard.chipIds || []).includes(concept.id)}
+                              onCheckedChange={() => toggleEditingConcept(concept.id)}
                             />
-                            {topic.label}
+                            {concept.label}
                           </label>
                         ))}
                       </div>
                     ) : (
-                      <p className="text-sm text-muted-foreground">No topics available.</p>
+                      <p className="text-sm text-muted-foreground">No concepts available.</p>
                     )}
                   </div>
                 </div>
@@ -740,17 +748,17 @@ export function NoteGroupViewCards({
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <p className="text-sm font-medium">Topics</p>
-                    {selectedTopics.length ? (
+                    <p className="text-sm font-medium">Concepts</p>
+                    {selectedConcepts.length ? (
                       <div className="flex flex-wrap gap-2">
-                        {selectedTopics.map((topic) => (
-                          <Badge key={topic.id} variant="secondary">
-                            {topic.label}
+                        {selectedConcepts.map((concept) => (
+                          <Badge key={concept.id} variant="secondary">
+                            {concept.label}
                           </Badge>
                         ))}
                       </div>
                     ) : (
-                      <p className="text-sm text-muted-foreground">No topics.</p>
+                      <p className="text-sm text-muted-foreground">No concepts.</p>
                     )}
                   </div>
                   <div className="space-y-2">

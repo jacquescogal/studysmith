@@ -14,6 +14,7 @@ export function StudyCardList({
   canEdit,
   showEditControls = canEdit,
   topicChips,
+  conceptChips,
   editingStudyCardId,
   editingStudyCard,
   error,
@@ -25,6 +26,7 @@ export function StudyCardList({
   onDelete,
   onToggleTopic
 }) {
+  const availableConcepts = conceptChips || topicChips || [];
   return (
     <section className="space-y-4" id="study-list">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -65,7 +67,7 @@ export function StudyCardList({
                       aria-label="Study Card content"
                     />
                     <div className="flex flex-wrap gap-3">
-                      {topicChips.map((topic) => (
+                      {availableConcepts.map((topic) => (
                         <label key={topic.id} className="flex items-center gap-2 text-sm">
                           <Checkbox
                             checked={editingStudyCard.chipIds.includes(topic.id)}
@@ -84,7 +86,7 @@ export function StudyCardList({
                   <>
                     <div className="prose prose-sm max-w-none text-sm dark:prose-invert">{renderMarkdownBlocks(card.content)}</div>
                     <div className="flex flex-wrap gap-2">
-                      {(card.topic_chips || []).map((topic) => (
+                      {(card.concept_chips || card.topic_chips || []).map((topic) => (
                         <Badge key={topic.id} variant="secondary" className="topic-chip">{topic.label}</Badge>
                       ))}
                     </div>

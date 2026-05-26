@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
@@ -55,8 +55,8 @@ JOB_STAGE_LABELS = {
     JOB_STAGE_FORMATTED_TEXT: "Build reading view",
     JOB_STAGE_EMBEDDINGS: "Prepare Study Card embeddings",
     JOB_STAGE_QUESTION_CARDS: "Create Question Cards",
-    JOB_STAGE_MIND_MAP_TOPICS: "Build Mind Map and Topics",
-    JOB_STAGE_TOPIC_KNOWLEDGE_NODES: "Build Topic Knowledge Nodes",
+    JOB_STAGE_MIND_MAP_TOPICS: "Build Mind Map and Concepts",
+    JOB_STAGE_TOPIC_KNOWLEDGE_NODES: "Build Concept Knowledge Nodes",
     JOB_STAGE_PROMOTING: "Publish Note Group",
     JOB_STAGE_COMPLETE: "Complete",
 }
@@ -319,6 +319,8 @@ def set_stage_progress(
 
 
 def _datetime_value(value: Optional[datetime]) -> Optional[datetime]:
+    if value and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
     return value
 
 

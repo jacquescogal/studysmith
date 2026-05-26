@@ -797,6 +797,8 @@ class GenerationWorkflowServiceTests(unittest.TestCase):
             self.assertEqual(workflow["job"]["stage_status"], "succeeded")
             self.assertEqual(job.generation_draft.current_stage, JOB_STAGE_TITLE)
             self.assertEqual(workflow["logs"][2]["metadata"], {"count": 1})
+            self.assertIsNotNone(title_stage["started_at"].tzinfo)
+            self.assertIsNotNone(workflow["logs"][0]["created_at"].tzinfo)
         finally:
             db.close()
 
@@ -1107,6 +1109,59 @@ class AutoQueueModuleGatingTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_worker_discovers_persisted_queued_job_when_memory_queue_is_empty(self):
+        import app.auto_queue as auto_queue
+
+        db = self.SessionLocal()
+        try:
+            owner = User(
+                id="persisted-queue-owner",
+                supabase_user_id="persisted-queue-owner-sub",
+                email="persisted-queue-owner@example.com",
+                app_role="creator",
+            )
+            subject = Subject(
+                id="persisted-queue-subject",
+                title="Persisted Queue Subject",
+                owner_user_id=owner.id,
+            )
+            module = Module(
+                id="persisted-queue-module",
+                subject_id=subject.id,
+                title="Persisted Queue Module",
+            )
+            note_group = NoteGroup(
+                id="persisted-queue-note-group",
+                module_id=module.id,
+                title="Queued Note Group",
+                source="persisted-queue-source",
+                raw_text="raw",
+                generation_status="queued",
+            )
+            queued_job = Job(
+                id="persisted-queue-job",
+                type=JOB_TYPE_NOTE_GROUP_AUTO_GENERATION,
+                status="queued",
+                note_group_id=note_group.id,
+            )
+            db.add_all([owner, subject, module, note_group, queued_job])
+            db.commit()
+
+            with auto_queue._condition:
+                auto_queue._queue.clear()
+                auto_queue._queue_set.clear()
+
+            with patch.object(auto_queue, "SessionLocal", self.SessionLocal):
+                self.assertEqual(
+                    auto_queue._dequeue_next_runnable_job(wait=False),
+                    queued_job.id,
+                )
+
+            db.expire_all()
+            self.assertEqual(db.get(Job, queued_job.id).status, "running")
+        finally:
+            db.close()
+
 
 class DraftFirstAutoGenerationTests(unittest.TestCase):
     def setUp(self):
@@ -1346,7 +1401,7 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
             patch.object(jobs, "embed_texts", return_value=defaults["embeddings"]),
             patch.object(jobs, "generate_question_cards", **question_mock_kwargs),
             patch.object(jobs, "generate_mind_map_candidate_graph", **topic_mock_kwargs),
-            patch.object(jobs, "generate_knowledge_node_candidates", **mock_kwargs(defaults["knowledge_nodes"])),
+            patch.object(jobs, "generate_topic_knowledge_node_candidates", **mock_kwargs(defaults["knowledge_nodes"])),
         ):
             jobs.run_auto_note_group_generation(job_id)
 
@@ -1394,7 +1449,7 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
             stack.enter_context(patch.object(jobs, "generate_question_cards", **mock_kwargs(defaults["questions"])))
             stack.enter_context(patch.object(jobs, "generate_mind_map_candidate_graph", **mock_kwargs(defaults["topics"])))
             stack.enter_context(
-                patch.object(jobs, "generate_knowledge_node_candidates", **mock_kwargs(defaults["knowledge_nodes"]))
+                patch.object(jobs, "generate_topic_knowledge_node_candidates", **mock_kwargs(defaults["knowledge_nodes"]))
             )
             for extra_patch in extra_patches:
                 stack.enter_context(extra_patch)
@@ -1677,7 +1732,7 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
                 }
 
             def knowledge_payload(*_args, **kwargs):
-                topic_id = kwargs["topics"][0]["topic_id"]
+                topic_id = kwargs["selected_topic"]["topic_id"]
                 return {
                     "knowledge_nodes": [
                         {
@@ -1768,13 +1823,100 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
                 is not None,
                 True,
             )
-            self.assertEqual(db.query(NoteGroupMindMapConcept).filter_by(note_group_id=note_group_id).count(), 2)
+            self.assertEqual(db.query(NoteGroupMindMapConcept).filter_by(note_group_id=note_group_id).count(), 1)
             self.assertEqual(db.query(StudyCardMindMapConcept).filter_by(study_card_id=live_card.id).count(), 1)
-            self.assertEqual(db.query(MindMapRelation).filter_by(source_note_group_id=note_group_id).count(), 1)
+            self.assertEqual(db.query(MindMapRelation).filter_by(source_note_group_id=note_group_id).count(), 0)
             self.assertEqual(db.query(DraftStudyCard).count(), 0)
             self.assertEqual(db.query(DraftQuestionCard).count(), 0)
             self.assertEqual(db.query(DraftTopic).count(), 0)
             self.assertEqual(db.query(DraftKnowledgeNode).count(), 0)
+        finally:
+            db.close()
+
+    def test_auto_generation_reconciles_draft_knowledge_nodes_per_topic_child_first(self):
+        db = self.SessionLocal()
+        try:
+            job = self._create_auto_generation_job(db, "draft-per-topic-knowledge")
+            job_id = job.id
+            db.close()
+
+            topic_payload = {
+                "topics": [
+                    {
+                        "temp_id": "topic-parent",
+                        "title": "Draft Parent",
+                        "summary": "Parent summary",
+                    },
+                    {
+                        "temp_id": "topic-child",
+                        "title": "Draft Child",
+                        "summary": "Child summary",
+                        "parent_topic_id": "topic-parent",
+                    },
+                ],
+                "study_card_topic_links": [],
+            }
+            called_topic_titles = []
+
+            def knowledge_payload(*_args, **kwargs):
+                topic = kwargs["selected_topic"]
+                called_topic_titles.append([topic["title"]])
+                return {
+                    "knowledge_nodes": [
+                        {
+                            "temp_id": f"node-{topic['topic_id']}",
+                            "topic_id": topic["topic_id"],
+                            "title": f"{topic['title']} definition",
+                            "summary": f"{topic['title']} definition summary",
+                            "knowledge_type": "definition",
+                            "importance": "core",
+                        }
+                    ],
+                    "relations": [],
+                    "study_card_knowledge_node_links": [],
+                }
+
+            self._run_with_mocks(
+                job_id,
+                topics=topic_payload,
+                knowledge_nodes=knowledge_payload,
+            )
+
+            self.assertEqual(called_topic_titles, [])
+        finally:
+            db.close()
+
+    def test_auto_generation_promotes_draft_topic_summary_as_definition_without_live_description(self):
+        db = self.SessionLocal()
+        try:
+            job = self._create_auto_generation_job(db, "draft-topic-summary-definition")
+            job_id = job.id
+            module_id = job.note_group.module_id
+            db.close()
+
+            self._run_with_mocks(
+                job_id,
+                topics={
+                    "topics": [
+                        {
+                            "temp_id": "topic-draft-1",
+                            "title": "Draft Topic",
+                            "summary": "Draft topic summary",
+                        }
+                    ],
+                    "study_card_topic_links": [],
+                },
+                knowledge_nodes=AssertionError("new draft topics should not need a second definition LLM call"),
+            )
+
+            db = self.SessionLocal()
+            live_topic = db.query(TopicChip).filter_by(module_id=module_id).one()
+            definition = db.query(MindMapConcept).filter_by(module_id=module_id, topic_id=live_topic.id).one()
+
+            self.assertIsNone(db.get(Job, job_id))
+            self.assertIsNone(live_topic.description)
+            self.assertEqual(definition.knowledge_type, "definition")
+            self.assertEqual(definition.summary, "Draft topic summary")
         finally:
             db.close()
 
@@ -1788,7 +1930,7 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
             db.close()
 
             def knowledge_payload(*_args, **kwargs):
-                topic_id = kwargs["topics"][0]["topic_id"]
+                topic_id = kwargs["selected_topic"]["topic_id"]
                 return {
                     "knowledge_nodes": [
                         {
@@ -1812,7 +1954,7 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
                         {
                             "temp_id": "topic-draft-1",
                             "title": "Draft Topic",
-                            "summary": "Draft topic summary",
+                            "summary": "",
                         }
                     ],
                     "study_card_topic_links": [],
@@ -1929,6 +2071,11 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
             self.assertEqual(db.query(DraftStudyCard).filter_by(draft_id=draft.id).count(), 1)
             self.assertEqual(db.query(DraftStudyCardTopicLink).filter_by(draft_id=draft.id).count(), 1)
             self.assertEqual(db.query(DraftKnowledgeNode).filter_by(draft_id=draft.id).count(), 1)
+            log_messages = [log.message for log in db.query(JobLog).filter_by(job_id=job_id).all()]
+            self.assertIn(
+                "Reconciling Concept Knowledge Nodes for 0 draft Concepts and 1 existing Concept",
+                log_messages,
+            )
         finally:
             db.close()
 
@@ -2181,7 +2328,7 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
                         {
                             "temp_id": "topic-draft-1",
                             "title": "Draft Topic",
-                            "summary": "Draft topic summary",
+                            "summary": "",
                         }
                     ],
                     "study_card_topic_links": [],
@@ -2219,7 +2366,7 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
                         {
                             "temp_id": "topic-draft-1",
                             "title": "Draft Topic",
-                            "summary": "Draft topic summary",
+                            "summary": "",
                         }
                     ],
                     "study_card_topic_links": [],
@@ -2275,7 +2422,7 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
                         {
                             "temp_id": "topic-draft-1",
                             "title": "Draft Topic",
-                            "summary": "Draft topic summary",
+                            "summary": "",
                         }
                     ],
                     "study_card_topic_links": [],

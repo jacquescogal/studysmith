@@ -1,10 +1,10 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `backend/`: FastAPI app, SQLAlchemy models, ChromaDB embeddings, and OpenAI integrations.
+- `backend/`: FastAPI app, SQLAlchemy models, pgvector embeddings, and OpenAI integrations.
   - `backend/app/`: application code (API routes, models, jobs, OpenAI helpers).
   - `backend/tests/`: pytest tests for backend behavior.
-  - `backend/.env`: local configuration (not committed). See `backend/.env.example`.
+  - Backend configuration is loaded from the repo-root `.env`; `backend/.env` is fallback-only for older local setups.
 - `frontend/`: React + Vite UI.
   - `frontend/src/`: React components, API client, and styles.
   - `frontend/index.html`: base HTML + fonts.
@@ -52,5 +52,5 @@ Frontend (from `frontend/`):
 - PRs should include a concise summary, manual test steps, and screenshots for UI changes.
 
 ## Security & Configuration Tips
-- Set `OPENAI_API_KEY` in repo-root `.env` for Docker, or in `backend/.env` for manual backend runs.
+- Set `OPENAI_API_KEY` in the repo-root `.env` for Docker and manual backend runs.
 - If you change the schema, delete `backend/study.db` and `backend/chroma` before restarting.
