@@ -11,6 +11,9 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src")
     }
   },
+  test: {
+    include: ["src/**/*.{test,spec}.{js,jsx,ts,tsx}"]
+  },
   server: {
     port: 5173,
     host: true,

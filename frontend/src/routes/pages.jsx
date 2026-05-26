@@ -1,59 +1,72 @@
-function LegacyRoutePage({ renderLegacyApp }) {
-  return renderLegacyApp();
+import { useConceptPageModel } from "@/features/concepts/useConceptPageModel";
+import { useModulePageModel } from "@/features/modules/useModulePageModel";
+import { useNoteGroupPageModel } from "@/features/note-groups/useNoteGroupPageModel";
+
+function useRoutePageModels() {
+  return {
+    modulePageModel: useModulePageModel(),
+    noteGroupPageModel: useNoteGroupPageModel(),
+    conceptPageModel: useConceptPageModel()
+  };
+}
+
+function AppShellRoutePage({ renderAppShell }) {
+  const routePageModels = useRoutePageModels();
+  return renderAppShell({ routePageModels });
 }
 
 export function SubjectIndexPage(props) {
-  return <LegacyRoutePage {...props} />;
+  return <AppShellRoutePage {...props} />;
 }
 
 export function SubjectModulesPage(props) {
-  return <LegacyRoutePage {...props} />;
+  return <AppShellRoutePage {...props} />;
 }
 
 export function ModuleOverviewPage(props) {
-  return <LegacyRoutePage {...props} />;
+  return <AppShellRoutePage {...props} />;
 }
 
 export function ModuleMindMapPage(props) {
-  return <LegacyRoutePage {...props} />;
+  return <AppShellRoutePage {...props} />;
 }
 
 export function NoteGroupCreatePage(props) {
-  return <LegacyRoutePage {...props} />;
+  return <AppShellRoutePage {...props} />;
 }
 
 export function NoteGroupOverviewPage(props) {
-  return <LegacyRoutePage {...props} />;
+  return <AppShellRoutePage {...props} />;
 }
 
 export function NoteGroupMindMapPage(props) {
-  return <LegacyRoutePage {...props} />;
+  return <AppShellRoutePage {...props} />;
 }
 
 export function NoteGroupCardsPage(props) {
-  return <LegacyRoutePage {...props} />;
+  return <AppShellRoutePage {...props} />;
 }
 
 export function NoteGroupStudyCardsPage(props) {
-  return <LegacyRoutePage {...props} />;
+  return <AppShellRoutePage {...props} />;
 }
 
 export function NoteGroupQuestionCardsPage(props) {
-  return <LegacyRoutePage {...props} />;
+  return <AppShellRoutePage {...props} />;
 }
 
 export function ConceptOverviewPage(props) {
-  return <LegacyRoutePage {...props} />;
+  return <AppShellRoutePage {...props} />;
 }
 
 export function ConceptCardsPage(props) {
-  return <LegacyRoutePage {...props} />;
+  return <AppShellRoutePage {...props} />;
 }
 
 export function ConceptStudyCardsPage(props) {
-  return <LegacyRoutePage {...props} />;
+  return <AppShellRoutePage {...props} />;
 }
 
 export function ConceptQuestionCardsPage(props) {
-  return <LegacyRoutePage {...props} />;
+  return <AppShellRoutePage {...props} />;
 }

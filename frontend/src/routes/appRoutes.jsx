@@ -25,36 +25,36 @@ import {
   SubjectModulesPage
 } from "./pages";
 
-const defaultRenderLegacyApp = () => null;
+const defaultRenderAppShell = () => null;
 
-const page = (Component, renderLegacyApp) => (
-  <Component renderLegacyApp={renderLegacyApp} />
+const page = (Component, renderAppShell) => (
+  <Component renderAppShell={renderAppShell} />
 );
 
-const conceptChildren = (renderLegacyApp) => [
+const conceptChildren = (renderAppShell) => [
   {
     index: true,
     id: "concept-overview",
-    element: page(ConceptOverviewPage, renderLegacyApp)
+    element: page(ConceptOverviewPage, renderAppShell)
   },
   {
     path: "view-cards",
     id: "concept-view-cards",
-    element: page(ConceptCardsPage, renderLegacyApp)
+    element: page(ConceptCardsPage, renderAppShell)
   },
   {
     path: "study-cards",
     id: "concept-study-cards",
-    element: page(ConceptStudyCardsPage, renderLegacyApp)
+    element: page(ConceptStudyCardsPage, renderAppShell)
   },
   {
     path: "question-cards",
     id: "concept-question-cards",
-    element: page(ConceptQuestionCardsPage, renderLegacyApp)
+    element: page(ConceptQuestionCardsPage, renderAppShell)
   }
 ];
 
-export function createAppRouteObjects(renderLegacyApp = defaultRenderLegacyApp) {
+export function createAppRouteObjects(renderAppShell = defaultRenderAppShell) {
   return [
     {
       path: "/",
@@ -64,7 +64,7 @@ export function createAppRouteObjects(renderLegacyApp = defaultRenderLegacyApp) 
         {
           index: true,
           id: "subject-index",
-          element: page(SubjectIndexPage, renderLegacyApp)
+          element: page(SubjectIndexPage, renderAppShell)
         },
         {
           path: "app/subject/:subjectCode",
@@ -74,7 +74,7 @@ export function createAppRouteObjects(renderLegacyApp = defaultRenderLegacyApp) 
             {
               index: true,
               id: "subject-modules",
-              element: page(SubjectModulesPage, renderLegacyApp)
+              element: page(SubjectModulesPage, renderAppShell)
             },
             {
               path: "module/:moduleCode",
@@ -84,17 +84,17 @@ export function createAppRouteObjects(renderLegacyApp = defaultRenderLegacyApp) 
                 {
                   index: true,
                   id: "module-overview",
-                  element: page(ModuleOverviewPage, renderLegacyApp)
+                  element: page(ModuleOverviewPage, renderAppShell)
                 },
                 {
                   path: "mind-map",
                   id: "module-mind-map",
-                  element: page(ModuleMindMapPage, renderLegacyApp)
+                  element: page(ModuleMindMapPage, renderAppShell)
                 },
                 {
                   path: "create-note-group",
                   id: "note-group-create",
-                  element: page(NoteGroupCreatePage, renderLegacyApp)
+                  element: page(NoteGroupCreatePage, renderAppShell)
                 },
                 {
                   path: "note-groups/:noteGroupCode",
@@ -104,27 +104,27 @@ export function createAppRouteObjects(renderLegacyApp = defaultRenderLegacyApp) 
                     {
                       index: true,
                       id: "note-group-overview",
-                      element: page(NoteGroupOverviewPage, renderLegacyApp)
+                      element: page(NoteGroupOverviewPage, renderAppShell)
                     },
                     {
                       path: "mind-map",
                       id: "note-group-mind-map",
-                      element: page(NoteGroupMindMapPage, renderLegacyApp)
+                      element: page(NoteGroupMindMapPage, renderAppShell)
                     },
                     {
                       path: "view-cards",
                       id: "note-group-view-cards",
-                      element: page(NoteGroupCardsPage, renderLegacyApp)
+                      element: page(NoteGroupCardsPage, renderAppShell)
                     },
                     {
                       path: "study-cards",
                       id: "note-group-study-cards",
-                      element: page(NoteGroupStudyCardsPage, renderLegacyApp)
+                      element: page(NoteGroupStudyCardsPage, renderAppShell)
                     },
                     {
                       path: "question-cards",
                       id: "note-group-question-cards",
-                      element: page(NoteGroupQuestionCardsPage, renderLegacyApp)
+                      element: page(NoteGroupQuestionCardsPage, renderAppShell)
                     }
                   ]
                 },
@@ -132,13 +132,13 @@ export function createAppRouteObjects(renderLegacyApp = defaultRenderLegacyApp) 
                   path: "concepts/:conceptCode",
                   id: "concept-layout",
                   element: <ConceptLayout />,
-                  children: conceptChildren(renderLegacyApp)
+                  children: conceptChildren(renderAppShell)
                 },
                 {
                   path: "topics/:conceptCode",
                   id: "legacy-topic-layout",
                   element: <ConceptLayout />,
-                  children: conceptChildren(renderLegacyApp)
+                  children: conceptChildren(renderAppShell)
                 }
               ]
             }
@@ -147,13 +147,13 @@ export function createAppRouteObjects(renderLegacyApp = defaultRenderLegacyApp) 
         {
           path: "*",
           id: "fallback",
-          element: page(SubjectIndexPage, renderLegacyApp)
+          element: page(SubjectIndexPage, renderAppShell)
         }
       ]
     }
   ];
 }
 
-export function AppRoutes({ renderLegacyApp = defaultRenderLegacyApp }) {
-  return useRoutes(createAppRouteObjects(renderLegacyApp));
+export function AppRoutes({ renderAppShell = defaultRenderAppShell }) {
+  return useRoutes(createAppRouteObjects(renderAppShell));
 }
