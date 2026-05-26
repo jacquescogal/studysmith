@@ -27,3 +27,6 @@ docs/superpowers/
 
 .codex
 .env
+
+supabase/.branches/
+supabase/.temp/
