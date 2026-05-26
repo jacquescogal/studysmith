@@ -173,6 +173,12 @@ export function resolveAppTopicRoute(subjectCode, moduleCode, topicCode) {
   );
 }
 
+export function resolveAppConceptRoute(subjectCode, moduleCode, conceptCode) {
+  return request(
+    `/routes/app/subject/${subjectCode}/module/${moduleCode}/concepts/${conceptCode}`
+  );
+}
+
 export function createSubject(payload) {
   return request("/subjects", {
     method: "POST",
@@ -284,8 +290,19 @@ export function autoCreateNoteGroup(payload) {
   });
 }
 
+export function listConcepts(moduleId) {
+  return request(`/modules/${moduleId}/concepts`);
+}
+
 export function listTopicChips(moduleId) {
   return request(`/modules/${moduleId}/topic-chips`);
+}
+
+export function createConcept(moduleId, payload) {
+  return request(`/modules/${moduleId}/concepts`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
 }
 
 export function createTopicChip(moduleId, payload) {
@@ -295,26 +312,49 @@ export function createTopicChip(moduleId, payload) {
   });
 }
 
-export function getTopic(topicId) {
-  return request(`/topics/${topicId}`);
+export function getConcept(conceptId) {
+  return request(`/concepts/${conceptId}`);
 }
 
-export function updateTopic(topicId, payload) {
-  return request(`/topics/${topicId}`, {
+export function getTopic(topicId) {
+  return getConcept(topicId);
+}
+
+export function updateConcept(conceptId, payload) {
+  return request(`/concepts/${conceptId}`, {
     method: "PUT",
     body: JSON.stringify(payload)
   });
 }
 
-export function deleteTopic(topicId) {
-  return request(`/topics/${topicId}`, {
+export function updateTopic(topicId, payload) {
+  return updateConcept(topicId, payload);
+}
+
+export function deleteConcept(conceptId) {
+  return request(`/concepts/${conceptId}`, {
     method: "DELETE"
   });
 }
 
-export function regenerateTopicKnowledgeNodes(topicId) {
-  return request(`/topics/${topicId}/knowledge-nodes/regenerate`, {
+export function deleteTopic(topicId) {
+  return deleteConcept(topicId);
+}
+
+export function regenerateConceptKnowledgeNodes(conceptId) {
+  return request(`/concepts/${conceptId}/knowledge-nodes/regenerate`, {
     method: "POST"
+  });
+}
+
+export function regenerateTopicKnowledgeNodes(topicId) {
+  return regenerateConceptKnowledgeNodes(topicId);
+}
+
+export function attachConcepts(noteGroupId, payload) {
+  return request(`/note-groups/${noteGroupId}/concepts`, {
+    method: "POST",
+    body: JSON.stringify(payload)
   });
 }
 
@@ -322,6 +362,12 @@ export function attachTopicChips(noteGroupId, payload) {
   return request(`/note-groups/${noteGroupId}/topic-chips`, {
     method: "POST",
     body: JSON.stringify(payload)
+  });
+}
+
+export function detachConcept(noteGroupId, conceptId) {
+  return request(`/note-groups/${noteGroupId}/concepts/${conceptId}`, {
+    method: "DELETE"
   });
 }
 
@@ -504,8 +550,20 @@ export function regenerateNoteGroupNeedsReviewKnowledgeNodes(noteGroupId) {
   });
 }
 
+export function getConceptMindMap(conceptId) {
+  return request(`/concepts/${conceptId}/mind-map`);
+}
+
+export function getTopicMindMap(topicId) {
+  return getConceptMindMap(topicId);
+}
+
+export function listConceptStudyCards(conceptId) {
+  return request(`/concepts/${conceptId}/study-cards`);
+}
+
 export function listTopicStudyCards(topicId) {
-  return request(`/topics/${topicId}/study-cards`);
+  return listConceptStudyCards(topicId);
 }
 
 export function getStudyCard(studyCardId) {
@@ -550,8 +608,12 @@ export function listQuestionCards(noteGroupId) {
   return request(`/note-groups/${noteGroupId}/question-cards`);
 }
 
+export function listConceptQuestionCards(conceptId) {
+  return request(`/concepts/${conceptId}/question-cards`);
+}
+
 export function listTopicQuestionCards(topicId) {
-  return request(`/topics/${topicId}/question-cards`);
+  return listConceptQuestionCards(topicId);
 }
 
 export function getNoteGroupQuestionTimeline(noteGroupId, chipIds = []) {
@@ -600,8 +662,12 @@ export function getModuleQuestionTimeline(moduleId, chipIds = []) {
   return request(`/modules/${moduleId}/question-cards/timeline${suffix}`);
 }
 
+export function getConceptQuestionTimeline(conceptId) {
+  return request(`/concepts/${conceptId}/question-cards/timeline`);
+}
+
 export function getTopicQuestionTimeline(topicId) {
-  return request(`/topics/${topicId}/question-cards/timeline`);
+  return getConceptQuestionTimeline(topicId);
 }
 
 export function listReviewQuestionCards(noteGroupId, mode, limit) {
@@ -620,12 +686,16 @@ export function listModuleReviewQuestionCards(moduleId, mode, limit) {
   return request(`/modules/${moduleId}/question-cards/review?${params.toString()}`);
 }
 
-export function listTopicReviewQuestionCards(topicId, mode, limit) {
+export function listConceptReviewQuestionCards(conceptId, mode, limit) {
   const params = new URLSearchParams({ mode });
   if (limit) {
     params.set("limit", String(limit));
   }
-  return request(`/topics/${topicId}/question-cards/review?${params.toString()}`);
+  return request(`/concepts/${conceptId}/question-cards/review?${params.toString()}`);
+}
+
+export function listTopicReviewQuestionCards(topicId, mode, limit) {
+  return listConceptReviewQuestionCards(topicId, mode, limit);
 }
 
 export function createQuestionCard(noteGroupId, payload) {

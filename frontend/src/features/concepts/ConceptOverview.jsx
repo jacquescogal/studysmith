@@ -1,22 +1,22 @@
 import { ErrorAlert } from "@/components/common/ErrorAlert";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-export function TopicOverview({
-  topic,
+export function ConceptOverview({
+  concept,
   stats,
-  description = "Snapshot of study and question cards for this topic.",
+  description = "Snapshot of study and question cards for this concept.",
   actions,
   error,
   children
 }) {
   return (
-    <Card id="topic-overview">
+    <Card id="concept-overview">
       <CardHeader>
-        <CardTitle>{topic?.label || "Topic overview"}</CardTitle>
-        <CardDescription>{description || topic?.description}</CardDescription>
+        <CardTitle>{concept?.label || "Concept overview"}</CardTitle>
+        <CardDescription>{description || concept?.description}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="stats-grid">
+        <div className="stats-grid concept-overview-stats-grid">
           <div className="stat-card">
             <p className="label">Study cards</p>
             <p className="value">{stats?.studyCount ?? 0}</p>
@@ -35,7 +35,7 @@ export function TopicOverview({
           </div>
         </div>
         <div className="flex flex-wrap gap-2">{actions}</div>
-        <ErrorAlert title="Topic action failed" message={error} />
+        <ErrorAlert title="Concept action failed" message={error} />
         {children}
       </CardContent>
     </Card>

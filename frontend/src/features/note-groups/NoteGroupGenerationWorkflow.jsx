@@ -14,8 +14,8 @@ const STAGE_LABELS = {
   embeddings: "Embeddings",
   formatted_text: "Formatted Text",
   question_cards: "Question Cards",
-  mind_map_topics: "Mind Map and Topics",
-  topic_knowledge_nodes: "Topic Knowledge Nodes",
+  mind_map_topics: "Mind Map and Concepts",
+  topic_knowledge_nodes: "Concept Knowledge Nodes",
   promoting: "Publishing",
   complete: "Complete"
 };

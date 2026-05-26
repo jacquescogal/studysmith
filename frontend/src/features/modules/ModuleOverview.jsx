@@ -19,7 +19,6 @@ export function ModuleOverview({
       <section id="module-overview" className="module-overview-shell">
         <div className="module-overview-header">
           <div className="module-overview-title-block">
-            <span className="overview-kicker">Module</span>
             <h2>{title || "Module overview"}</h2>
             {description ? <p>{description}</p> : null}
           </div>

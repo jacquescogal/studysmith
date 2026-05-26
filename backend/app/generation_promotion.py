@@ -200,7 +200,7 @@ def _promote_topics(db: Session, draft: NoteGroupGenerationDraft) -> dict[str, s
         if draft_topic.existing_topic_id:
             topic = db.get(TopicChip, draft_topic.existing_topic_id)
             if topic is None or topic.module_id != draft.module_id:
-                raise ValueError(f"Draft Topic references missing Topic: {draft_topic.existing_topic_id}")
+                raise ValueError(f"Draft Concept references missing Concept: {draft_topic.existing_topic_id}")
             _resolve_topic_status(topic, draft_topic)
             topic_id_by_draft_id[draft_topic.id] = topic.id
             continue
@@ -212,7 +212,6 @@ def _promote_topics(db: Session, draft: NoteGroupGenerationDraft) -> dict[str, s
                 id=str(uuid.uuid4()),
                 module_id=draft.module_id,
                 label=draft_topic.label,
-                description=draft_topic.description,
                 sort_order=draft_topic.sort_order,
             )
             db.add(topic)
@@ -220,8 +219,7 @@ def _promote_topics(db: Session, draft: NoteGroupGenerationDraft) -> dict[str, s
             topics_by_slug[slug] = topic
         else:
             topic.label = draft_topic.label
-            if draft_topic.description and not topic.description:
-                topic.description = draft_topic.description
+            topic.description = None
             topic.sort_order = draft_topic.sort_order
         _resolve_topic_status(topic, draft_topic)
         topic_id_by_draft_id[draft_topic.id] = topic.id

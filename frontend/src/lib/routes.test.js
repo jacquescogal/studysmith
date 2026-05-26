@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  conceptPath,
   matchAppRoute,
   moduleMindMapPath,
   noteGroupMindMapPath
@@ -30,5 +31,19 @@ describe("mind map routes", () => {
     expect(match.moduleCode).toBe("M1");
     expect(match.noteGroupCode).toBe("N1");
     expect(match.panel).toBe("mind-map");
+  });
+
+  test("builds and matches concept routes", () => {
+    const pathname = conceptPath("S1", "M1", "C1", "study-cards");
+
+    expect(pathname).toBe("/app/subject/S1/module/M1/concepts/C1/study-cards");
+
+    const match = matchAppRoute(pathname);
+    expect(match.concept).toBeTruthy();
+    expect(match.subjectCode).toBe("S1");
+    expect(match.moduleCode).toBe("M1");
+    expect(match.conceptCode).toBe("C1");
+    expect(match.topicCode).toBe("C1");
+    expect(match.panel).toBe("study-cards");
   });
 });

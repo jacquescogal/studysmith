@@ -1,0 +1,73 @@
+import { matchRoutes } from "react-router-dom";
+import { describe, expect, test } from "vitest";
+
+import { createAppRouteObjects } from "./appRoutes";
+
+const routeIdsFor = (pathname) =>
+  (matchRoutes(createAppRouteObjects(), pathname) || []).map((match) => match.route.id);
+
+const leafRouteIdFor = (pathname) => routeIdsFor(pathname).at(-1);
+
+describe("app route tree", () => {
+  test.each([
+    ["/", "subject-index"],
+    ["/app/subject/S1", "subject-modules"],
+    ["/app/subject/S1/module/M1", "module-overview"],
+    ["/app/subject/S1/module/M1/mind-map", "module-mind-map"],
+    ["/app/subject/S1/module/M1/create-note-group", "note-group-create"],
+    [
+      "/app/subject/S1/module/M1/note-groups/N1",
+      "note-group-overview"
+    ],
+    [
+      "/app/subject/S1/module/M1/note-groups/N1/mind-map",
+      "note-group-mind-map"
+    ],
+    [
+      "/app/subject/S1/module/M1/note-groups/N1/view-cards",
+      "note-group-view-cards"
+    ],
+    [
+      "/app/subject/S1/module/M1/note-groups/N1/study-cards",
+      "note-group-study-cards"
+    ],
+    [
+      "/app/subject/S1/module/M1/note-groups/N1/question-cards",
+      "note-group-question-cards"
+    ],
+    [
+      "/app/subject/S1/module/M1/concepts/C1",
+      "concept-overview"
+    ],
+    [
+      "/app/subject/S1/module/M1/concepts/C1/view-cards",
+      "concept-view-cards"
+    ],
+    [
+      "/app/subject/S1/module/M1/concepts/C1/study-cards",
+      "concept-study-cards"
+    ],
+    [
+      "/app/subject/S1/module/M1/concepts/C1/question-cards",
+      "concept-question-cards"
+    ]
+  ])("matches %s to %s", (pathname, expectedRouteId) => {
+    expect(leafRouteIdFor(pathname)).toBe(expectedRouteId);
+  });
+
+  test("keeps legacy topic routes compatible during Concept terminology migration", () => {
+    expect(leafRouteIdFor("/app/subject/S1/module/M1/topics/T1/study-cards")).toBe(
+      "concept-study-cards"
+    );
+  });
+
+  test("uses nested layout route boundaries for module and note group pages", () => {
+    expect(routeIdsFor("/app/subject/S1/module/M1/note-groups/N1/view-cards")).toEqual([
+      "app-root",
+      "subject-layout",
+      "module-layout",
+      "note-group-layout",
+      "note-group-view-cards"
+    ]);
+  });
+});

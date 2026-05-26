@@ -7,18 +7,19 @@ export function NoteGroupOverview({
   statusMeta,
   stats,
   topics = [],
+  concepts = [],
   description = "Snapshot of your current note group.",
   filterControls,
   actions,
   error,
   children
 }) {
+  const visibleConcepts = concepts.length ? concepts : topics;
   return (
     <Card id="note-group-overview" className="note-group-overview-card">
       <CardHeader className="note-group-overview-header">
         <div className="note-group-overview-heading">
           <div className="note-group-overview-title-block">
-            <span className="overview-kicker">Note Group</span>
             <CardTitle>{noteGroup?.title || "Note Group overview"}</CardTitle>
             <CardDescription>{description || noteGroup?.source}</CardDescription>
           </div>
@@ -49,9 +50,9 @@ export function NoteGroupOverview({
             <p className="value">{stats?.staleCount ?? 0}</p>
           </div>
         </div>
-        {topics.length ? (
+        {visibleConcepts.length ? (
           <div className="flex flex-wrap gap-2">
-            {topics.map((topic) => (
+            {visibleConcepts.map((topic) => (
               <Badge key={topic.id || topic.value} variant="outline" className="topic-chip">
                 {topic.label}
               </Badge>

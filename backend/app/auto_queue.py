@@ -9,15 +9,16 @@ _queue: deque[str] = deque()
 _queue_set: set[str] = set()
 _condition = Condition()
 _started = False
+_worker_thread: Thread | None = None
 
 
 def start_auto_worker() -> None:
-    global _started
-    if _started:
+    global _started, _worker_thread
+    if _started and _worker_thread is not None and _worker_thread.is_alive():
         return
     _started = True
-    thread = Thread(target=_worker_loop, daemon=True)
-    thread.start()
+    _worker_thread = Thread(target=_worker_loop, daemon=True)
+    _worker_thread.start()
 
 
 def resume_auto_jobs() -> None:
@@ -44,11 +45,17 @@ def resume_auto_jobs() -> None:
 
 def enqueue_auto_job(job_id: str) -> bool:
     with _condition:
-        if job_id in _queue_set:
-            return False
-        _queue.append(job_id)
-        _queue_set.add(job_id)
-        _condition.notify()
+        added = _enqueue_auto_job_unlocked(job_id)
+        if added:
+            _condition.notify()
+        return added
+
+
+def _enqueue_auto_job_unlocked(job_id: str) -> bool:
+    if job_id in _queue_set:
+        return False
+    _queue.append(job_id)
+    _queue_set.add(job_id)
     return True
 
 
@@ -122,10 +129,40 @@ def _requeue_deferred(job_ids: list[str]) -> None:
         enqueue_auto_job(job_id)
 
 
+def _enqueue_persisted_queued_jobs() -> None:
+    db = SessionLocal()
+    try:
+        job_ids = [
+            row[0]
+            for row in (
+                db.query(Job.id)
+                .filter(
+                    Job.type == JOB_TYPE_NOTE_GROUP_AUTO_GENERATION,
+                    Job.status == "queued",
+                )
+                .order_by(Job.created_at.asc())
+                .all()
+            )
+        ]
+    finally:
+        db.close()
+
+    if not job_ids:
+        return
+    with _condition:
+        for job_id in job_ids:
+            _enqueue_auto_job_unlocked(job_id)
+        _condition.notify_all()
+
+
 def _dequeue_next_runnable_job(wait: bool = True) -> str | None:
     deferred_job_ids: list[str] = []
     first_pass = True
     while True:
+        with _condition:
+            queue_empty = not _queue
+        if first_pass and queue_empty:
+            _enqueue_persisted_queued_jobs()
         job_id = _pop_queued_job(wait if first_pass else False)
         first_pass = False
         if not job_id:
@@ -157,10 +194,13 @@ def _dequeue_next_runnable_job(wait: bool = True) -> str | None:
 
 def _worker_loop() -> None:
     while True:
-        job_id = _dequeue_next_runnable_job()
+        job_id = _dequeue_next_runnable_job(wait=False)
         if not job_id:
             with _condition:
                 _condition.wait(timeout=0.25)
             continue
 
-        run_auto_note_group_generation(job_id)
+        try:
+            run_auto_note_group_generation(job_id)
+        except Exception:
+            continue
