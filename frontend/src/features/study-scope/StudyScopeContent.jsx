@@ -1,16 +1,27 @@
-import Select from "react-select";
+import { ArrowDown, ArrowLeft, ArrowUp, Search, X } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { PageMindMapCard } from "@/features/mind-map/PageMindMapCard";
 import { MindMapPanel } from "@/features/mind-map/MindMapPanel";
 import { NoteGroupGenerationWorkflow } from "@/features/note-groups/NoteGroupGenerationWorkflow";
-import { NoteGroupOverview } from "@/features/note-groups/NoteGroupOverview";
-import { NoteGroupProgress } from "@/features/note-groups/NoteGroupProgress";
 import { NoteGroupViewCards } from "@/features/note-groups/NoteGroupViewCards";
 import { QuestionCardList } from "@/features/question-cards/QuestionCardList";
 import { StudyCardList } from "@/features/study-cards/StudyCardList";
-import { ConceptOverview } from "@/features/concepts/ConceptOverview";
-import { conceptPath, noteGroupPath } from "@/lib/routes";
+import { renderCleanedMarkdown, renderMarkdownBlocks } from "@/lib/text-rendering";
+
+const getValidSourceRanges = (sourceRangesByCardId, studyCardId) => {
+  const ranges = sourceRangesByCardId?.get?.(studyCardId) || [];
+  return ranges.filter(
+    (range) =>
+      Number.isInteger(range.start_index) &&
+      Number.isInteger(range.end_index) &&
+      range.end_index > range.start_index
+  );
+};
+
+const clipStudyCardBody = (content = "") => {
+  const text = content.trim();
+  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
+};
 
 function QuestionTimelinePanel({ panelClass, mutedTextClass, questionTimeline }) {
   return (
@@ -56,6 +67,8 @@ export function StudyScopeContent({
   handleRetryAutoJob,
   handleDeleteAutoJob,
   isViewCardsPage,
+  isMindMapPage,
+  isInlineStudyPage,
   isStudyPage,
   isQuestionPage,
   isConceptScope,
@@ -105,6 +118,16 @@ export function StudyScopeContent({
   isReviewing,
   isReviewOverlayVisible,
   readingAvailable,
+  readingMode,
+  activeSourceRangeIndex = 0,
+  effectiveCleanedText,
+  readingContentRef,
+  readingHighlights = [],
+  readingPinnedCardId = "",
+  sourceRangesByCardId,
+  pinnedSourceRanges = [],
+  pinnedStudyCard,
+  studyNoteSections = [],
   conceptTitleDraft,
   conceptDescriptionDraft,
   conceptError,
@@ -126,6 +149,7 @@ export function StudyScopeContent({
   setIsChatOpen,
   setIsReadingOpen,
   setProgressRange,
+  setReadingMode,
   setConceptTitleDraft,
   setConceptDescriptionDraft,
   setEditingStudyCard,
@@ -157,7 +181,12 @@ export function StudyScopeContent({
   handleSaveQuestionCard,
   handleDeleteQuestionCard,
   openQuestionFocus,
-  handleGenerateQuestions
+  handleGenerateQuestions,
+  handleReadingModeChange,
+  handleReadingSourceRangeNext,
+  handleReadingSourceRangePrevious,
+  handleReadingUnpin,
+  handleReadingViewInClean
 }) {
   if (shouldHoldContent) {
     return (
@@ -174,321 +203,61 @@ export function StudyScopeContent({
     );
   }
 
-  if (!isViewCardsPage && !isStudyPage && !isQuestionPage) {
-    return (
-      <div className="space-y-6">
-        {isConceptScope ? (
-          <>
-            <PageMindMapCard id="topic-mind-map">
-              <MindMapPanel
-                embedded
-                graph={conceptMindMap}
-                title={`${selectedConcept?.label || "Concept"} Mind Map`}
-                description="Knowledge Nodes, child Concepts, parent Concept, and Study Cards for this Concept."
-                loading={conceptMindMapLoading}
-                error={conceptMindMapError}
-                canRegenerateTopicKnowledgeNodes={canManageSelectedSubject}
-                regeneratingTopicId={conceptKnowledgeNodeRegeneratingId}
-                onRegenerateTopicKnowledgeNodes={handleRegenerateConceptKnowledgeNodes}
-                onTopicNodeClick={(concept) => navigateToConcept(concept.topicId)}
-              />
-            </PageMindMapCard>
-            <ConceptOverview
-              concept={selectedConcept}
-              stats={noteGroupStats}
-              actions={
-                <>
-                  <button
-                    className={classes.primaryButton}
-                    type="button"
-                    onClick={() =>
-                      navigate(
-                        conceptPath(
-                          selectedSubjectCode,
-                          selectedModuleCode,
-                          selectedConceptCode,
-                          "view-cards"
-                        )
-                      )
-                    }
-                  >
-                    View cards
-                  </button>
-                  <button
-                    className={classes.outlineButton}
-                    type="button"
-                    onClick={() => setIsChatOpen(true)}
-                    disabled={!canUseProtectedActions || !selectedModuleId || isReviewOverlayVisible}
-                  >
-                    Open chat
-                  </button>
-                  <button
-                    className={classes.outlineButton}
-                    type="button"
-                    onClick={() => handleRegenerateConceptKnowledgeNodes()}
-                    disabled={
-                      !canManageSelectedSubject ||
-                      !selectedConceptId ||
-                      conceptKnowledgeNodeRegenerating ||
-                      isReviewOverlayVisible
-                    }
-                  >
-                    {conceptKnowledgeNodeRegenerating ? "Regenerating..." : "Regenerate Knowledge Nodes"}
-                  </button>
-                </>
-              }
-              error={conceptError}
-            >
-              <div className="form-block">
-                <h3>Concept management</h3>
-                {selectedConcept?.knowledge_node_status ? (
-                  <div className="status-row">
-                    <span className={`status-pill status-${selectedConcept.knowledge_node_status}`}>
-                      {selectedConcept.knowledge_node_status === "needs_review"
-                        ? "Needs review"
-                        : selectedConcept.knowledge_node_status === "complete"
-                          ? "Knowledge Nodes ready"
-                          : "Knowledge Nodes not generated"}
-                    </span>
-                    {selectedConcept.knowledge_node_review_reason ? (
-                      <span className={classes.mutedText}>
-                        {selectedConcept.knowledge_node_review_reason}
-                      </span>
-                    ) : null}
-                  </div>
-                ) : null}
-                <input
-                  type="text"
-                  value={conceptTitleDraft}
-                  onChange={(event) => setConceptTitleDraft(event.target.value)}
-                  placeholder="Concept name"
-                />
-                <input
-                  type="text"
-                  value={conceptDescriptionDraft}
-                  onChange={(event) => setConceptDescriptionDraft(event.target.value)}
-                  placeholder="Description (optional)"
-                />
-                <div className={classes.buttonRow}>
-                  <button
-                    className={classes.primaryButton}
-                    type="button"
-                    onClick={handleSaveConcept}
-                    disabled={!canManageSelectedSubject || conceptSaving || !conceptTitleDraft.trim()}
-                  >
-                    {conceptSaving ? "Saving..." : "Rename concept"}
-                  </button>
-                  <button
-                    className={classes.destructiveOutlineButton}
-                    type="button"
-                    onClick={handleDeleteConcept}
-                    disabled={!canManageSelectedSubject || conceptSaving || isReviewOverlayVisible}
-                  >
-                    Delete concept
-                  </button>
-                </div>
-              </div>
-            </ConceptOverview>
-          </>
-        ) : (
-          <>
-            <PageMindMapCard id="note-group-mind-map">
-              <MindMapPanel
-                embedded
-                graph={noteGroupMindMap}
-                title={`${selectedNoteGroup?.title || "Note Group"} Mind Map`}
-                description="Concepts and relationships extracted from this Note Group."
-                loading={noteGroupMindMapLoading}
-                error={noteGroupMindMapError}
-                canGenerate={canManageSelectedSubject}
-                generating={noteGroupMindMapGenerating}
-                onGenerate={handleGenerateNoteGroupMindMap}
-                canRegenerateTopicKnowledgeNodes={canManageSelectedSubject}
-                regeneratingTopicId={conceptKnowledgeNodeRegeneratingId}
-                onRegenerateTopicKnowledgeNodes={handleRegenerateConceptKnowledgeNodes}
-                canRegenerateNeedsReview={canManageSelectedSubject}
-                regeneratingNeedsReview={noteGroupNeedsReviewRegenerating}
-                onRegenerateNeedsReview={handleRegenerateNeedsReviewKnowledgeNodes}
-                onTopicNodeClick={(concept) => handleOpenMindMapConcept(concept, "note-group")}
-                drilldownGraph={mindMapDrilldown.sourceKey === "note-group" ? mindMapDrilldown.graph : null}
-                drilldownTitle={
-                  mindMapDrilldown.sourceKey === "note-group"
-                    ? `${mindMapDrilldown.title || "Concept"} Mind Map`
-                    : ""
-                }
-                drilldownLoading={mindMapDrilldown.sourceKey === "note-group" && mindMapDrilldown.loading}
-                drilldownError={mindMapDrilldown.sourceKey === "note-group" ? mindMapDrilldown.error : ""}
-                onBackFromDrilldown={clearMindMapDrilldown}
-              />
-            </PageMindMapCard>
-            <NoteGroupOverview
-              noteGroup={selectedNoteGroup}
-              statusMeta={noteGroupStatusMeta}
-              stats={noteGroupStats}
-              topics={concepts.filter((concept) => noteGroupConceptIds.includes(concept.id))}
-              filterControls={
-                <div className="filter-row">
-                  <div className="filter-label">
-                    <span>Filter note groups</span>
-                    {conceptFilterIds.length ? (
-                      <span className="filter-badge">{conceptFilterIds.length}</span>
-                    ) : null}
-                  </div>
-                  <div className="filter-controls">
-                    <Select
-                      className="select"
-                      classNamePrefix="select"
-                      options={conceptOptions}
-                      value={conceptFilterValue}
-                      onChange={handleConceptFilterSelect}
-                      placeholder="Search concepts"
-                      isMulti
-                      isClearable
-                      isDisabled={!selectedModuleId || conceptOptions.length === 0}
-                      maxMenuHeight={220}
-                      menuPortalTarget={document.body}
-                      styles={selectStyles}
-                      formatOptionLabel={(opt) => (
-                        <div style={{ display: "flex", flexDirection: "column" }}>
-                          <span>{opt.label}</span>
-                          {opt.description ? (
-                            <span style={{ fontSize: "0.75em", color: "#888" }}>{opt.description}</span>
-                          ) : null}
-                        </div>
-                      )}
-                    />
-                    <button
-                      className={classes.smallOutlineButton}
-                      type="button"
-                      onClick={handleResetConceptFilters}
-                      disabled={!conceptFilterIds.length}
-                    >
-                      Reset
-                    </button>
-                  </div>
-                </div>
-              }
-              actions={
-                <>
-                  <button
-                    className={classes.primaryButton}
-                    type="button"
-                    onClick={() => startReview("due", "note-group")}
-                    disabled={!canUseProtectedActions || !selectedNoteGroupId || isReviewing}
-                  >
-                    Review Due
-                    <span className="rounded-md bg-primary-foreground/20 px-2 py-0.5 text-xs">
-                      {noteGroupStats.dueCount}
-                    </span>
-                  </button>
-                  <button
-                    className={classes.outlineButton}
-                    type="button"
-                    onClick={() => setIsChatOpen(true)}
-                    disabled={!canUseProtectedActions || !selectedModuleId || isReviewOverlayVisible}
-                  >
-                    Chat
-                  </button>
-                  <button
-                    className={classes.outlineButton}
-                    type="button"
-                    onClick={openMetadataModal}
-                    disabled={!canManageSelectedSubject || !selectedNoteGroupId || isReviewOverlayVisible}
-                  >
-                    Edit metadata
-                  </button>
-                  <button
-                    className={classes.destructiveOutlineButton}
-                    type="button"
-                    onClick={handleDeleteNoteGroup}
-                    disabled={!canManageSelectedSubject || !selectedNoteGroupId || isReviewOverlayVisible}
-                  >
-                    Delete note group
-                  </button>
-                </>
-              }
-            />
-            <section className={classes.panel} id="note-group-content">
-              <div className="mb-4">
-                <h3 className="text-base font-semibold">Content</h3>
-                <p className={classes.mutedText}>
-                  Open the cards table or source for this Note Group.
-                </p>
-              </div>
-              <div className={classes.buttonRow}>
-                <button
-                  className={classes.primaryButton}
-                  type="button"
-                  onClick={() =>
-                    navigate(
-                      noteGroupPath(
-                        selectedSubjectCode,
-                        selectedModuleCode,
-                        selectedNoteGroupCode,
-                        "view-cards"
-                      )
-                    )
-                  }
-                >
-                  View Cards
-                </button>
-                <button
-                  className={classes.outlineButton}
-                  type="button"
-                  onClick={() => setIsReadingOpen(true)}
-                  disabled={!readingAvailable}
-                >
-                  View Source
-                </button>
-              </div>
-            </section>
-            <NoteGroupProgress
-              progress={noteGroupProgress}
-              range={progressRange}
-              loading={noteGroupProgressLoading}
-              error={noteGroupProgressError}
-              onRangeChange={setProgressRange}
-              onOpenPerformance={() =>
-                navigate(
-                  noteGroupPath(
-                    selectedSubjectCode,
-                    selectedModuleCode,
-                    selectedNoteGroupCode,
-                    "view-cards"
-                  )
-                )
-              }
-            />
-          </>
-        )}
-        {isConceptScope ? (
-          <section
-            className="rounded-lg border bg-card p-6 text-card-foreground shadow-sm"
-            id="note-group-shortcuts"
-          >
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h3 className="text-base font-semibold">Shortcuts</h3>
-                <p className={classes.mutedText}>Quick actions for this concept.</p>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => startReview("due", "topic")}
-                disabled={!canUseProtectedActions || !selectedConceptId || isReviewing}
-              >
-                Review due
-                <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                  {noteGroupStats.dueCount}
-                </span>
-              </Button>
-            </div>
-          </section>
-        ) : null}
-      </div>
-    );
+  const isDefaultNonExplicitRoute = !isViewCardsPage && !isInlineStudyPage && !isStudyPage && !isQuestionPage;
+
+  if (isMindMapPage || isDefaultNonExplicitRoute) {
+    if (isConceptScope) {
+      return (
+        <PageMindMapCard id="topic-mind-map">
+          <MindMapPanel
+            embedded
+            graph={conceptMindMap}
+            title={`${selectedConcept?.label || "Concept"} Mind Map`}
+            description="Knowledge Nodes, child Concepts, parent Concept, and Study Cards for this Concept."
+            loading={conceptMindMapLoading}
+            error={conceptMindMapError}
+            canRegenerateTopicKnowledgeNodes={canManageSelectedSubject}
+            regeneratingTopicId={conceptKnowledgeNodeRegeneratingId}
+            onRegenerateTopicKnowledgeNodes={handleRegenerateConceptKnowledgeNodes}
+            onTopicNodeClick={(concept) => navigateToConcept(concept.topicId)}
+          />
+        </PageMindMapCard>
+      );
+    }
+
+    if (!isConceptScope) {
+      return (
+        <PageMindMapCard id="note-group-mind-map">
+          <MindMapPanel
+            embedded
+            graph={noteGroupMindMap}
+            title={`${selectedNoteGroup?.title || "Note Group"} Mind Map`}
+            description="Concepts and relationships extracted from this Note Group."
+            loading={noteGroupMindMapLoading}
+            error={noteGroupMindMapError}
+            canGenerate={canManageSelectedSubject}
+            generating={noteGroupMindMapGenerating}
+            onGenerate={handleGenerateNoteGroupMindMap}
+            canRegenerateTopicKnowledgeNodes={canManageSelectedSubject}
+            regeneratingTopicId={conceptKnowledgeNodeRegeneratingId}
+            onRegenerateTopicKnowledgeNodes={handleRegenerateConceptKnowledgeNodes}
+            canRegenerateNeedsReview={canManageSelectedSubject}
+            regeneratingNeedsReview={noteGroupNeedsReviewRegenerating}
+            onRegenerateNeedsReview={handleRegenerateNeedsReviewKnowledgeNodes}
+            onTopicNodeClick={(concept) => handleOpenMindMapConcept(concept, "note-group")}
+            drilldownGraph={mindMapDrilldown.sourceKey === "note-group" ? mindMapDrilldown.graph : null}
+            drilldownTitle={
+              mindMapDrilldown.sourceKey === "note-group"
+                ? `${mindMapDrilldown.title || "Concept"} Mind Map`
+                : ""
+            }
+            drilldownLoading={mindMapDrilldown.sourceKey === "note-group" && mindMapDrilldown.loading}
+            drilldownError={mindMapDrilldown.sourceKey === "note-group" ? mindMapDrilldown.error : ""}
+            onBackFromDrilldown={clearMindMapDrilldown}
+          />
+        </PageMindMapCard>
+      );
+    }
   }
 
   if (isViewCardsPage) {
@@ -536,6 +305,136 @@ export function StudyScopeContent({
           onDeleteQuestionCard={handleDeleteQuestionCard}
         />
       </>
+    );
+  }
+
+  if (isInlineStudyPage) {
+    return (
+      <section className={classes.panel} id="note-group-study">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2>Study</h2>
+            <p className={classes.mutedText}>
+              Read this Note Group as Source Text or Derived Study Cards.
+            </p>
+          </div>
+          <div className="segmented-control" role="group" aria-label="Study reading mode">
+            <button
+              type="button"
+              className={readingMode === "clean" ? "active" : ""}
+              onClick={() =>
+                handleReadingModeChange ? handleReadingModeChange("clean") : setReadingMode("clean")
+              }
+            >
+              Source Text
+            </button>
+            <button
+              type="button"
+              className={readingMode === "study" ? "active" : ""}
+              onClick={() =>
+                handleReadingModeChange ? handleReadingModeChange("study") : setReadingMode("study")
+              }
+            >
+              Derived Study Cards
+            </button>
+          </div>
+        </div>
+        {!readingAvailable ? (
+          <p className={classes.mutedText}>Study content is unavailable for this Note Group.</p>
+        ) : readingMode === "clean" ? (
+          <div className="reading-content inline-reading-content" ref={readingContentRef}>
+            <div className={`clean-source${readingPinnedCardId ? " has-pin" : ""}`}>
+              {renderCleanedMarkdown(effectiveCleanedText || "", readingHighlights)}
+            </div>
+            {readingPinnedCardId && pinnedStudyCard && pinnedSourceRanges.length ? (
+              <div className="source-lookup-floating" aria-label="Pinned Study Card source controls">
+                <div className="source-lookup-nav">
+                  <span>
+                    Study Card {Math.min(activeSourceRangeIndex + 1, pinnedSourceRanges.length)} of{" "}
+                    {pinnedSourceRanges.length}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label="Previous source range"
+                    onClick={() => handleReadingSourceRangePrevious?.(pinnedSourceRanges.length)}
+                  >
+                    <ArrowUp size={15} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Next source range"
+                    onClick={() => handleReadingSourceRangeNext?.(pinnedSourceRanges.length)}
+                  >
+                    <ArrowDown size={15} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Unpin Study Card"
+                    onClick={handleReadingUnpin}
+                  >
+                    <X size={15} aria-hidden="true" />
+                  </button>
+                </div>
+                <button
+                  className="source-lookup-back"
+                  type="button"
+                  onClick={() =>
+                    handleReadingModeChange ? handleReadingModeChange("study") : setReadingMode("study")
+                  }
+                >
+                  <ArrowLeft size={15} aria-hidden="true" />
+                  Back to Derived Study Cards
+                </button>
+                <div className="pinned-study-card-preview" tabIndex={0}>
+                  <p className="label">Pinned Study Card</p>
+                  <h3>{pinnedStudyCard.title || "Untitled Study Card"}</h3>
+                  <p>{clipStudyCardBody(pinnedStudyCard.content || "")}</p>
+                  <div className="pinned-study-card-popover" role="tooltip">
+                    {pinnedStudyCard.content || "No Study Card content."}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="reading-content inline-reading-content" ref={readingContentRef}>
+            {studyNoteSections.map((section, index) => {
+              const title = section.title || `Section ${index + 1}`;
+              const sourceRanges = getValidSourceRanges(sourceRangesByCardId, section.study_card_id);
+              const sourceDisabled = !sourceRanges.length;
+              return (
+                <section
+                  key={section.anchor || section.study_card_id || index}
+                  id={`reading-study-${section.study_card_id}`}
+                  className={`reading-section ${
+                    readingPinnedCardId === section.study_card_id ? "pinned" : ""
+                  }`}
+                >
+                  <button
+                    className="reading-section-toggle"
+                    type="button"
+                    aria-label={
+                      sourceDisabled
+                        ? `Source text unavailable for ${title}`
+                        : `View source text for ${title}`
+                    }
+                    disabled={sourceDisabled}
+                    onClick={(event) => handleReadingViewInClean?.(event, section.study_card_id, 0)}
+                  >
+                    <Search size={16} aria-hidden="true" />
+                  </button>
+                  <div className="reading-section-header">
+                    <h3>{title}</h3>
+                  </div>
+                  <div className="reading-section-body">
+                    {renderMarkdownBlocks(section.content || "")}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        )}
+      </section>
     );
   }
 
