@@ -1950,6 +1950,13 @@ textarea {
   min-height: 0;
 }
 
+.pinned-study-card-preview .label {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
 .pinned-study-card-preview h3 {
   margin: 2px 0 4px;
   font-size: 0.95rem;
