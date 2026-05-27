@@ -96,6 +96,8 @@ export function StudyAppMainContent({ model }) {
     handleOpenModuleWizard,
     handleOpenSubjectWizard,
     handleReadingModeChange,
+    handleReadingNextStudyCard,
+    handleReadingPreviousStudyCard,
     handleReadingSourceRangeNext,
     handleReadingSourceRangePrevious,
     handleReadingUnpin,
@@ -660,6 +662,8 @@ export function StudyAppMainContent({ model }) {
                     openQuestionFocus={openQuestionFocus}
                     handleGenerateQuestions={handleGenerateQuestions}
                     handleReadingModeChange={handleReadingModeChange}
+                    handleReadingNextStudyCard={handleReadingNextStudyCard}
+                    handleReadingPreviousStudyCard={handleReadingPreviousStudyCard}
                     handleReadingSourceRangeNext={handleReadingSourceRangeNext}
                     handleReadingSourceRangePrevious={handleReadingSourceRangePrevious}
                     handleReadingUnpin={handleReadingUnpin}

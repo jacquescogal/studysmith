@@ -1913,6 +1913,14 @@ textarea {
   color: var(--muted);
 }
 
+.source-range-count {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--muted) 82%, #fff);
+}
+
 .source-lookup-nav button,
 .source-lookup-back {
   border: 1px solid rgba(31, 44, 74, 0.12);
