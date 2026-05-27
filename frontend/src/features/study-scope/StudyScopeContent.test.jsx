@@ -128,6 +128,51 @@ describe("NoteGroupScopeContent inline Study route", () => {
     expect(html).toContain("Back to Derived Study Cards");
   });
 
+  test("keeps pinned Study Card controls visible without source ranges", () => {
+    const html = renderToStaticMarkup(
+      <NoteGroupScopeContent
+        shouldHoldContent={false}
+        isViewCardsPage={false}
+        isInlineStudyPage
+        isStudyPage={false}
+        isQuestionPage={false}
+        readingAvailable
+        readingMode="clean"
+        effectiveCleanedText="first source\nsecond source"
+        readingPinnedCardId="card-2"
+        activeSourceRangeIndex={0}
+        pinnedSourceRanges={[]}
+        pinnedStudyCard={{
+          id: "card-2",
+          title: "No source card",
+          content: "This Study Card has no valid source range."
+        }}
+        studyNoteSections={[
+          { study_card_id: "card-1", title: "Pinned card", content: "Pinned content" },
+          { study_card_id: "card-2", title: "No source card", content: "No source content" },
+          { study_card_id: "card-3", title: "Final card", content: "Final content" }
+        ]}
+        readingHighlights={[]}
+        classes={classes}
+        handleReadingModeChange={vi.fn()}
+        handleReadingPreviousStudyCard={vi.fn()}
+        handleReadingNextStudyCard={vi.fn()}
+        handleReadingSourceRangePrevious={vi.fn()}
+        handleReadingSourceRangeNext={vi.fn()}
+        handleReadingUnpin={vi.fn()}
+      />
+    );
+
+    expect(html).toContain("Study Card 2 of 3");
+    expect(html).not.toContain("Source range");
+    expect(html).toContain("aria-label=\"Pin previous Study Card\"");
+    expect(html).toContain("aria-label=\"Pin next Study Card\"");
+    expect(html).toContain("No source card");
+    expect(html).toContain("This Study Card has no valid source range.");
+    expect(html).toContain("aria-label=\"Previous source range\" disabled=\"\"");
+    expect(html).toContain("aria-label=\"Next source range\" disabled=\"\"");
+  });
+
   test("renders unavailable content guidance when Study content is missing", () => {
     const html = renderToStaticMarkup(
       <NoteGroupScopeContent

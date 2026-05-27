@@ -353,7 +353,7 @@ export function StudyScopeContent({
             <div className={`clean-source${readingPinnedCardId ? " has-pin" : ""}`}>
               {renderCleanedMarkdown(effectiveCleanedText || "", readingHighlights)}
             </div>
-            {readingPinnedCardId && pinnedStudyCard && pinnedSourceRanges.length ? (
+            {readingPinnedCardId && pinnedStudyCard ? (
               <div className="source-lookup-floating" aria-label="Pinned Study Card source controls">
                 <div className="source-lookup-nav">
                   <span>
@@ -379,6 +379,7 @@ export function StudyScopeContent({
                   <button
                     type="button"
                     aria-label="Previous source range"
+                    disabled={!pinnedSourceRanges.length}
                     onClick={() => handleReadingSourceRangePrevious?.(pinnedSourceRanges.length)}
                   >
                     <ArrowUp size={15} aria-hidden="true" />
@@ -386,6 +387,7 @@ export function StudyScopeContent({
                   <button
                     type="button"
                     aria-label="Next source range"
+                    disabled={!pinnedSourceRanges.length}
                     onClick={() => handleReadingSourceRangeNext?.(pinnedSourceRanges.length)}
                   >
                     <ArrowDown size={15} aria-hidden="true" />
