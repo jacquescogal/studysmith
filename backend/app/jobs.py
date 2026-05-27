@@ -1,6 +1,7 @@
 import json
 import time
 import uuid
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from threading import Lock
 from typing import Optional
 
@@ -73,6 +74,7 @@ from app.openai_client import (
     generate_question_cards,
     generate_study_cards_with_context,
     generate_topic_tree_candidate_graph,
+    repair_study_card_source_ranges,
 )
 from app.source_ranges import find_evidence_ranges
 from app.text_formatter import build_formatted_sections, sections_to_markdown
@@ -111,6 +113,151 @@ class TopicKnowledgeNodeNeedsReview(Exception):
     pass
 
 
+class SourceRangeRepairError(Exception):
+    pass
+
+
+def _dedupe_source_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    return sorted(set(ranges), key=lambda item: (item[0], item[1]))
+
+
+def _merge_source_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    merged: list[tuple[int, int]] = []
+    for start_index, end_index in sorted(ranges, key=lambda item: (item[0], item[1])):
+        if start_index < 0 or end_index <= start_index:
+            continue
+        if not merged:
+            merged.append((start_index, end_index))
+            continue
+        previous_start, previous_end = merged[-1]
+        if start_index <= previous_end:
+            merged[-1] = (previous_start, max(previous_end, end_index))
+        else:
+            merged.append((start_index, end_index))
+    return merged
+
+
+def _normalize_evidence_snippets(evidence_snippets) -> list[str]:
+    if not isinstance(evidence_snippets, list):
+        return []
+    return [
+        snippet
+        for snippet in evidence_snippets
+        if isinstance(snippet, str) and snippet != ""
+    ]
+
+
+def _find_exact_snippet_ranges(
+    cleaned_text_markdown: Optional[str],
+    evidence_snippets,
+    *,
+    require_all: bool = False,
+) -> list[tuple[int, int]]:
+    if not cleaned_text_markdown:
+        if require_all:
+            raise SourceRangeRepairError("Cleaned Text is missing")
+        return []
+    snippets = _normalize_evidence_snippets(evidence_snippets)
+    if require_all and not snippets:
+        raise SourceRangeRepairError("Repair did not return evidence_snippets")
+
+    missing = [snippet for snippet in snippets if cleaned_text_markdown.find(snippet) == -1]
+    if require_all and missing:
+        raise SourceRangeRepairError("Repair returned evidence that is not exact Cleaned Text")
+    ranges: list[tuple[int, int]] = []
+    for snippet in snippets:
+        if snippet in missing:
+            continue
+        start_index = cleaned_text_markdown.find(snippet)
+        while start_index != -1:
+            end_index = start_index + len(snippet)
+            ranges.append((start_index, end_index))
+            start_index = cleaned_text_markdown.find(snippet, start_index + 1)
+    return _merge_source_ranges(ranges)
+
+
+def _range_int(payload: dict, *keys: str) -> Optional[int]:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.strip().isdigit():
+            return int(value.strip())
+    return None
+
+
+def _verified_source_ranges_from_offsets(
+    cleaned_text_markdown: str,
+    evidence_snippets: list[str],
+    source_ranges,
+) -> list[tuple[int, int]]:
+    if not isinstance(source_ranges, list) or not source_ranges:
+        return []
+
+    ranges: list[tuple[int, int]] = []
+    for index, payload in enumerate(source_ranges):
+        if not isinstance(payload, dict):
+            raise SourceRangeRepairError("Repair returned malformed source_ranges")
+        start_index = _range_int(payload, "start_index", "start")
+        end_index = _range_int(payload, "end_index", "end")
+        snippet = _candidate_string(payload, "snippet", "evidence_snippet", "text")
+        if not snippet and index < len(evidence_snippets):
+            snippet = evidence_snippets[index]
+        if start_index is None or end_index is None or not snippet:
+            raise SourceRangeRepairError("Repair returned incomplete source_ranges")
+        if start_index < 0 or end_index <= start_index or end_index > len(cleaned_text_markdown):
+            raise SourceRangeRepairError("Repair returned out-of-bounds source_ranges")
+        if cleaned_text_markdown[start_index:end_index] != snippet:
+            raise SourceRangeRepairError("Repair returned source_ranges that do not match Cleaned Text")
+        ranges.append((start_index, end_index))
+    return _dedupe_source_ranges(ranges)
+
+
+def _verified_repair_source_ranges(
+    cleaned_text_markdown: str,
+    repair_payload: dict,
+) -> list[tuple[int, int]]:
+    if not isinstance(repair_payload, dict):
+        raise SourceRangeRepairError("Repair response was not JSON object")
+    evidence_snippets = _normalize_evidence_snippets(repair_payload.get("evidence_snippets"))
+    snippet_ranges = _find_exact_snippet_ranges(
+        cleaned_text_markdown,
+        evidence_snippets,
+        require_all=True,
+    )
+    offset_ranges = _verified_source_ranges_from_offsets(
+        cleaned_text_markdown,
+        evidence_snippets,
+        repair_payload.get("source_ranges"),
+    )
+    ranges = _dedupe_source_ranges([*offset_ranges, *snippet_ranges])
+    if not ranges:
+        raise SourceRangeRepairError("Repair did not produce verified Source Ranges")
+    return ranges
+
+
+def _store_verified_draft_study_card_source_ranges(
+    db: Session,
+    draft_study_card: DraftStudyCard,
+    ranges: list[tuple[int, int]],
+) -> int:
+    db.query(DraftStudyCardSourceRange).filter(
+        DraftStudyCardSourceRange.draft_study_card_id == draft_study_card.id
+    ).delete(synchronize_session=False)
+    deduped_ranges = _dedupe_source_ranges(ranges)
+    for start_index, end_index in deduped_ranges:
+        db.add(
+            DraftStudyCardSourceRange(
+                draft_study_card_id=draft_study_card.id,
+                start_index=start_index,
+                end_index=end_index,
+            )
+        )
+    return len(deduped_ranges)
+
+
 def _store_study_card_source_ranges(
     db: Session,
     study_card: StudyCard,
@@ -140,22 +287,11 @@ def _store_draft_study_card_source_ranges(
     draft_study_card: DraftStudyCard,
     cleaned_text_markdown: Optional[str],
     evidence_snippets,
-) -> None:
+) -> int:
     if not cleaned_text_markdown or not isinstance(evidence_snippets, list):
-        return
-    db.query(DraftStudyCardSourceRange).filter(
-        DraftStudyCardSourceRange.draft_study_card_id == draft_study_card.id
-    ).delete(synchronize_session=False)
-    for start_index, end_index in find_evidence_ranges(
-        cleaned_text_markdown, evidence_snippets
-    ):
-        db.add(
-            DraftStudyCardSourceRange(
-                draft_study_card_id=draft_study_card.id,
-                start_index=start_index,
-                end_index=end_index,
-            )
-        )
+        return 0
+    ranges = _find_exact_snippet_ranges(cleaned_text_markdown, evidence_snippets)
+    return _store_verified_draft_study_card_source_ranges(db, draft_study_card, ranges)
 
 
 def _study_card_mind_map_payloads(study_cards: list[StudyCard]) -> list[dict]:
@@ -454,6 +590,64 @@ def _build_draft_study_card_context(draft_study_cards: list[DraftStudyCard]) -> 
         }
         for card in draft_study_cards
     ]
+
+
+def _repair_single_study_card_source_ranges(
+    cleaned_text_markdown: str,
+    study_card_title: Optional[str],
+    study_card_content: str,
+    evidence_snippets,
+) -> list[tuple[int, int]]:
+    repair_payload = repair_study_card_source_ranges(
+        cleaned_text_markdown=cleaned_text_markdown,
+        study_card_title=study_card_title,
+        study_card_content=study_card_content,
+        evidence_snippets=evidence_snippets,
+    )
+    return _verified_repair_source_ranges(cleaned_text_markdown, repair_payload)
+
+
+def _repair_unmatched_study_card_source_ranges(
+    cleaned_text_markdown: str,
+    repair_requests: list[dict],
+) -> dict[str, list[tuple[int, int]]]:
+    if not repair_requests:
+        return {}
+    max_workers = min(5, len(repair_requests))
+    repaired_ranges_by_card_id: dict[str, list[tuple[int, int]]] = {}
+    executor = ThreadPoolExecutor(max_workers=max_workers)
+    try:
+        future_to_request = {
+            executor.submit(
+                _repair_single_study_card_source_ranges,
+                cleaned_text_markdown,
+                request["title"],
+                request["content"],
+                request["evidence_snippets"],
+            ): request
+            for request in repair_requests
+        }
+        pending = set(future_to_request)
+        while pending:
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for future in done:
+                request = future_to_request[future]
+                try:
+                    ranges = future.result()
+                except Exception as exc:
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    raise SourceRangeRepairError(
+                        f"Source Range repair failed for Study Card '{request['title'] or request['card_id']}'"
+                    ) from exc
+                if not ranges:
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    raise SourceRangeRepairError(
+                        f"Source Range repair produced no verified ranges for Study Card '{request['title'] or request['card_id']}'"
+                    )
+                repaired_ranges_by_card_id[request["card_id"]] = ranges
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+    return repaired_ranges_by_card_id
 
 
 def _cleanup_note_group_by_id(db: Session, note_group_id: str) -> list[str]:
@@ -1758,12 +1952,42 @@ def run_auto_note_group_generation(job_id: str) -> None:
 
             _raise_if_cancelled(db, job)
             db.flush()
+            repair_requests = []
             for card, payload in card_payload_pairs:
-                _store_draft_study_card_source_ranges(
+                stored_range_count = _store_draft_study_card_source_ranges(
                     db,
                     card,
                     cleaned_text_markdown,
                     payload.get("evidence_snippets"),
+                )
+                if card.content.strip() and stored_range_count == 0:
+                    repair_requests.append(
+                        {
+                            "card_id": card.id,
+                            "title": card.title,
+                            "content": card.content,
+                            "evidence_snippets": payload.get("evidence_snippets"),
+                        }
+                    )
+            if repair_requests:
+                repaired_ranges_by_card_id = _repair_unmatched_study_card_source_ranges(
+                    cleaned_text_markdown,
+                    repair_requests,
+                )
+                cards_by_id = {card.id: card for card, _payload in card_payload_pairs}
+                for card_id, ranges in repaired_ranges_by_card_id.items():
+                    card = cards_by_id.get(card_id)
+                    if not card:
+                        continue
+                    _store_verified_draft_study_card_source_ranges(db, card, ranges)
+                if len(repaired_ranges_by_card_id) != len(repair_requests):
+                    raise SourceRangeRepairError("Source Range repair did not return every unmatched Study Card")
+                append_job_log(
+                    db,
+                    job,
+                    current_stage,
+                    f"Repaired Source Ranges for {len(repair_requests)} Study Cards",
+                    {"repair_count": len(repair_requests)},
                 )
             study_card_context = _build_draft_study_card_context(draft_study_cards)
             study_card_contents = [card.content for card in draft_study_cards]
