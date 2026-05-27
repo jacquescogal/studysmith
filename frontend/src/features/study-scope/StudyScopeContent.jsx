@@ -380,7 +380,11 @@ export function StudyScopeContent({
                 <div className="pinned-study-card-preview">
                   <p className="label">Pinned Study Card</p>
                   <h3>{pinnedStudyCard.title || "Untitled Study Card"}</h3>
-                  <div className="source-lookup-study-card-body">
+                  <div
+                    className="source-lookup-study-card-body"
+                    tabIndex={0}
+                    aria-label="Pinned Study Card content"
+                  >
                     {pinnedStudyCard.content || "No Study Card content."}
                   </div>
                 </div>
