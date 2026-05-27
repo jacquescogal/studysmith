@@ -137,7 +137,7 @@ describe("NoteGroupScopeContent inline Study route", () => {
 });
 
 describe("StudyScopeContent Mind Map routes", () => {
-  test("Note Group View Cards route renders a generic back label without Overview", () => {
+  test("Note Group View Cards route renders without a local Back button", () => {
     const html = renderToStaticMarkup(
       <NoteGroupScopeContent
         shouldHoldContent={false}
@@ -180,8 +180,55 @@ describe("StudyScopeContent Mind Map routes", () => {
       />
     );
 
-    expect(html).toContain("← Back");
+    expect(html).toContain("<h2>View Cards</h2>");
+    expect(html).not.toContain("← Back");
     expect(html).not.toContain("Overview");
+  });
+
+  test("Concept View Cards route renders without a local Back button", () => {
+    const html = renderToStaticMarkup(
+      <ConceptScopeContent
+        shouldHoldContent={false}
+        isViewCardsPage
+        isMindMapPage={false}
+        isInlineStudyPage={false}
+        isStudyPage={false}
+        isQuestionPage={false}
+        isConceptScope
+        conceptCardTableRows={[]}
+        studyCards={[]}
+        questionCards={[]}
+        concepts={[]}
+        selectedConcept={{ id: "concept-1", label: "Elasticity" }}
+        canEditCurrentCards={false}
+        canUseProtectedActions={false}
+        editingStudyCardId=""
+        editingStudyCard={{ title: "", content: "" }}
+        editingQuestionCardId=""
+        editingQuestionCard={{
+          type: "mcq",
+          prompt: "",
+          optionsText: "",
+          correctIndicesText: "",
+          refs: []
+        }}
+        classes={classes}
+        handleBackToOverview={vi.fn()}
+        handleEditStudyCard={vi.fn()}
+        setEditingStudyCard={vi.fn()}
+        handleSaveStudyCard={vi.fn()}
+        setEditingStudyCardId={vi.fn()}
+        handleDeleteStudyCard={vi.fn()}
+        handleEditQuestionCard={vi.fn()}
+        setEditingQuestionCard={vi.fn()}
+        handleSaveQuestionCard={vi.fn()}
+        setEditingQuestionCardId={vi.fn()}
+        handleDeleteQuestionCard={vi.fn()}
+      />
+    );
+
+    expect(html).toContain("<h2>View Cards</h2>");
+    expect(html).not.toContain("← Back");
   });
 
   test("Concept Mind Map route renders only Mind Map content", () => {
