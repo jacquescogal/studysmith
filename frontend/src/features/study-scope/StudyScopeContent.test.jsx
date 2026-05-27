@@ -93,6 +93,7 @@ describe("NoteGroupScopeContent inline Study route", () => {
           content: "Full pinned Study Card content should be visible in a scrollable panel instead of hidden behind hover."
         }}
         studyNoteSections={[
+          { title: "Section heading", content: "No card id here" },
           { study_card_id: "card-1", title: "Pinned card", content: "Pinned content" },
           { study_card_id: "card-2", title: "Next card", content: "Next content" },
           { study_card_id: "card-3", title: "Final card", content: "Final content" }
