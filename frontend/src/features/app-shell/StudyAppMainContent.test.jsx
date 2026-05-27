@@ -1,13 +1,17 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 
-import { selectStyles } from "@/features/app-shell/appShellUi";
 import { ModuleHomePage } from "@/features/modules/ModuleHomePage";
+import { ModuleMindMapPage } from "@/features/modules/ModuleMindMapPage";
 import { ConceptScopeContent } from "@/features/study-scope/StudyScopeContent";
 import { StudyAppMainContent } from "./StudyAppMainContent";
 
 vi.mock("@/features/modules/ModuleHomePage", () => ({
   ModuleHomePage: vi.fn(() => <section>Module overview</section>)
+}));
+
+vi.mock("@/features/modules/ModuleMindMapPage", () => ({
+  ModuleMindMapPage: vi.fn(() => <section id="module-mind-map">Module Mind Map only</section>)
 }));
 
 vi.mock("@/features/study-scope/StudyScopeContent", () => ({
@@ -16,7 +20,11 @@ vi.mock("@/features/study-scope/StudyScopeContent", () => ({
 }));
 
 describe("StudyAppMainContent", () => {
-  test("renders the Module overview branch with shared select and class props", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  test("renders the Module Mind Map branch by default", () => {
     const html = renderToStaticMarkup(
       <StudyAppMainContent
         model={{
@@ -76,7 +84,7 @@ describe("StudyAppMainContent", () => {
           pageHeader: { title: "Module", description: "", pageType: "Module" },
           reviewCount: "10",
           reviewError: "",
-          sectionNavItems: [{ id: "module-overview", label: "Module overview" }],
+          sectionNavItems: [],
           selectedModule: { id: "module-1", title: "Cell biology" },
           selectedModuleCode: "M1",
           selectedModuleId: "module-1",
@@ -91,14 +99,99 @@ describe("StudyAppMainContent", () => {
       />
     );
 
-    expect(html).toContain("Module overview");
+    expect(html).toContain("Module Mind Map only");
+    expect(html).not.toContain("Question timeline");
+    expect(html).not.toContain("Note groups");
     expect(html).toContain("scope-interaction-dock");
     expect(html).not.toContain("On this page");
-    expect(ModuleHomePage).toHaveBeenCalledOnce();
-    expect(ModuleHomePage.mock.calls[0][0].selectStyles).toBe(selectStyles);
-    expect(ModuleHomePage.mock.calls[0][0].classes.smallMutedText).toBeTruthy();
-    expect(ModuleHomePage.mock.calls[0][0].classes.smallOutlineButton).toBeTruthy();
-    expect(ModuleHomePage.mock.calls[0][0].classes.smallDestructiveOutlineButton).toBeTruthy();
+    expect(ModuleMindMapPage).toHaveBeenCalledOnce();
+    expect(ModuleMindMapPage.mock.calls[0][0].moduleTitle).toBe("Cell biology");
+    expect(ModuleMindMapPage.mock.calls[0][0].canRegenerateTopicKnowledgeNodes).toBe(true);
+    expect(ModuleHomePage).not.toHaveBeenCalled();
+  });
+
+  test("renders only the Module Mind Map on Module Mind Map routes", () => {
+    const html = renderToStaticMarkup(
+      <StudyAppMainContent
+        model={{
+          authActions: null,
+          canManageSelectedSubject: true,
+          canReorderNoteGroups: true,
+          canUseProtectedActions: true,
+          chipFilterIds: [],
+          chipFilterValue: [],
+          chipOptions: [],
+          clearMindMapDrilldown: vi.fn(),
+          dragOverNoteGroupId: "",
+          draggedNoteGroupId: "",
+          generationWorkflowsByNoteGroupId: {},
+          handleBackToOverview: vi.fn(),
+          handleBreadcrumbHome: vi.fn(),
+          handleCancelAutoJob: vi.fn(),
+          handleChipFilterSelect: vi.fn(),
+          handleDeleteModule: vi.fn(),
+          handleNoteGroupDragEnd: vi.fn(),
+          handleNoteGroupDragEnter: vi.fn(),
+          handleNoteGroupDragOver: vi.fn(),
+          handleNoteGroupDragStart: vi.fn(),
+          handleNoteGroupDrop: vi.fn(),
+          handleOpenMindMapTopic: vi.fn(),
+          handleRegenerateModuleNeedsReviewKnowledgeNodes: vi.fn(),
+          handleRegenerateTopicKnowledgeNodes: vi.fn(),
+          handleResetChipFilters: vi.fn(),
+          handleRetryAutoJob: vi.fn(),
+          hasSidebar: false,
+          isRestoringRoute: false,
+          isReviewOverlayVisible: false,
+          isReviewing: false,
+          isViewCardsPage: false,
+          mindMapDrilldown: {
+            sourceKey: "",
+            graph: null,
+            title: "",
+            loading: false,
+            error: ""
+          },
+          moduleDueCounts: {},
+          moduleGenerationWorkflowConnection: {},
+          moduleGenerationWorkflowError: "",
+          moduleMindMap: null,
+          moduleMindMapError: "",
+          moduleMindMapLoading: false,
+          moduleNeedsReviewRegenerating: false,
+          moduleNoteGroupStatsById: {},
+          moduleNoteGroupsForDisplay: [],
+          moduleQuestionTimeline: [],
+          moduleStats: null,
+          moduleStatsError: "",
+          moduleStatsLoading: false,
+          navigateToNoteGroup: vi.fn(),
+          noteGroupMode: "",
+          pageBreadcrumbs: [],
+          pageHeader: { title: "Module", description: "", pageType: "Module" },
+          reviewCount: "10",
+          reviewError: "",
+          routePanel: "mind-map",
+          sectionNavItems: [],
+          selectedModule: { id: "module-1", title: "Cell biology" },
+          selectedModuleCode: "M1",
+          selectedModuleId: "module-1",
+          selectedNoteGroupId: "",
+          selectedSubjectCode: "S1",
+          selectedSubjectId: "subject-1",
+          selectedTopicId: "",
+          setIsChatOpen: vi.fn(),
+          setReviewCount: vi.fn(),
+          startReview: vi.fn()
+        }}
+      />
+    );
+
+    expect(html).toContain("Module Mind Map only");
+    expect(html).not.toContain("Question timeline");
+    expect(html).not.toContain("Note groups");
+    expect(ModuleMindMapPage).toHaveBeenCalledOnce();
+    expect(ModuleHomePage).not.toHaveBeenCalled();
   });
 
   test("marks Mind Map as the selected dock action on Module overview routes", () => {

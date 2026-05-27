@@ -9,7 +9,7 @@ import { ScopeInteractionDock } from "@/components/layout/ScopeInteractionDock";
 import { ConfirmActionDialog } from "@/components/common/ConfirmActionDialog";
 import { LegacyDialog } from "@/components/common/LegacyDialog";
 import { ModuleIndexPage } from "@/features/modules/ModuleIndexPage";
-import { ModuleHomePage } from "@/features/modules/ModuleHomePage";
+import { ModuleMindMapPage } from "@/features/modules/ModuleMindMapPage";
 import { AdminPanel } from "@/features/admin/AdminPanel";
 import { NoteGroupCreate } from "@/features/note-groups/NoteGroupCreate";
 import { NoteGroupViewCards } from "@/features/note-groups/NoteGroupViewCards";
@@ -270,6 +270,27 @@ export function StudyAppMainContent({ model }) {
   const isExplicitDockRoute = Boolean(isViewCardsPage || isInlineStudyPage || isStudyPage || isQuestionPage);
   const isMindMapSelected = currentPanel === "mind-map" || (!isExplicitDockRoute && (!currentPanel || currentPanel === "overview"));
   const settingsDisabled = !canManageSelectedSubject || !canUseProtectedActions || isReviewOverlayVisible;
+  const moduleMindMapProps = {
+    moduleTitle: selectedModule?.title,
+    graph: moduleMindMap,
+    loading: moduleMindMapLoading,
+    error: moduleMindMapError,
+    canRegenerateTopicKnowledgeNodes: canManageSelectedSubject,
+    regeneratingTopicId: topicKnowledgeNodeRegeneratingId,
+    onRegenerateTopicKnowledgeNodes: handleRegenerateTopicKnowledgeNodes,
+    canRegenerateNeedsReview: canManageSelectedSubject,
+    regeneratingNeedsReview: moduleNeedsReviewRegenerating,
+    onRegenerateNeedsReview: handleRegenerateModuleNeedsReviewKnowledgeNodes,
+    onTopicNodeClick: (topic) => handleOpenMindMapTopic(topic, "module"),
+    drilldownGraph: mindMapDrilldown.sourceKey === "module" ? mindMapDrilldown.graph : null,
+    drilldownTitle:
+      mindMapDrilldown.sourceKey === "module"
+        ? `${mindMapDrilldown.title || "Concept"} Mind Map`
+        : "",
+    drilldownLoading: mindMapDrilldown.sourceKey === "module" && mindMapDrilldown.loading,
+    drilldownError: mindMapDrilldown.sourceKey === "module" ? mindMapDrilldown.error : "",
+    onBackFromDrilldown: clearMindMapDrilldown
+  };
   const workspaceDock = (() => {
     if (!selectedModuleId || noteGroupMode === "auto" || shouldHoldSelectedNoteGroupContent) {
       return null;
@@ -504,90 +525,7 @@ export function StudyAppMainContent({ model }) {
                       />
                     </>
                   ) : (
-                    <ModuleHomePage
-                    selectedModule={selectedModule}
-                    moduleMindMapProps={{
-                      moduleTitle: selectedModule?.title,
-                      graph: moduleMindMap,
-                      loading: moduleMindMapLoading,
-                      error: moduleMindMapError,
-                      canRegenerateTopicKnowledgeNodes: canManageSelectedSubject,
-                      regeneratingTopicId: topicKnowledgeNodeRegeneratingId,
-                      onRegenerateTopicKnowledgeNodes: handleRegenerateTopicKnowledgeNodes,
-                      canRegenerateNeedsReview: canManageSelectedSubject,
-                      regeneratingNeedsReview: moduleNeedsReviewRegenerating,
-                      onRegenerateNeedsReview: handleRegenerateModuleNeedsReviewKnowledgeNodes,
-                      onTopicNodeClick: (topic) => handleOpenMindMapTopic(topic, "module"),
-                      drilldownGraph:
-                        mindMapDrilldown.sourceKey === "module" ? mindMapDrilldown.graph : null,
-                      drilldownTitle:
-                        mindMapDrilldown.sourceKey === "module"
-                          ? `${mindMapDrilldown.title || "Concept"} Mind Map`
-                          : "",
-                      drilldownLoading:
-                        mindMapDrilldown.sourceKey === "module" && mindMapDrilldown.loading,
-                      drilldownError:
-                        mindMapDrilldown.sourceKey === "module" ? mindMapDrilldown.error : "",
-                      onBackFromDrilldown: clearMindMapDrilldown
-                    }}
-                    moduleStats={moduleStats}
-                    moduleStatsLoading={moduleStatsLoading}
-                    moduleStatsError={moduleStatsError}
-                    moduleQuestionTimeline={moduleQuestionTimeline}
-                    moduleNoteGroupsForDisplay={moduleNoteGroupsForDisplay}
-                    moduleNoteGroupStatsById={moduleNoteGroupStatsById}
-                    chipFilterIds={chipFilterIds}
-                    chipOptions={chipOptions}
-                    chipFilterValue={chipFilterValue}
-                    selectStyles={selectStyles}
-                    selectedModuleId={selectedModuleId}
-                    canUseProtectedActions={canUseProtectedActions}
-                    canManageSelectedSubject={canManageSelectedSubject}
-                    isReviewOverlayVisible={isReviewOverlayVisible}
-                    moduleGenerationWorkflow={moduleGenerationWorkflow}
-                    moduleGenerationWorkflowConnection={moduleGenerationWorkflowConnection}
-                    moduleGenerationWorkflowError={moduleGenerationWorkflowError}
-                    generationWorkflowStatusLabel={generationWorkflowStatusLabel}
-                    generationWorkflowTitle={generationWorkflowTitle}
-                    generationWorkflowStageLabel={generationWorkflowStageLabel}
-                    reviewCount={reviewCount}
-                    isReviewing={isReviewing}
-                    reviewError={reviewError}
-                    canReorderNoteGroups={canReorderNoteGroups}
-                    isReorderingNoteGroups={isReorderingNoteGroups}
-                    draggedNoteGroupId={draggedNoteGroupId}
-                    dragOverNoteGroupId={dragOverNoteGroupId}
-                    generationWorkflowsByNoteGroupId={generationWorkflowsByNoteGroupId}
-                    autoJobsByNoteGroupId={autoJobsByNoteGroupId}
-                    autoJobActionId={autoJobActionId}
-                    classes={{
-                      panel: panelClass,
-                      mutedText: mutedTextClass,
-                      smallMutedText: smallMutedTextClass,
-                      errorText: errorTextClass,
-                      badge: badgeClass,
-                      primaryButton: primaryButtonClass,
-                      outlineButton: outlineButtonClass,
-                      smallOutlineButton: smallOutlineButtonClass,
-                      smallDestructiveOutlineButton: smallDestructiveOutlineButtonClass,
-                      buttonRow: buttonRowClass
-                    }}
-                    onChipFilterSelect={handleChipFilterSelect}
-                    onResetChipFilters={handleResetChipFilters}
-                    onOpenChat={() => setIsChatOpen(true)}
-                    onOpenModuleMetadata={openModuleMetadataModal}
-                    onDeleteModule={handleDeleteModule}
-                    onReviewCountChange={(event) => setReviewCount(event.target.value)}
-                    onStartReview={startReview}
-                    onNoteGroupDragOver={handleNoteGroupDragOver}
-                    onNoteGroupDragEnter={handleNoteGroupDragEnter}
-                    onNoteGroupDrop={handleNoteGroupDrop}
-                    onNoteGroupDragEnd={handleNoteGroupDragEnd}
-                    onNoteGroupDragStart={handleNoteGroupDragStart}
-                    onCancelAutoJob={handleCancelAutoJob}
-                    onRetryAutoJob={handleRetryAutoJob}
-                    onNavigateToNoteGroup={navigateToNoteGroup}
-                  />
+                    <ModuleMindMapPage {...moduleMindMapProps} />
                   )
                 ) : (
                   <StudyScopeRouteContent
