@@ -1,8 +1,9 @@
 import asyncio
+from concurrent.futures import Future
 import json
 import unittest
 from contextlib import ExitStack
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from sqlalchemy import create_engine, delete, event
 from sqlalchemy.exc import IntegrityError
@@ -1491,6 +1492,233 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_matched_study_cards_skip_source_range_repair(self):
+        import app.jobs as jobs
+
+        db = self.SessionLocal()
+        try:
+            job = self._create_auto_generation_job(db, "matched-skip-repair")
+            job_id = job.id
+            note_group_id = job.note_group_id
+            repair_mock = Mock(side_effect=AssertionError("matched Study Card should not enter repair"))
+            db.close()
+
+            self._run_with_extra_patches(
+                job_id,
+                [patch.object(jobs, "repair_study_card_source_ranges", repair_mock)],
+            )
+
+            db = self.SessionLocal()
+            live_card = db.query(StudyCard).filter_by(note_group_id=note_group_id).one()
+
+            self.assertFalse(repair_mock.called)
+            self.assertEqual(db.query(StudyCardSourceRange).filter_by(study_card_id=live_card.id).count(), 1)
+        finally:
+            db.close()
+
+    def test_unmatched_study_card_is_repaired_and_promoted_with_verified_source_ranges(self):
+        import app.jobs as jobs
+
+        db = self.SessionLocal()
+        try:
+            job = self._create_auto_generation_job(db, "repair-promoted")
+            job_id = job.id
+            note_group_id = job.note_group_id
+            repair_mock = Mock(return_value={"evidence_snippets": ["exact evidence"]})
+            db.close()
+
+            self._run_with_extra_patches(
+                job_id,
+                [patch.object(jobs, "repair_study_card_source_ranges", repair_mock)],
+                study_cards=[
+                    {
+                        "title": "Concept",
+                        "content": "Concept content",
+                        "evidence_snippets": ["not copied from Cleaned Text"],
+                    }
+                ],
+            )
+
+            db = self.SessionLocal()
+            live_card = db.query(StudyCard).filter_by(note_group_id=note_group_id).one()
+            source_range = db.query(StudyCardSourceRange).filter_by(study_card_id=live_card.id).one()
+            cleaned_text = db.get(NoteGroup, note_group_id).cleaned_text_markdown
+
+            repair_mock.assert_called_once()
+            self.assertEqual(cleaned_text[source_range.start_index:source_range.end_index], "exact evidence")
+        finally:
+            db.close()
+
+    def test_multiple_unmatched_study_cards_repair_count_is_logged_and_worker_pool_is_capped(self):
+        import app.jobs as jobs
+
+        class RecordingExecutor:
+            def __init__(self, max_workers):
+                max_workers_seen.append(max_workers)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def shutdown(self, wait=True, cancel_futures=False):
+                return None
+
+            def submit(self, fn, *args, **kwargs):
+                future = Future()
+                try:
+                    future.set_result(fn(*args, **kwargs))
+                except Exception as exc:
+                    future.set_exception(exc)
+                return future
+
+        max_workers_seen = []
+        db = self.SessionLocal()
+        try:
+            job = self._create_auto_generation_job(db, "repair-count")
+            job_id = job.id
+            db.close()
+
+            repair_mock = Mock(return_value={"evidence_snippets": ["exact evidence"]})
+            self._run_with_extra_patches(
+                job_id,
+                [
+                    patch.object(jobs, "repair_study_card_source_ranges", repair_mock),
+                    patch.object(jobs, "ThreadPoolExecutor", RecordingExecutor),
+                ],
+                study_cards=[
+                    {
+                        "title": f"Concept {index}",
+                        "content": f"Concept content {index}",
+                        "evidence_snippets": ["not copied from Cleaned Text"],
+                    }
+                    for index in range(6)
+                ],
+                embeddings=[[0.1, 0.2, 0.3]],
+            )
+
+            db = self.SessionLocal()
+            stored_job = db.get(Job, job_id)
+            repair_logs = [
+                log
+                for log in db.query(JobLog).filter_by(job_id=job_id).all()
+                if log.message == "Repaired Source Ranges for 6 Study Cards"
+            ]
+
+            self.assertEqual(stored_job.status, "failed")
+            self.assertEqual(stored_job.current_stage, JOB_STAGE_EMBEDDINGS)
+            self.assertEqual(max_workers_seen, [5])
+            self.assertEqual(repair_mock.call_count, 6)
+            self.assertEqual(len(repair_logs), 1)
+            self.assertEqual(json.loads(repair_logs[0].metadata_json), {"repair_count": 6})
+        finally:
+            db.close()
+
+    def test_source_range_matching_preserves_evidence_snippet_whitespace_exactly(self):
+        import app.jobs as jobs
+
+        text = "Raw concept text with exact evidence."
+        padded_text = "Raw concept text with exact evidence and padded  exact evidence ."
+
+        self.assertEqual(jobs._find_exact_snippet_ranges(text, ["exact evidence"]), [(22, 36)])
+        self.assertEqual(jobs._find_exact_snippet_ranges(text, [" exact evidence "]), [])
+        self.assertEqual(jobs._find_exact_snippet_ranges(padded_text, [" exact evidence "]), [(21, 37), (48, 64)])
+
+        with self.assertRaises(jobs.SourceRangeRepairError):
+            jobs._find_exact_snippet_ranges(text, [" exact evidence "], require_all=True)
+
+    def test_repaired_ranges_union_verified_offsets_and_snippets(self):
+        import app.jobs as jobs
+
+        text = "Alpha evidence. Beta evidence."
+
+        ranges = jobs._verified_repair_source_ranges(
+            text,
+            {
+                "evidence_snippets": ["Alpha evidence", "Beta evidence"],
+                "source_ranges": [
+                    {"start": 0, "end": 14, "snippet": "Alpha evidence"},
+                ],
+            },
+        )
+
+        self.assertEqual(ranges, [(0, 14), (16, 29)])
+
+    def test_repair_failure_fails_study_card_stage_and_leaves_no_accepted_cards_or_ranges(self):
+        import app.jobs as jobs
+
+        db = self.SessionLocal()
+        try:
+            job = self._create_auto_generation_job(db, "repair-failure")
+            job_id = job.id
+            note_group_id = job.note_group_id
+            repair_mock = Mock(return_value={"evidence_snippets": ["still not copied"]})
+            db.close()
+
+            self._run_with_extra_patches(
+                job_id,
+                [patch.object(jobs, "repair_study_card_source_ranges", repair_mock)],
+                study_cards=[
+                    {
+                        "title": "Concept",
+                        "content": "Concept content",
+                        "evidence_snippets": ["not copied from Cleaned Text"],
+                    }
+                ],
+            )
+
+            db = self.SessionLocal()
+            stored_job = db.get(Job, job_id)
+            draft = db.query(NoteGroupGenerationDraft).filter_by(job_id=job_id).one()
+
+            self.assertEqual(stored_job.status, "failed")
+            self.assertEqual(stored_job.current_stage, JOB_STAGE_STUDY_CARDS)
+            self.assertEqual(stored_job.stage_status, "failed")
+            self.assertEqual(db.query(DraftStudyCard).filter_by(draft_id=draft.id).count(), 0)
+            self.assertEqual(db.query(DraftStudyCardSourceRange).count(), 0)
+            self.assertEqual(db.query(StudyCard).filter_by(note_group_id=note_group_id).count(), 0)
+            self.assertEqual(db.query(StudyCardSourceRange).count(), 0)
+        finally:
+            db.close()
+
+    def test_repaired_evidence_never_changes_study_card_title_or_content(self):
+        import app.jobs as jobs
+
+        db = self.SessionLocal()
+        try:
+            job = self._create_auto_generation_job(db, "repair-preserves-card")
+            job_id = job.id
+            note_group_id = job.note_group_id
+            repair_mock = Mock(
+                return_value={
+                    "title": "Altered title",
+                    "content": "Altered content",
+                    "evidence_snippets": ["exact evidence"],
+                }
+            )
+            db.close()
+
+            self._run_with_extra_patches(
+                job_id,
+                [patch.object(jobs, "repair_study_card_source_ranges", repair_mock)],
+                study_cards=[
+                    {
+                        "title": "Original title",
+                        "content": "Original content",
+                        "evidence_snippets": ["not copied from Cleaned Text"],
+                    }
+                ],
+            )
+
+            db = self.SessionLocal()
+            live_card = db.query(StudyCard).filter_by(note_group_id=note_group_id).one()
+
+            self.assertEqual(live_card.title, "Original title")
+            self.assertEqual(live_card.content, "Original content")
+        finally:
+            db.close()
+
     def test_embedding_count_mismatch_fails_embeddings_stage(self):
         db = self.SessionLocal()
         try:
@@ -1501,8 +1729,8 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
             self._run_with_mocks(
                 job_id,
                 study_cards=[
-                    {"title": "One", "content": "One content", "evidence_snippets": []},
-                    {"title": "Two", "content": "Two content", "evidence_snippets": []},
+                    {"title": "One", "content": "One content", "evidence_snippets": ["exact evidence"]},
+                    {"title": "Two", "content": "Two content", "evidence_snippets": ["exact evidence"]},
                 ],
                 embeddings=[[0.1, 0.2, 0.3]],
             )

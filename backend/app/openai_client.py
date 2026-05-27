@@ -22,7 +22,9 @@ STUDY_CARD_CONTEXT_PROMPT = (
     "Convert raw study text into atomic study cards for effective learning and retrieval. "
     "Do not invent facts. Split by concept; each card must be coherent alone. "
     "Focus only on content relevant to the module's learning goal and scope — skip the rest. "
-    "Assign zero or more Concepts to each study card using only the provided Concept list."
+    "Assign zero or more Concepts to each study card using only the provided Concept list. "
+    "For each Study Card, evidence_snippets must be exact copied snippets from the Cleaned Text. "
+    "Do not paraphrase, normalize punctuation, or change whitespace inside evidence_snippets."
 )
 
 QUESTION_SYSTEM_PROMPT = (
@@ -83,6 +85,14 @@ CLEANED_TEXT_SYSTEM_PROMPT = (
     "Format raw study text into clean markdown. Fix spacing, headings, bullets, and line breaks only. "
     "Preserve all source content and meaning. Do not summarize, omit, add, or scope-filter content. "
     "Return JSON only with key cleaned_text_markdown."
+)
+
+SOURCE_RANGE_REPAIR_SYSTEM_PROMPT = (
+    "Repair Study Card evidence by locating exact support in the provided Cleaned Text. "
+    "Return JSON only. Do not alter, rewrite, shorten, expand, or correct the Study Card title or content. "
+    "The title and content are context only. Return evidence_snippets as exact copied substrings from "
+    "the Cleaned Text. If you include source_ranges, each range must identify the exact start and end "
+    "offset for the corresponding copied snippet."
 )
 
 MIND_MAP_SYSTEM_PROMPT = (
@@ -253,10 +263,11 @@ def generate_study_cards_with_context(
         f"{module_context}\n"
         f"Note group title: {note_group_title}\n"
         f"{instruction_block}"
-        f"Cleaned markdown source text: {raw_text}\n"
+        f"Cleaned Text markdown source text:\n{raw_text}\n"
         "Output JSON as { \"study_cards\": [ { \"title\": \"...\", \"content\": \"...\", "
         "\"evidence_snippets\": [\"...\"] } ] }.\n"
-        "Each evidence_snippets value must be an exact copied substring from the cleaned markdown source text."
+        "Each evidence_snippets value must be an exact copied substring from the Cleaned Text markdown source text. "
+        "Do not paraphrase evidence_snippets. Do not change punctuation, casing, or internal whitespace."
     )
 
     payload = _strong_json(STUDY_CARD_CONTEXT_PROMPT, user_prompt)
@@ -264,6 +275,30 @@ def generate_study_cards_with_context(
     if not isinstance(study_cards, list):
         raise ValueError("OpenAI response did not include study_cards list")
     return study_cards
+
+
+def repair_study_card_source_ranges(
+    cleaned_text_markdown: str,
+    study_card_title: Optional[str],
+    study_card_content: str,
+    evidence_snippets,
+) -> dict:
+    user_prompt = (
+        "Cleaned Text markdown source text:\n"
+        f"{cleaned_text_markdown}\n\n"
+        "Study Card title (do not modify):\n"
+        f"{study_card_title or ''}\n\n"
+        "Study Card content (do not modify):\n"
+        f"{study_card_content}\n\n"
+        "Current evidence_snippets:\n"
+        f"{json.dumps(evidence_snippets if isinstance(evidence_snippets, list) else [], ensure_ascii=True)}\n\n"
+        "Return JSON as { \"evidence_snippets\": [\"exact copied snippet\"], "
+        "\"source_ranges\": [ { \"start\": 0, \"end\": 10, \"snippet\": \"exact copied snippet\" } ] }.\n"
+        "source_ranges is optional, but evidence_snippets is required. "
+        "Use zero-based character offsets where end is exclusive. "
+        "Do not return title or content changes."
+    )
+    return _strong_json(SOURCE_RANGE_REPAIR_SYSTEM_PROMPT, user_prompt)
 
 
 def generate_cleaned_text_markdown(raw_text: str) -> str:
