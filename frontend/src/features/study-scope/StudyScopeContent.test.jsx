@@ -90,7 +90,7 @@ describe("NoteGroupScopeContent inline Study route", () => {
         pinnedStudyCard={{
           id: "card-1",
           title: "Pinned card",
-          content: "Full pinned Study Card content that should be available on hover."
+          content: "Full pinned Study Card content should be visible in a scrollable panel instead of hidden behind hover."
         }}
         readingHighlights={[
           { study_card_id: "card-1", start_index: 0, end_index: 5, kind: "related", range_index: 0 },
@@ -108,7 +108,9 @@ describe("NoteGroupScopeContent inline Study route", () => {
     expect(html).toContain("source-highlight active");
     expect(html).toContain("Study Card 2 of 2");
     expect(html).toContain("Pinned card");
-    expect(html).toContain("Full pinned Study Card content that should be available on hover.");
+    expect(html).toContain("source-lookup-study-card-body");
+    expect(html).toContain("Full pinned Study Card content should be visible in a scrollable panel instead of hidden behind hover.");
+    expect(html).not.toContain("pinned-study-card-popover");
     expect(html).toContain("aria-label=\"Unpin Study Card\"");
     expect(html).toContain("Back to Derived Study Cards");
   });

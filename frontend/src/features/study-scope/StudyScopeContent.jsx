@@ -18,11 +18,6 @@ const getValidSourceRanges = (sourceRangesByCardId, studyCardId) => {
   );
 };
 
-const clipStudyCardBody = (content = "") => {
-  const text = content.trim();
-  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
-};
-
 function QuestionTimelinePanel({ panelClass, mutedTextClass, questionTimeline }) {
   return (
     <section className={panelClass} id="question-timeline">
@@ -382,11 +377,10 @@ export function StudyScopeContent({
                   <ArrowLeft size={15} aria-hidden="true" />
                   Back to Derived Study Cards
                 </button>
-                <div className="pinned-study-card-preview" tabIndex={0}>
+                <div className="pinned-study-card-preview">
                   <p className="label">Pinned Study Card</p>
                   <h3>{pinnedStudyCard.title || "Untitled Study Card"}</h3>
-                  <p>{clipStudyCardBody(pinnedStudyCard.content || "")}</p>
-                  <div className="pinned-study-card-popover" role="tooltip">
+                  <div className="source-lookup-study-card-body">
                     {pinnedStudyCard.content || "No Study Card content."}
                   </div>
                 </div>
