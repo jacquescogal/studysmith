@@ -44,6 +44,40 @@ def _json_list(value: str | None) -> list:
     return parsed if isinstance(parsed, list) else []
 
 
+def _remap_formatted_sections_json(
+    formatted_sections_json: str | None,
+    study_card_id_by_draft_id: dict[str, str],
+) -> str | None:
+    if not formatted_sections_json or not study_card_id_by_draft_id:
+        return formatted_sections_json
+    try:
+        parsed = json.loads(formatted_sections_json)
+    except json.JSONDecodeError:
+        return formatted_sections_json
+    if not isinstance(parsed, list):
+        return formatted_sections_json
+
+    remapped_sections = []
+    for section in parsed:
+        if not isinstance(section, dict):
+            remapped_sections.append(section)
+            continue
+        remapped = dict(section)
+        draft_study_card_id = remapped.get("study_card_id") or remapped.get("studyCardId")
+        live_study_card_id = study_card_id_by_draft_id.get(draft_study_card_id)
+        if live_study_card_id:
+            remapped["study_card_id"] = live_study_card_id
+            anchor = remapped.get("anchor")
+            if isinstance(anchor, str):
+                remapped["anchor"] = anchor.replace(
+                    draft_study_card_id[:8],
+                    live_study_card_id[:8],
+                    1,
+                )
+        remapped_sections.append(remapped)
+    return json.dumps(remapped_sections)
+
+
 def _candidate_concept_ids_for_cleanup(
     db: Session,
     module_id: str,
@@ -661,7 +695,6 @@ def promote_note_group_generation_draft(db: Session, job: Job) -> dict:
     note_group.title = draft.title or note_group.title
     note_group.suggested_titles_json = draft.suggested_titles_json
     note_group.cleaned_text_markdown = draft.cleaned_text_markdown
-    note_group.formatted_sections_json = draft.formatted_sections_json
     note_group.formatted_text = draft.formatted_text
     note_group.generation_status = "complete"
     note_group.mind_map_status = "complete"
@@ -669,6 +702,10 @@ def promote_note_group_generation_draft(db: Session, job: Job) -> dict:
     note_group.mind_map_generated_at = datetime.utcnow()
 
     study_card_id_by_draft_id, live_cards_by_draft_id = _promote_study_cards(db, draft, note_group)
+    note_group.formatted_sections_json = _remap_formatted_sections_json(
+        draft.formatted_sections_json,
+        study_card_id_by_draft_id,
+    )
     question_count = _promote_question_cards(db, draft, note_group, study_card_id_by_draft_id)
     topic_id_by_draft_id = _promote_topics(db, draft)
     topic_ids = _promote_topic_links(db, draft, note_group, topic_id_by_draft_id, study_card_id_by_draft_id)

@@ -534,6 +534,10 @@ export function getNoteGroupCardTable(noteGroupId) {
   return request(`/note-groups/${noteGroupId}/card-table`);
 }
 
+export function getModuleCardTable(moduleId) {
+  return request(`/modules/${moduleId}/card-table`);
+}
+
 export function getNoteGroupMindMap(noteGroupId) {
   return request(`/note-groups/${noteGroupId}/mind-map`);
 }

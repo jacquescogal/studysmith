@@ -153,10 +153,11 @@ Concepts are used to browse, filter, review, and retrieve study cards and
 question cards across a module. A Concept page is scoped by study cards tagged
 with that Concept, regardless of the note group that owns each study card.
 
-Concept pages are read/review scopes for cards. Users can rename or delete the
-Concept from the Concept page. Deleting a Concept deletes the concept row and removes
-note-group and study-card associations, but does not delete study cards or
-question cards.
+Concept pages are read/review scopes for cards. Users can delete the Concept or
+regenerate its Knowledge Nodes from Concept settings. Deleting a Concept deletes
+the concept row and removes note-group and study-card associations, but does not
+delete study cards or question cards. Concept rename and description editing are
+not available from the Concept page workflow.
 
 The backend may still use the legacy `TopicChip` model and `topic_chips` table
 names while this model is being migrated. User-facing UI must say `Concept` or

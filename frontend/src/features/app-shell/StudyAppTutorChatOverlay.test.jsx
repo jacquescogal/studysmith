@@ -25,8 +25,45 @@ vi.mock("@/features/chat/useTutorChat", () => ({
 }));
 
 describe("StudyAppTutorChatOverlay", () => {
+  test.each([
+    ["Module", { selectedNoteGroupId: "", selectedTopicId: "" }, { noteGroupId: "", conceptId: "" }],
+    [
+      "Note Group",
+      { selectedNoteGroupId: "note-group-1", selectedTopicId: "" },
+      { noteGroupId: "note-group-1", conceptId: "" }
+    ],
+    [
+      "Concept",
+      { selectedNoteGroupId: "", selectedTopicId: "concept-1" },
+      { noteGroupId: "", conceptId: "concept-1" }
+    ]
+  ])("opens Tutor Chat from the floating bubble for %s scope", (_scope, scopeProps, expectedScope) => {
+    const setIsChatOpen = vi.fn();
+    const element = StudyAppTutorChatOverlay({
+      model: {
+        canUseProtectedActions: true,
+        isChatOpen: false,
+        resolveNoteGroupLabel: () => "Cell membranes",
+        selectedModuleId: "module-1",
+        setIsChatOpen,
+        ...scopeProps
+      }
+    });
+    const bubble = element.props.children[0];
+
+    bubble.props.onClick();
+
+    expect(setIsChatOpen).toHaveBeenCalledWith(true);
+    expect(useTutorChat).toHaveBeenLastCalledWith({
+      moduleId: "module-1",
+      noteGroupId: expectedScope.noteGroupId,
+      conceptId: expectedScope.conceptId,
+      isOpen: false
+    });
+  });
+
   test("owns Tutor Chat state through the Tutor Chat hook", () => {
-    renderToStaticMarkup(
+    const html = renderToStaticMarkup(
       <StudyAppTutorChatOverlay
         model={{
           canUseProtectedActions: true,
@@ -40,6 +77,8 @@ describe("StudyAppTutorChatOverlay", () => {
       />
     );
 
+    expect(html).toContain("floating-chat-bubble");
+    expect(html).toContain("Tutor Chat");
     expect(useTutorChat).toHaveBeenCalledWith({
       moduleId: "module-1",
       noteGroupId: "",

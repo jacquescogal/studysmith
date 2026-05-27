@@ -36,6 +36,7 @@ const {
 export function StudyAppGlobalDialogs({ model }) {
   const {
     canManageSelectedSubject,
+    canUseProtectedActions,
     chipOptions,
     closeQuestionFocus,
     editingSubjectId,
@@ -45,15 +46,20 @@ export function StudyAppGlobalDialogs({ model }) {
     focusQuestionCard,
     formatDueAt,
     formatReviewAt,
+    handleDeleteModule,
+    handleDeleteNoteGroup,
+    handleDeleteTopic,
     handleCreateModuleFromWizard,
     handleCreateQuestionCard,
     handleCreateStudyCard,
     handleCreateSubjectFromWizard,
     handleModuleWizardSend,
+    handleRegenerateTopicKnowledgeNodes,
     handleSaveMetadataTitle,
     handleSaveModuleMetadata,
     handleSaveSubjectMetadata,
     handleSubjectWizardSend,
+    isConceptSettingsOpen,
     isMetadataOpen,
     isModuleMetadataOpen,
     isModuleWizardOpen,
@@ -89,9 +95,14 @@ export function StudyAppGlobalDialogs({ model }) {
     newStudyCardContent,
     newStudyCardTitle,
     questionCardError,
+    selectedConcept,
+    selectedConceptId,
     selectedNoteGroupId,
     selectedSubject,
     selectedSubjectId,
+    selectedTopic,
+    selectedTopicId,
+    setIsConceptSettingsOpen,
     setIsMetadataOpen,
     setIsModuleMetadataOpen,
     setIsModuleWizardOpen,
@@ -139,8 +150,12 @@ export function StudyAppGlobalDialogs({ model }) {
     subjectWizardMessages,
     subjectWizardScope,
     subjectWizardTitle,
+    topicKnowledgeNodeRegenerating,
     wizardChatRef
   } = model;
+  const activeConcept = selectedConcept || selectedTopic;
+  const activeConceptId = selectedConceptId || selectedTopicId;
+  const managementDisabled = !canManageSelectedSubject || !canUseProtectedActions;
 
   return (
     <>
@@ -756,6 +771,14 @@ export function StudyAppGlobalDialogs({ model }) {
               >
                 {moduleMetadataSaving ? "Saving..." : "Save settings"}
               </button>
+              <button
+                className={destructiveOutlineButtonClass}
+                type="button"
+                onClick={handleDeleteModule}
+                disabled={managementDisabled || moduleMetadataSaving}
+              >
+                Delete module
+              </button>
             </div>
             {moduleMetadataError ? <p className={errorTextClass}>{moduleMetadataError}</p> : null}
           </div>
@@ -765,14 +788,14 @@ export function StudyAppGlobalDialogs({ model }) {
         <LegacyDialog
           open={isMetadataOpen}
           onOpenChange={setIsMetadataOpen}
-          title="Edit note group metadata"
+          title="Note Group settings"
         >
           <div className="meta-modal">
             <div className="meta-modal-header">
               <div>
-                <h2>Edit note group metadata</h2>
+                <h2>Note Group settings</h2>
                 <p className={mutedTextClass}>
-                  Update the title for this note group.
+                  Rename or delete this Note Group.
                 </p>
               </div>
               <button className={outlineButtonClass} type="button" onClick={() => setIsMetadataOpen(false)}>
@@ -780,7 +803,7 @@ export function StudyAppGlobalDialogs({ model }) {
               </button>
             </div>
             <div className="field">
-              <label htmlFor="note-group-title">Note group title</label>
+              <label htmlFor="note-group-title">Note Group title</label>
               <input
                 id="note-group-title"
                 type="text"
@@ -798,8 +821,57 @@ export function StudyAppGlobalDialogs({ model }) {
               >
                 {metadataSaving ? "Saving..." : "Save title"}
               </button>
+              <button
+                className={destructiveOutlineButtonClass}
+                type="button"
+                onClick={handleDeleteNoteGroup}
+                disabled={managementDisabled || metadataSaving || !selectedNoteGroupId}
+              >
+                Delete Note Group
+              </button>
             </div>
             {metadataError ? <p className={errorTextClass}>{metadataError}</p> : null}
+          </div>
+        </LegacyDialog>
+      ) : null}
+{isConceptSettingsOpen ? (
+        <LegacyDialog
+          open={isConceptSettingsOpen}
+          onOpenChange={setIsConceptSettingsOpen}
+          title="Concept settings"
+        >
+          <div className="meta-modal">
+            <div className="meta-modal-header">
+              <div>
+                <h2>Concept settings</h2>
+                <p className={mutedTextClass}>Manage {activeConcept?.label || "this Concept"}.</p>
+              </div>
+              <button
+                className={outlineButtonClass}
+                type="button"
+                onClick={() => setIsConceptSettingsOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className={buttonRowClass}>
+              <button
+                className={outlineButtonClass}
+                type="button"
+                onClick={() => handleRegenerateTopicKnowledgeNodes()}
+                disabled={managementDisabled || !activeConceptId || topicKnowledgeNodeRegenerating}
+              >
+                {topicKnowledgeNodeRegenerating ? "Regenerating..." : "Regenerate Concept"}
+              </button>
+              <button
+                className={destructiveOutlineButtonClass}
+                type="button"
+                onClick={handleDeleteTopic}
+                disabled={managementDisabled || !activeConceptId}
+              >
+                Delete Concept
+              </button>
+            </div>
           </div>
         </LegacyDialog>
       ) : null}

@@ -82,6 +82,8 @@ async function mockStudyWorkspaceApi(page) {
       await route.fulfill(ok([concept]));
     } else if (path === "/modules/module-1/mind-map") {
       await route.fulfill(ok(graph));
+    } else if (path === "/modules/module-1/card-table") {
+      await route.fulfill(ok({ rows: [], unlinked_question_count: 0 }));
     } else if (path === "/note-groups/note-group-1") {
       await route.fulfill(ok({ ...noteGroup, formatted_sections: [], cleaned_text_markdown: "" }));
     } else if (path === "/note-groups/note-group-1/study-cards") {
@@ -115,13 +117,16 @@ const routes = [
   "/app/subject/S1",
   "/app/subject/S1/module/M1",
   "/app/subject/S1/module/M1/mind-map",
+  "/app/subject/S1/module/M1/view-cards",
   "/app/subject/S1/module/M1/create-note-group",
   "/app/subject/S1/module/M1/note-groups/N1",
   "/app/subject/S1/module/M1/note-groups/N1/mind-map",
   "/app/subject/S1/module/M1/note-groups/N1/view-cards",
+  "/app/subject/S1/module/M1/note-groups/N1/study",
   "/app/subject/S1/module/M1/note-groups/N1/study-cards",
   "/app/subject/S1/module/M1/note-groups/N1/question-cards",
   "/app/subject/S1/module/M1/concepts/C1",
+  "/app/subject/S1/module/M1/concepts/C1/mind-map",
   "/app/subject/S1/module/M1/concepts/C1/view-cards",
   "/app/subject/S1/module/M1/concepts/C1/study-cards",
   "/app/subject/S1/module/M1/concepts/C1/question-cards"

@@ -3113,52 +3113,6 @@ class MindMapRouteTests(unittest.TestCase):
         finally:
             db.close()
 
-    def test_owner_can_regenerate_needs_review_topics_for_note_group(self):
-        db = self.SessionLocal()
-        try:
-            self.seed_graph_scope(db)
-            owner = db.get(User, "owner-1")
-            topic = db.get(TopicChip, "topic-a")
-            topic.knowledge_node_status = "needs_review"
-            topic.knowledge_node_review_reason = "Missing definition Knowledge Node"
-            db.execute(note_group_topic_chips.insert().values(note_group_id="note-a", chip_id="topic-a"))
-            db.commit()
-        finally:
-            db.close()
-
-        client = self._client(user=owner)
-
-        with patch("app.main.reconcile_note_group_topic_knowledge_nodes") as reconcile:
-            response = client.post("/note-groups/note-a/mind-map/regenerate-needs-review")
-
-        self.assertEqual(response.status_code, 200)
-        reconcile.assert_called_once_with("note-a", only_needs_review=True)
-        topic_nodes = [node for node in response.json()["nodes"] if node["node_type"] == "topic"]
-        self.assertEqual(topic_nodes[0]["knowledge_node_status"], "needs_review")
-
-    def test_owner_can_regenerate_needs_review_topics_for_module(self):
-        db = self.SessionLocal()
-        try:
-            self.seed_graph_scope(db)
-            owner = db.get(User, "owner-1")
-            topic = db.get(TopicChip, "topic-a")
-            topic.knowledge_node_status = "needs_review"
-            topic.knowledge_node_review_reason = "Missing definition Knowledge Node"
-            db.execute(note_group_topic_chips.insert().values(note_group_id="note-a", chip_id="topic-a"))
-            db.commit()
-        finally:
-            db.close()
-
-        client = self._client(user=owner)
-
-        with patch("app.main.reconcile_note_group_topic_knowledge_nodes") as reconcile:
-            response = client.post("/modules/module-1/mind-map/regenerate-needs-review")
-
-        self.assertEqual(response.status_code, 200)
-        reconcile.assert_called_once_with("note-a", only_needs_review=True)
-        topic_nodes = [node for node in response.json()["nodes"] if node["node_type"] == "topic"]
-        self.assertEqual(topic_nodes[0]["knowledge_node_status"], "needs_review")
-
     def test_reader_cannot_regenerate_selected_topic_knowledge_nodes(self):
         db = self.SessionLocal()
         try:

@@ -111,9 +111,11 @@ export const renderHighlightedText = (text, baseIndex, highlights) => {
     const end = sorted[index + 1];
     const segment = text.slice(start, end);
     const overlapping = getOverlappingHighlights(baseIndex + start, baseIndex + end, highlights);
+    const activeRange = overlapping.find((highlight) => highlight.kind === "active");
     const pinned = overlapping.find((highlight) => highlight.kind === "pinned");
+    const related = overlapping.find((highlight) => highlight.kind === "related");
     const hovered = overlapping.find((highlight) => highlight.kind === "hovered");
-    const active = pinned || hovered;
+    const active = activeRange || pinned || related || hovered;
     if (!active) {
       return renderInlineMarkdown(segment, `seg-${baseIndex}-${start}`);
     }
@@ -122,6 +124,7 @@ export const renderHighlightedText = (text, baseIndex, highlights) => {
         key={`highlight-${baseIndex}-${start}-${end}`}
         className={`source-highlight ${active.kind}`}
         data-clean-card-id={active.study_card_id}
+        data-source-range-index={active.range_index ?? 0}
       >
         {renderInlineMarkdown(segment, `mark-${baseIndex}-${start}`)}
       </mark>

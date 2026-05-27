@@ -68,6 +68,17 @@ export function StudyAppTutorChatOverlay({ model }) {
 
   return (
     <>
+      {selectedModuleId ? (
+        <button
+          type="button"
+          className="floating-chat-bubble"
+          onClick={() => setIsChatOpen(true)}
+          disabled={!canUseProtectedActions}
+          aria-label="Open Tutor Chat"
+        >
+          Tutor Chat
+        </button>
+      ) : null}
 <TutorChatDialog open={isChatOpen} onOpenChange={setIsChatOpen}>
           <div className="chat-modal">
             <div className="chat-modal-header">
@@ -76,7 +87,9 @@ export function StudyAppTutorChatOverlay({ model }) {
                 <p className={mutedTextClass}>
                   {selectedNoteGroupId
                     ? "Ask about the current Note Group."
-                    : "Ask about this module and its note groups."}
+                    : selectedTopicId
+                      ? "Ask about the current Concept."
+                      : "Ask about this module and its note groups."}
                 </p>
               </div>
               <button className={outlineButtonClass} type="button" onClick={() => setIsChatOpen(false)}>
@@ -89,6 +102,12 @@ export function StudyAppTutorChatOverlay({ model }) {
                   Scoped to current Note Group: {resolveNoteGroupLabel(selectedNoteGroupId)}
                 </span>
               </div>
+            ) : selectedTopicId ? (
+              <div className="results-meta">
+                <span className={`${badgeClass} chat-scope-badge`}>
+                  Scoped to current Concept
+                </span>
+              </div>
             ) : null}
             {chatView === "card" ? (
               <>
@@ -99,7 +118,9 @@ export function StudyAppTutorChatOverlay({ model }) {
                   <p className={mutedTextClass}>
                     {selectedNoteGroupId
                       ? "Scoped to current note group."
-                      : "Scoped to selected module."}
+                      : selectedTopicId
+                        ? "Scoped to current Concept."
+                        : "Scoped to selected module."}
                   </p>
                 </div>
                 {chatCardLoading ? <p className={mutedTextClass}>Loading study card...</p> : null}
@@ -165,7 +186,9 @@ export function StudyAppTutorChatOverlay({ model }) {
                     placeholder={
                       selectedNoteGroupId
                         ? "Ask a question about this Note Group..."
-                        : "Ask a question about this module..."
+                        : selectedTopicId
+                          ? "Ask a question about this Concept..."
+                          : "Ask a question about this module..."
                     }
                     rows={2}
                     disabled={!canUseProtectedActions || !selectedModuleId}
