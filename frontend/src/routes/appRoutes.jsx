@@ -10,15 +10,15 @@ import {
 } from "./layouts";
 import {
   ConceptCardsPage,
-  ConceptOverviewPage,
   ConceptQuestionCardsPage,
   ConceptStudyCardsPage,
+  ConceptMindMapPage,
+  ModuleCardsPage,
   ModuleMindMapPage,
-  ModuleOverviewPage,
   NoteGroupCardsPage,
   NoteGroupCreatePage,
   NoteGroupMindMapPage,
-  NoteGroupOverviewPage,
+  NoteGroupStudyPage,
   NoteGroupQuestionCardsPage,
   NoteGroupStudyCardsPage,
   SubjectIndexPage,
@@ -34,8 +34,13 @@ const page = (Component, renderAppShell) => (
 const conceptChildren = (renderAppShell) => [
   {
     index: true,
-    id: "concept-overview",
-    element: page(ConceptOverviewPage, renderAppShell)
+    id: "concept-default-mind-map",
+    element: page(ConceptMindMapPage, renderAppShell)
+  },
+  {
+    path: "mind-map",
+    id: "concept-mind-map",
+    element: page(ConceptMindMapPage, renderAppShell)
   },
   {
     path: "view-cards",
@@ -83,13 +88,18 @@ export function createAppRouteObjects(renderAppShell = defaultRenderAppShell) {
               children: [
                 {
                   index: true,
-                  id: "module-overview",
-                  element: page(ModuleOverviewPage, renderAppShell)
+                  id: "module-default-mind-map",
+                  element: page(ModuleMindMapPage, renderAppShell)
                 },
                 {
                   path: "mind-map",
                   id: "module-mind-map",
                   element: page(ModuleMindMapPage, renderAppShell)
+                },
+                {
+                  path: "view-cards",
+                  id: "module-view-cards",
+                  element: page(ModuleCardsPage, renderAppShell)
                 },
                 {
                   path: "create-note-group",
@@ -103,8 +113,8 @@ export function createAppRouteObjects(renderAppShell = defaultRenderAppShell) {
                   children: [
                     {
                       index: true,
-                      id: "note-group-overview",
-                      element: page(NoteGroupOverviewPage, renderAppShell)
+                      id: "note-group-default-mind-map",
+                      element: page(NoteGroupMindMapPage, renderAppShell)
                     },
                     {
                       path: "mind-map",
@@ -115,6 +125,11 @@ export function createAppRouteObjects(renderAppShell = defaultRenderAppShell) {
                       path: "view-cards",
                       id: "note-group-view-cards",
                       element: page(NoteGroupCardsPage, renderAppShell)
+                    },
+                    {
+                      path: "study",
+                      id: "note-group-study",
+                      element: page(NoteGroupStudyPage, renderAppShell)
                     },
                     {
                       path: "study-cards",

@@ -27,11 +27,11 @@ export function SubjectModulesPage(props) {
   return <AppShellRoutePage {...props} />;
 }
 
-export function ModuleOverviewPage(props) {
+export function ModuleMindMapPage(props) {
   return <AppShellRoutePage {...props} />;
 }
 
-export function ModuleMindMapPage(props) {
+export function ModuleCardsPage(props) {
   return <AppShellRoutePage {...props} />;
 }
 
@@ -39,11 +39,11 @@ export function NoteGroupCreatePage(props) {
   return <AppShellRoutePage {...props} />;
 }
 
-export function NoteGroupOverviewPage(props) {
+export function NoteGroupMindMapPage(props) {
   return <AppShellRoutePage {...props} />;
 }
 
-export function NoteGroupMindMapPage(props) {
+export function NoteGroupStudyPage(props) {
   return <AppShellRoutePage {...props} />;
 }
 
@@ -59,7 +59,7 @@ export function NoteGroupQuestionCardsPage(props) {
   return <AppShellRoutePage {...props} />;
 }
 
-export function ConceptOverviewPage(props) {
+export function ConceptMindMapPage(props) {
   return <AppShellRoutePage {...props} />;
 }
 

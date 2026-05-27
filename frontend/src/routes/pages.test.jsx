@@ -5,9 +5,9 @@ import { useConceptPageModel } from "@/features/concepts/useConceptPageModel";
 import { useModulePageModel } from "@/features/modules/useModulePageModel";
 import { useNoteGroupPageModel } from "@/features/note-groups/useNoteGroupPageModel";
 import {
-  ConceptOverviewPage,
-  ModuleOverviewPage,
-  NoteGroupOverviewPage
+  ConceptMindMapPage,
+  ModuleMindMapPage,
+  NoteGroupMindMapPage
 } from "./pages";
 
 vi.mock("@/features/modules/useModulePageModel", () => ({
@@ -29,7 +29,7 @@ describe("route page model ownership", () => {
 
   test("Module route pages consume the Module page model directly", () => {
     const html = renderToStaticMarkup(
-      <ModuleOverviewPage
+      <ModuleMindMapPage
         renderAppShell={({ routePageModels }) => (
           <span>{routePageModels.modulePageModel.owner}</span>
         )}
@@ -42,7 +42,7 @@ describe("route page model ownership", () => {
 
   test("Note Group route pages consume the Note Group page model directly", () => {
     const html = renderToStaticMarkup(
-      <NoteGroupOverviewPage
+      <NoteGroupMindMapPage
         renderAppShell={({ routePageModels }) => (
           <span>{routePageModels.noteGroupPageModel.owner}</span>
         )}
@@ -55,7 +55,7 @@ describe("route page model ownership", () => {
 
   test("Concept route pages consume the Concept page model directly", () => {
     const html = renderToStaticMarkup(
-      <ConceptOverviewPage
+      <ConceptMindMapPage
         renderAppShell={({ routePageModels }) => (
           <span>{routePageModels.conceptPageModel.owner}</span>
         )}

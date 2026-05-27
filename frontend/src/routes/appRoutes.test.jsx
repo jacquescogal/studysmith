@@ -25,12 +25,13 @@ describe("app route tree", () => {
   test.each([
     ["/", "subject-index"],
     ["/app/subject/S1", "subject-modules"],
-    ["/app/subject/S1/module/M1", "module-overview"],
+    ["/app/subject/S1/module/M1", "module-default-mind-map"],
     ["/app/subject/S1/module/M1/mind-map", "module-mind-map"],
+    ["/app/subject/S1/module/M1/view-cards", "module-view-cards"],
     ["/app/subject/S1/module/M1/create-note-group", "note-group-create"],
     [
       "/app/subject/S1/module/M1/note-groups/N1",
-      "note-group-overview"
+      "note-group-default-mind-map"
     ],
     [
       "/app/subject/S1/module/M1/note-groups/N1/mind-map",
@@ -39,6 +40,10 @@ describe("app route tree", () => {
     [
       "/app/subject/S1/module/M1/note-groups/N1/view-cards",
       "note-group-view-cards"
+    ],
+    [
+      "/app/subject/S1/module/M1/note-groups/N1/study",
+      "note-group-study"
     ],
     [
       "/app/subject/S1/module/M1/note-groups/N1/study-cards",
@@ -50,7 +55,11 @@ describe("app route tree", () => {
     ],
     [
       "/app/subject/S1/module/M1/concepts/C1",
-      "concept-overview"
+      "concept-default-mind-map"
+    ],
+    [
+      "/app/subject/S1/module/M1/concepts/C1/mind-map",
+      "concept-mind-map"
     ],
     [
       "/app/subject/S1/module/M1/concepts/C1/view-cards",
@@ -72,6 +81,12 @@ describe("app route tree", () => {
     expect(leafRouteIdFor("/app/subject/S1/module/M1/topics/T1/study-cards")).toBe(
       "concept-study-cards"
     );
+  });
+
+  test("does not expose Overview route ids for scope defaults", () => {
+    expect(findRouteById(createAppRouteObjects(), "module-overview")).toBeNull();
+    expect(findRouteById(createAppRouteObjects(), "note-group-overview")).toBeNull();
+    expect(findRouteById(createAppRouteObjects(), "concept-overview")).toBeNull();
   });
 
   test("uses nested layout route boundaries for module and note group pages", () => {
