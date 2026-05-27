@@ -137,6 +137,53 @@ describe("NoteGroupScopeContent inline Study route", () => {
 });
 
 describe("StudyScopeContent Mind Map routes", () => {
+  test("Note Group View Cards route renders a generic back label without Overview", () => {
+    const html = renderToStaticMarkup(
+      <NoteGroupScopeContent
+        shouldHoldContent={false}
+        isViewCardsPage
+        isMindMapPage={false}
+        isInlineStudyPage={false}
+        isStudyPage={false}
+        isQuestionPage={false}
+        isConceptScope={false}
+        noteGroupCardTable={{ rows: [], unlinked_question_count: 0 }}
+        noteGroupCardTableLoading={false}
+        noteGroupCardTableError=""
+        studyCards={[]}
+        questionCards={[]}
+        concepts={[]}
+        canEditCurrentCards={false}
+        canUseProtectedActions={false}
+        editingStudyCardId=""
+        editingStudyCard={{ title: "", content: "" }}
+        editingQuestionCardId=""
+        editingQuestionCard={{
+          type: "mcq",
+          prompt: "",
+          optionsText: "",
+          correctIndicesText: "",
+          refs: []
+        }}
+        classes={classes}
+        handleBackToOverview={vi.fn()}
+        handleEditStudyCard={vi.fn()}
+        setEditingStudyCard={vi.fn()}
+        handleSaveStudyCard={vi.fn()}
+        setEditingStudyCardId={vi.fn()}
+        handleDeleteStudyCard={vi.fn()}
+        handleEditQuestionCard={vi.fn()}
+        setEditingQuestionCard={vi.fn()}
+        handleSaveQuestionCard={vi.fn()}
+        setEditingQuestionCardId={vi.fn()}
+        handleDeleteQuestionCard={vi.fn()}
+      />
+    );
+
+    expect(html).toContain("← Back");
+    expect(html).not.toContain("Overview");
+  });
+
   test("Concept Mind Map route renders only Mind Map content", () => {
     const html = renderToStaticMarkup(
       <ConceptScopeContent

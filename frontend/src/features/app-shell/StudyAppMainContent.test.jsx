@@ -100,6 +100,7 @@ describe("StudyAppMainContent", () => {
     );
 
     expect(html).toContain("Module Mind Map only");
+    expect(html).not.toContain("Module overview");
     expect(html).not.toContain("Question timeline");
     expect(html).not.toContain("Note groups");
     expect(html).toContain("scope-interaction-dock");
@@ -194,7 +195,7 @@ describe("StudyAppMainContent", () => {
     expect(ModuleHomePage).not.toHaveBeenCalled();
   });
 
-  test("marks Mind Map as the selected dock action on Module overview routes", () => {
+  test("marks Mind Map as the selected dock action on Module default routes", () => {
     const html = renderToStaticMarkup(
       <StudyAppMainContent
         model={{
