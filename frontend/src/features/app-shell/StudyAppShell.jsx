@@ -291,42 +291,6 @@ function StudyAppShell({ routePageModels }) {
     }
     throw new Error("Job timed out");
   };
-  const {
-    handleAutoCreateNoteGroup,
-    handleCheckSource,
-    handleConfirmDuplicateSource,
-    handleCreateModuleFromWizard,
-    handleCreateSubjectFromWizard,
-    handleDeleteSubject,
-    handleModuleWizardSend,
-    handleOpenModuleWizard,
-    handleOpenSubjectWizard,
-    handleReadingModeChange,
-    handleReadingNextStudyCard,
-    handleReadingPreviousStudyCard,
-    handleReadingSourceRangeNext,
-    handleReadingSourceRangePrevious,
-    handleReadingTitleClick,
-    handleReadingToggleMode,
-    handleReadingUnpin,
-    handleReadingViewInClean,
-    handleSaveSubjectMetadata,
-    handleScrollNavToCard,
-    handleSelectModule,
-    handleSelectNoteGroup,
-    handleSelectSubject,
-    handleSelectTopic,
-    handleSignIn,
-    handleSignOut,
-    handleStartAutoNoteGroup,
-    handleSubjectUpdated,
-    handleSubjectWizardSend,
-    handleUniqueIdChange,
-    handleUseGeneratedUniqueId,
-    navigateToNoteGroup,
-    navigateToTopic,
-    openSubjectMetadataModal
-  } = useStudyAppWorkflowActions({ activeSourceRangeIndex, attachConcepts, auth, authEmail, authSubmitting, autoAdditionalInstructions, autoCreateNoteGroup, autoRawText, canCreateSubjects, canDeleteSubject, canMaintainSubject, canManageSelectedSubject, canUseProtectedActions, checkNoteGroupSource, conceptPath, countWords, createConcept, createModule, createNoteGroupPath, createSubject, deleteSubject, detachConcept, generateUniqueId, getLocalMailpitUrl, getModuleAdditionalInstructions, getNoteGroup, handleBreadcrumbModule, isQuestionPage, isStudyPage, isViewCardsPage, moduleChipDescription, moduleChipLabel, modulePath, moduleWizardCreating, moduleWizardGoal, moduleWizardInput, moduleWizardLoading, moduleWizardMessages, moduleWizardScope, moduleWizardTitle, modules, navigate, newSubjectDescription, newSubjectTitle, noteGroupNeedsReviewRegenerating, noteGroupPath, noteGroupSource, noteGroups, pollJob, readingContentRef, readingHoverCardId, readingMode, readingPinnedCardId, refreshModuleGeneratedData: (...args) => refreshModuleGeneratedDataRef.current(...args), refreshModuleGenerationWorkflowSnapshot: (...args) => refreshModuleGenerationWorkflowSnapshotRef.current(...args), regenerateNoteGroupNeedsReviewKnowledgeNodes, requestConfirm, routePanel, selectedModule: selectedModuleForActions, selectedModuleCode: selectedModuleCodeForActions, selectedModuleId, selectedNoteGroup: selectedNoteGroupForActions, selectedNoteGroupId, selectedNoteGroupIdRef, selectedSubject, selectedSubjectCode: selectedSubjectCodeForActions, selectedSubjectId, selectedTopic: selectedTopicForActions, selectedTopicId, sendModuleIntentChat, sendSubjectIntentChat, setActiveSourceRangeIndex, setAuthMessage, setAuthSubmitting, setAuthUiError, setAutoAdditionalInstructions, setAutoCreateError, setAutoCreateLoading, setAutoRawText, setChipFilterIds, setCurrentUserProfile, setEditingSubjectId, setIsAdminPanelOpen, setIsChatOpen, setIsMetadataOpen, setIsModuleMetadataOpen, setIsModuleWizardOpen, setIsSubjectManagementOpen, setIsSubjectMetadataOpen, setIsSubjectWizardOpen, setMetadataError, setMetadataSaving, setMindMapRefreshToken, setModuleChipDescription, setModuleChipLabel, setModuleWizardCreating, setModuleWizardError, setModuleWizardGoal, setModuleWizardInput, setModuleWizardLoading, setModuleWizardMessages, setModuleWizardScope, setModuleWizardTitle, setModules, setNewSubjectDescription, setNewSubjectTitle, setNoteGroupMode, setNoteGroupNeedsReviewRegenerating, setNoteGroupSearch, setNoteGroupSource, setNoteGroups, setReadingHoverCardId, setReadingMode, setReadingPinnedCardId, setReviewSummary, setSelectedModuleId, setSelectedNoteGroupId, setSelectedSubjectId, setSelectedTopicId, setSidebarError, setSidebarScope, setSourceCheckError, setSourceChecked, setSourceChecking, setSourceConfirmed, setSourceDuplicateCount, setSourceDuplicates, setSubjectGoalDraft, setSubjectMetadataError, setSubjectMetadataSaving, setSubjectScopeDraft, setSubjectTitleDraft, setSubjectWizardCreating, setSubjectWizardError, setSubjectWizardGoal, setSubjectWizardInput, setSubjectWizardLoading, setSubjectWizardMessages, setSubjectWizardScope, setSubjectWizardTitle, setSubjects, setTopicChips, sourceConfirmed, subjectGoalDraft, subjectPath, subjectScopeDraft, subjectTitleDraft, subjectWizardCreating, subjectWizardGoal, subjectWizardInput, subjectWizardLoading, subjectWizardMessages, subjectWizardScope, subjectWizardTitle, subjects, toast, topicChips, updateSubject });
   const handleBreadcrumbHome = () => {
     setSelectedSubjectId("");
     setSelectedModuleId("");
@@ -547,6 +511,42 @@ function StudyAppShell({ routePageModels }) {
   });
   refreshModuleGeneratedDataRef.current = refreshModuleGeneratedData;
   refreshModuleGenerationWorkflowSnapshotRef.current = refreshModuleGenerationWorkflowSnapshot;
+  const {
+    handleAutoCreateNoteGroup,
+    handleCheckSource,
+    handleConfirmDuplicateSource,
+    handleCreateModuleFromWizard,
+    handleCreateSubjectFromWizard,
+    handleDeleteSubject,
+    handleModuleWizardSend,
+    handleOpenModuleWizard,
+    handleOpenSubjectWizard,
+    handleReadingModeChange,
+    handleReadingNextStudyCard,
+    handleReadingPreviousStudyCard,
+    handleReadingSourceRangeNext,
+    handleReadingSourceRangePrevious,
+    handleReadingTitleClick,
+    handleReadingToggleMode,
+    handleReadingUnpin,
+    handleReadingViewInClean,
+    handleSaveSubjectMetadata,
+    handleScrollNavToCard,
+    handleSelectModule,
+    handleSelectNoteGroup,
+    handleSelectSubject,
+    handleSelectTopic,
+    handleSignIn,
+    handleSignOut,
+    handleStartAutoNoteGroup,
+    handleSubjectUpdated,
+    handleSubjectWizardSend,
+    handleUniqueIdChange,
+    handleUseGeneratedUniqueId,
+    navigateToNoteGroup,
+    navigateToTopic,
+    openSubjectMetadataModal
+  } = useStudyAppWorkflowActions({ activeSourceRangeIndex, attachConcepts, auth, authEmail, authSubmitting, autoAdditionalInstructions, autoCreateNoteGroup, autoRawText, canCreateSubjects, canDeleteSubject, canMaintainSubject, canManageSelectedSubject, canUseProtectedActions, checkNoteGroupSource, conceptPath, countWords, createConcept, createModule, createNoteGroupPath, createSubject, deleteSubject, detachConcept, generateUniqueId, getLocalMailpitUrl, getModuleAdditionalInstructions, getNoteGroup, handleBreadcrumbModule, isQuestionPage, isStudyPage, isViewCardsPage, moduleChipDescription, moduleChipLabel, modulePath, moduleWizardCreating, moduleWizardGoal, moduleWizardInput, moduleWizardLoading, moduleWizardMessages, moduleWizardScope, moduleWizardTitle, modules, navigate, newSubjectDescription, newSubjectTitle, noteGroupNeedsReviewRegenerating, noteGroupPath, noteGroupSource, noteGroups, pollJob, readingContentRef, readingHoverCardId, readingMode, readingPinnedCardId, refreshModuleGeneratedData: (...args) => refreshModuleGeneratedDataRef.current(...args), refreshModuleGenerationWorkflowSnapshot: (...args) => refreshModuleGenerationWorkflowSnapshotRef.current(...args), regenerateNoteGroupNeedsReviewKnowledgeNodes, requestConfirm, routePanel, selectedModule: selectedModuleForActions, selectedModuleCode: selectedModuleCodeForActions, selectedModuleId, selectedNoteGroup: selectedNoteGroupForActions, selectedNoteGroupId, selectedNoteGroupIdRef, selectedSubject, selectedSubjectCode: selectedSubjectCodeForActions, selectedSubjectId, selectedTopic: selectedTopicForActions, selectedTopicId, sendModuleIntentChat, sendSubjectIntentChat, setActiveSourceRangeIndex, setAuthMessage, setAuthSubmitting, setAuthUiError, setAutoAdditionalInstructions, setAutoCreateError, setAutoCreateLoading, setAutoRawText, setChipFilterIds, setCurrentUserProfile, setEditingSubjectId, setIsAdminPanelOpen, setIsChatOpen, setIsMetadataOpen, setIsModuleMetadataOpen, setIsModuleWizardOpen, setIsSubjectManagementOpen, setIsSubjectMetadataOpen, setIsSubjectWizardOpen, setMetadataError, setMetadataSaving, setMindMapRefreshToken, setModuleChipDescription, setModuleChipLabel, setModuleWizardCreating, setModuleWizardError, setModuleWizardGoal, setModuleWizardInput, setModuleWizardLoading, setModuleWizardMessages, setModuleWizardScope, setModuleWizardTitle, setModules, setNewSubjectDescription, setNewSubjectTitle, setNoteGroupMode, setNoteGroupNeedsReviewRegenerating, setNoteGroupSearch, setNoteGroupSource, setNoteGroups, setReadingHoverCardId, setReadingMode, setReadingPinnedCardId, setReviewSummary, setSelectedModuleId, setSelectedNoteGroupId, setSelectedSubjectId, setSelectedTopicId, setSidebarError, setSidebarScope, setSourceCheckError, setSourceChecked, setSourceChecking, setSourceConfirmed, setSourceDuplicateCount, setSourceDuplicates, setSubjectGoalDraft, setSubjectMetadataError, setSubjectMetadataSaving, setSubjectScopeDraft, setSubjectTitleDraft, setSubjectWizardCreating, setSubjectWizardError, setSubjectWizardGoal, setSubjectWizardInput, setSubjectWizardLoading, setSubjectWizardMessages, setSubjectWizardScope, setSubjectWizardTitle, setSubjects, setTopicChips, sourceConfirmed, studyNoteSections, subjectGoalDraft, subjectPath, subjectScopeDraft, subjectTitleDraft, subjectWizardCreating, subjectWizardGoal, subjectWizardInput, subjectWizardLoading, subjectWizardMessages, subjectWizardScope, subjectWizardTitle, subjects, toast, topicChips, updateSubject });
   const { cancelReviewDelete, closeQuestionFocus, confirmReviewDelete, endReview, executeReviewDelete, handleBackToReviewChat, handleReviewChatKeyDown, handleSendReviewChat, nextReviewCard, openQuestionFocus, openReviewStudyCard, requestReviewDelete, startReview, submitReviewAnswer, toggleReviewAnswer, toggleReviewExplanation } = useReviewWorkflowActions({ buildReviewCard, canUseProtectedActions, currentReviewCard, deleteQuestionCard, formatAnswerLabels, getStudyCard, listConceptReviewQuestionCards, listModuleReviewQuestionCards, listReviewQuestionCards, requestConfirm, reviewAnswer, reviewChatCardCache, reviewChatInput, reviewChatLoading, reviewChatMessages, reviewCount, reviewDeleteLoading, reviewFeedback, reviewIndex, reviewMode, reviewNoteGroupId, reviewQuestionCard, reviewQueue, reviewScope, reviewStartTime, reviewStats, selectedModuleId, selectedNoteGroupId, selectedTopicId, sendChat, setFocusQuestionCardId, setIsQuestionFocusOpen, setIsReviewing, setQuestionCards, setReviewAnswer, setReviewChatCardCache, setReviewChatCardError, setReviewChatCardId, setReviewChatCardLoading, setReviewChatError, setReviewChatInput, setReviewChatLoading, setReviewChatMessages, setReviewChatView, setReviewDeleteLoading, setReviewDeleteStep, setReviewError, setReviewExplanationOpen, setReviewFeedback, setReviewIndex, setReviewMode, setReviewQueue, setReviewRefreshToken, setReviewScope, setReviewStartTime, setReviewStats, setReviewSummary });
   nextReviewCardRef.current = nextReviewCard; submitReviewAnswerRef.current = submitReviewAnswer; toggleReviewAnswerRef.current = toggleReviewAnswer;
   const {
