@@ -8,6 +8,19 @@ const routeIdsFor = (pathname) =>
 
 const leafRouteIdFor = (pathname) => routeIdsFor(pathname).at(-1);
 
+const findRouteById = (routes, id) => {
+  for (const route of routes) {
+    if (route.id === id) {
+      return route;
+    }
+    const childMatch = route.children ? findRouteById(route.children, id) : null;
+    if (childMatch) {
+      return childMatch;
+    }
+  }
+  return null;
+};
+
 describe("app route tree", () => {
   test.each([
     ["/", "subject-index"],
@@ -69,5 +82,12 @@ describe("app route tree", () => {
       "note-group-layout",
       "note-group-view-cards"
     ]);
+  });
+
+  test("mounts the app shell renderer at the Module layout boundary", () => {
+    const renderAppShell = () => null;
+    const moduleRoute = findRouteById(createAppRouteObjects(renderAppShell), "module-layout");
+
+    expect(moduleRoute?.element.props.renderAppShell).toBe(renderAppShell);
   });
 });

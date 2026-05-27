@@ -1,6 +1,7 @@
 import { Outlet } from "react-router-dom";
 
 import { AppRouteContextProvider } from "./routeContext";
+import { ModuleWorkspacePage } from "./pages";
 
 export function AppRouteRootLayout() {
   return (
@@ -18,10 +19,10 @@ export function SubjectLayout() {
   );
 }
 
-export function ModuleLayout() {
+export function ModuleLayout({ renderAppShell }) {
   return (
     <AppRouteContextProvider scope="module">
-      <Outlet />
+      {renderAppShell ? <ModuleWorkspacePage renderAppShell={renderAppShell} /> : <Outlet />}
     </AppRouteContextProvider>
   );
 }
