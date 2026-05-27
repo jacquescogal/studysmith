@@ -9,21 +9,25 @@ export const moduleMindMapPath = (subjectCode, moduleCode) =>
 export const createNoteGroupPath = (subjectCode, moduleCode) =>
   `/app/subject/${subjectCode}/module/${moduleCode}/create-note-group`;
 
-export const noteGroupPath = (subjectCode, moduleCode, noteGroupCode, panel = "overview") => {
+export const noteGroupPath = (subjectCode, moduleCode, noteGroupCode, panel = "mind-map") => {
   const basePath = `/app/subject/${subjectCode}/module/${moduleCode}/note-groups/${noteGroupCode}`;
-  return panel && panel !== "overview" ? `${basePath}/${panel}` : basePath;
+  const normalizedPanel = panel === "overview" ? "mind-map" : panel;
+  return normalizedPanel ? `${basePath}/${normalizedPanel}` : basePath;
 };
 
 export const noteGroupMindMapPath = (subjectCode, moduleCode, noteGroupCode) =>
   noteGroupPath(subjectCode, moduleCode, noteGroupCode, "mind-map");
 
-export const conceptPath = (subjectCode, moduleCode, conceptCode, panel = "overview") => {
+export const conceptPath = (subjectCode, moduleCode, conceptCode, panel = "mind-map") => {
   const basePath = `/app/subject/${subjectCode}/module/${moduleCode}/concepts/${conceptCode}`;
-  return panel && panel !== "overview" ? `${basePath}/${panel}` : basePath;
+  const normalizedPanel = panel === "overview" ? "mind-map" : panel;
+  return normalizedPanel ? `${basePath}/${normalizedPanel}` : basePath;
 };
 
 export const topicPath = (subjectCode, moduleCode, topicCode, panel = "overview") =>
   conceptPath(subjectCode, moduleCode, topicCode, panel);
+
+const normalizePanel = (panel = "") => (!panel || panel === "overview" ? "mind-map" : panel);
 
 export function matchAppRoute(pathname) {
   const subjectPage = pathname.match(/^\/app\/subject\/([a-zA-Z0-9_-]+)$/);
@@ -46,6 +50,8 @@ export function matchAppRoute(pathname) {
     /^\/app\/subject\/([a-zA-Z0-9_-]+)\/module\/([a-zA-Z0-9_-]+)\/topics\/([a-zA-Z0-9_-]+)(?:\/(overview|view-cards|study-cards|question-cards))?$/
   );
   const noteGroupMindMap = noteGroup?.[4] === "mind-map" ? noteGroup : null;
+  const matchedScopeRoute = modulePage || noteGroup || topic;
+  const matchedScopePanel = noteGroup?.[4] || topic?.[4] || (modulePage ? "mind-map" : "");
 
   return {
     subjectPage,
@@ -74,7 +80,11 @@ export function matchAppRoute(pathname) {
     noteGroupCode: noteGroup?.[3] || "",
     conceptCode: concept?.[3] || topic?.[3] || "",
     topicCode: concept?.[3] || topic?.[3] || "",
-    panel: moduleMindMap ? "mind-map" : noteGroup?.[4] || topic?.[4] || "",
+    panel: moduleMindMap
+      ? "mind-map"
+      : matchedScopeRoute
+        ? normalizePanel(matchedScopePanel)
+        : "",
     isCreateNoteGroup: Boolean(createNoteGroup)
   };
 }
