@@ -264,9 +264,6 @@ export function StudyScopeContent({
     return (
       <>
         <section className="flex flex-wrap items-start gap-3">
-          <button className="back-button" type="button" onClick={handleBackToOverview}>
-            &larr; Back
-          </button>
           <div>
             <h2>View Cards</h2>
             <p className={classes.mutedText}>

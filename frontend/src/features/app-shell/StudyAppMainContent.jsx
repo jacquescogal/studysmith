@@ -491,9 +491,6 @@ export function StudyAppMainContent({ model }) {
                   isViewCardsPage ? (
                     <>
                       <section className="flex flex-wrap items-start gap-3">
-                        <button className="back-button" type="button" onClick={() => navigate(modulePath(selectedSubjectCode, selectedModuleCode))}>
-                          &larr; Back
-                        </button>
                         <div>
                           <h2>View Cards</h2>
                           <p className={mutedTextClass}>Study Cards with their linked Question Cards across this Module.</p>

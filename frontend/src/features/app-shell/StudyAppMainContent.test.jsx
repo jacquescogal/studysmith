@@ -352,6 +352,8 @@ describe("StudyAppMainContent", () => {
 
     expect(html).toMatch(/data-variant="outline"[\s\S]*?<span>Mind Map<\/span>/);
     expect(html).toMatch(/data-variant="default"[\s\S]*?<span>View Cards<\/span>/);
+    expect(html).toContain("<h2>View Cards</h2>");
+    expect(html).not.toContain("← Back");
   });
 
   test("renders scope-specific dock settings buttons", () => {
