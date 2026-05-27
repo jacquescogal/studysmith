@@ -2,7 +2,7 @@ import { useConceptPageModel } from "@/features/concepts/useConceptPageModel";
 import { useModulePageModel } from "@/features/modules/useModulePageModel";
 import { useNoteGroupPageModel } from "@/features/note-groups/useNoteGroupPageModel";
 
-function useRoutePageModels() {
+export function useRoutePageModels() {
   return {
     modulePageModel: useModulePageModel(),
     noteGroupPageModel: useNoteGroupPageModel(),
@@ -13,6 +13,10 @@ function useRoutePageModels() {
 function AppShellRoutePage({ renderAppShell }) {
   const routePageModels = useRoutePageModels();
   return renderAppShell({ routePageModels });
+}
+
+export function ModuleWorkspacePage(props) {
+  return <AppShellRoutePage {...props} />;
 }
 
 export function SubjectIndexPage(props) {

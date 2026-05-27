@@ -79,7 +79,7 @@ export function createAppRouteObjects(renderAppShell = defaultRenderAppShell) {
             {
               path: "module/:moduleCode",
               id: "module-layout",
-              element: <ModuleLayout />,
+              element: <ModuleLayout renderAppShell={renderAppShell} />,
               children: [
                 {
                   index: true,
