@@ -268,7 +268,8 @@ export function StudyAppMainContent({ model }) {
   });
   const currentPanel = routePanel || (selectedNoteGroupId || selectedTopicId ? "overview" : "");
   const isExplicitDockRoute = Boolean(isViewCardsPage || isInlineStudyPage || isStudyPage || isQuestionPage);
-  const isMindMapSelected = currentPanel === "mind-map" || (!isExplicitDockRoute && (!currentPanel || currentPanel === "overview"));
+  const isMindMapPage = currentPanel === "mind-map" || (!isExplicitDockRoute && (!currentPanel || currentPanel === "overview"));
+  const isMindMapSelected = isMindMapPage;
   const settingsDisabled = !canManageSelectedSubject || !canUseProtectedActions || isReviewOverlayVisible;
   const moduleMindMapProps = {
     moduleTitle: selectedModule?.title,
@@ -539,6 +540,7 @@ export function StudyAppMainContent({ model }) {
                     handleRetryAutoJob={handleRetryAutoJob}
                     handleDeleteAutoJob={handleDeleteAutoJob}
                     isViewCardsPage={isViewCardsPage}
+                    isMindMapPage={isMindMapPage}
                     isInlineStudyPage={isInlineStudyPage}
                     isStudyPage={isStudyPage}
                     isQuestionPage={isQuestionPage}
