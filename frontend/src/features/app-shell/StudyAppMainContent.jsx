@@ -5,12 +5,14 @@ import { Button } from "@/components/ui/button";
 import { AppShell } from "@/components/layout/AppShell";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { SectionNav } from "@/components/layout/SectionNav";
+import { ScopeInteractionDock } from "@/components/layout/ScopeInteractionDock";
 import { ConfirmActionDialog } from "@/components/common/ConfirmActionDialog";
 import { LegacyDialog } from "@/components/common/LegacyDialog";
 import { ModuleIndexPage } from "@/features/modules/ModuleIndexPage";
 import { ModuleHomePage } from "@/features/modules/ModuleHomePage";
 import { AdminPanel } from "@/features/admin/AdminPanel";
 import { NoteGroupCreate } from "@/features/note-groups/NoteGroupCreate";
+import { NoteGroupViewCards } from "@/features/note-groups/NoteGroupViewCards";
 import { ReadingDialog } from "@/features/reading/ReadingDialog";
 import { ReviewDialog } from "@/features/review/ReviewDialog";
 import { SubjectIndexPage as SubjectIndexRouteContent } from "@/features/subjects/SubjectIndexPage";
@@ -20,6 +22,7 @@ import { TutorChatDialog } from "@/features/chat/TutorChatDialog";
 import { appShellClasses, generationWorkflowStageLabel, generationWorkflowStatusLabel, generationWorkflowTitle, selectStyles } from "@/features/app-shell/appShellUi";
 import { countWords, formatCreatedAt, getNoteGroupStatusMeta } from "@/lib/format";
 import { renderCleanedMarkdown, renderMarkdownBlocks } from "@/lib/text-rendering";
+import { conceptPath, moduleMindMapPath, modulePath, moduleViewCardsPath, noteGroupMindMapPath, noteGroupPath } from "@/lib/routes";
 
 const {
   panel: panelClass,
@@ -37,6 +40,7 @@ const {
 
 export function StudyAppMainContent({ model }) {
   const {
+    activeSourceRangeIndex,
     authActions,
     autoAdditionalInstructions,
     autoCreateError,
@@ -62,6 +66,7 @@ export function StudyAppMainContent({ model }) {
     editingQuestionCardId,
     editingStudyCard,
     editingStudyCardId,
+    effectiveCleanedText,
     filteredStudyCards,
     generationWorkflowsByNoteGroupId,
     handleAutoCreateNoteGroup,
@@ -90,6 +95,11 @@ export function StudyAppMainContent({ model }) {
     handleOpenMindMapTopic,
     handleOpenModuleWizard,
     handleOpenSubjectWizard,
+    handleReadingModeChange,
+    handleReadingSourceRangeNext,
+    handleReadingSourceRangePrevious,
+    handleReadingUnpin,
+    handleReadingViewInClean,
     handleRegenerateModuleNeedsReviewKnowledgeNodes,
     handleRegenerateNeedsReviewKnowledgeNodes,
     handleRegenerateTopicKnowledgeNodes,
@@ -108,6 +118,7 @@ export function StudyAppMainContent({ model }) {
     isAdminPanelOpen,
     isGeneratingQuestions,
     isQuestionPage,
+    isInlineStudyPage,
     isReorderingNoteGroups,
     isRestoringRoute,
     isReviewOverlayVisible,
@@ -119,6 +130,9 @@ export function StudyAppMainContent({ model }) {
     masteryFilter,
     mindMapDrilldown,
     moduleDueCounts,
+    moduleCardTable,
+    moduleCardTableError,
+    moduleCardTableLoading,
     moduleGenerationWorkflow,
     moduleGenerationWorkflowConnection,
     moduleGenerationWorkflowError,
@@ -158,6 +172,8 @@ export function StudyAppMainContent({ model }) {
     openQuestionFocus,
     openStudyCreateModal,
     openSubjectMetadataModal,
+    pinnedSourceRanges,
+    pinnedStudyCard,
     pageBreadcrumbs,
     pageHeader,
     progressRange,
@@ -167,8 +183,13 @@ export function StudyAppMainContent({ model }) {
     questionJobStatus,
     questionTimeline,
     readingAvailable,
+    readingContentRef,
+    readingHighlights,
+    readingMode,
+    readingPinnedCardId,
     reviewCount,
     reviewError,
+    routePanel,
     routeRestoreError,
     sectionNavItems,
     selectedModule,
@@ -192,16 +213,19 @@ export function StudyAppMainContent({ model }) {
     setEditingStudyCardId,
     setIsAdminPanelOpen,
     setIsChatOpen,
+    setIsConceptSettingsOpen,
     setIsReadingOpen,
     setIsSubjectManagementOpen,
     setMasteryFilter,
     setProgressRange,
+    setReadingMode,
     setReviewCount,
     setTopicDescriptionDraft,
     setTopicTitleDraft,
     shouldHoldSelectedNoteGroupContent,
     sidebarContent,
     sidebarError,
+    sourceRangesByCardId,
     sourceCheckError,
     sourceChecked,
     sourceChecking,
@@ -211,6 +235,7 @@ export function StudyAppMainContent({ model }) {
     startReview,
     studyCardError,
     studyCards,
+    studyNoteSections,
     subjects,
     topicCardTableRows,
     topicChips,
@@ -226,6 +251,120 @@ export function StudyAppMainContent({ model }) {
     topicUnlinkedQuestionCount
   } = model;
   const StudyScopeRouteContent = selectedTopicId ? ConceptScopeContent : NoteGroupScopeContent;
+  const reviewCardCount = selectedTopicId
+    ? questionCards.length
+    : selectedNoteGroupId
+      ? questionCards.length
+      : moduleStats?.questionCount || 0;
+  const reviewMaxCount = Math.max(0, reviewCardCount);
+  const reviewDock = (scope) => ({
+    dueCount: selectedTopicId || selectedNoteGroupId ? noteGroupStats?.dueCount || 0 : moduleStats?.dueCount || 0,
+    count: reviewCount,
+    maxCount: reviewMaxCount,
+    disabled: !canUseProtectedActions || isReviewing,
+    onCountChange: setReviewCount,
+    onReviewDue: () => startReview("due", scope),
+    onReviewCount: () => startReview("queue", scope)
+  });
+  const currentPanel = routePanel || (selectedNoteGroupId || selectedTopicId ? "overview" : "");
+  const isExplicitDockRoute = Boolean(isViewCardsPage || isInlineStudyPage || isStudyPage || isQuestionPage);
+  const isMindMapSelected = currentPanel === "mind-map" || (!isExplicitDockRoute && (!currentPanel || currentPanel === "overview"));
+  const settingsDisabled = !canManageSelectedSubject || !canUseProtectedActions || isReviewOverlayVisible;
+  const workspaceDock = (() => {
+    if (!selectedModuleId || noteGroupMode === "auto" || shouldHoldSelectedNoteGroupContent) {
+      return null;
+    }
+    if (selectedTopicId) {
+      return (
+        <ScopeInteractionDock
+          scopeLabel="Concept"
+          actions={[
+            {
+              id: "mind-map",
+              label: "Mind Map",
+              active: isMindMapSelected,
+              onClick: () => navigate(conceptPath(selectedSubjectCode, selectedModuleCode, selectedTopicCode, "mind-map"))
+            },
+            {
+              id: "view-cards",
+              label: "View Cards",
+              active: isViewCardsPage,
+              onClick: () => navigate(conceptPath(selectedSubjectCode, selectedModuleCode, selectedTopicCode, "view-cards"))
+            }
+          ]}
+          settings={{
+            label: "Concept settings",
+            onClick: () => setIsConceptSettingsOpen?.(true),
+            disabled: settingsDisabled,
+            disabledReason: canUseProtectedActions ? "Maintainer access is required to edit Concept settings." : "Sign in to edit Concept settings."
+          }}
+          review={reviewDock("topic")}
+        />
+      );
+    }
+    if (selectedNoteGroupId) {
+      return (
+        <ScopeInteractionDock
+          scopeLabel="Note Group"
+          actions={[
+            {
+              id: "mind-map",
+              label: "Mind Map",
+              active: isMindMapSelected,
+              onClick: () => navigate(noteGroupMindMapPath(selectedSubjectCode, selectedModuleCode, selectedNoteGroupCode))
+            },
+            {
+              id: "view-cards",
+              label: "View Cards",
+              active: isViewCardsPage,
+              onClick: () => navigate(noteGroupPath(selectedSubjectCode, selectedModuleCode, selectedNoteGroupCode, "view-cards"))
+            },
+            {
+              id: "study",
+              label: "Study",
+              active: isInlineStudyPage,
+              disabled: !readingAvailable,
+              disabledReason: "Study content is unavailable",
+              onClick: () => navigate(noteGroupPath(selectedSubjectCode, selectedModuleCode, selectedNoteGroupCode, "study"))
+            }
+          ]}
+          settings={{
+            label: "Note Group settings",
+            onClick: openMetadataModal,
+            disabled: settingsDisabled,
+            disabledReason: canUseProtectedActions ? "Maintainer access is required to edit Note Group settings." : "Sign in to edit Note Group settings."
+          }}
+          review={reviewDock("note-group")}
+        />
+      );
+    }
+    return (
+      <ScopeInteractionDock
+        scopeLabel="Module"
+        actions={[
+          {
+          id: "mind-map",
+          label: "Mind Map",
+          active: isMindMapSelected,
+          onClick: () => navigate(moduleMindMapPath(selectedSubjectCode, selectedModuleCode))
+          },
+          {
+            id: "view-cards",
+            label: "View Cards",
+            active: isViewCardsPage,
+            onClick: () => navigate(moduleViewCardsPath(selectedSubjectCode, selectedModuleCode))
+        }
+      ]}
+      settings={{
+        label: "Module settings",
+        onClick: openModuleMetadataModal,
+        disabled: settingsDisabled,
+        disabledReason: canUseProtectedActions ? "Maintainer access is required to edit Module settings." : "Sign in to edit Module settings."
+      }}
+      review={reviewDock("module")}
+    />
+    );
+  })();
 
   return (
     <>
@@ -242,7 +381,7 @@ export function StudyAppMainContent({ model }) {
             actions={authActions}
           />
         }
-        sectionNav={sectionNavItems.length ? <SectionNav items={sectionNavItems} /> : null}
+        sectionNav={workspaceDock || (sectionNavItems.length ? <SectionNav items={sectionNavItems} /> : null)}
       >
         <>
             {isSubjectManagementOpen && selectedSubject && canManageSelectedSubject ? (
@@ -327,7 +466,45 @@ export function StudyAppMainContent({ model }) {
             ) : (
               <>
                 {!selectedNoteGroupId && !selectedTopicId ? (
-                  <ModuleHomePage
+                  isViewCardsPage ? (
+                    <>
+                      <section className="flex flex-wrap items-start gap-3">
+                        <button className="back-button" type="button" onClick={() => navigate(modulePath(selectedSubjectCode, selectedModuleCode))}>
+                          &larr; Back
+                        </button>
+                        <div>
+                          <h2>View Cards</h2>
+                          <p className={mutedTextClass}>Study Cards with their linked Question Cards across this Module.</p>
+                        </div>
+                      </section>
+                      <NoteGroupViewCards
+                        rows={moduleCardTable?.rows || []}
+                        studyCards={[]}
+                        questionCards={[]}
+                        topicChips={topicChips}
+                        canEdit={canEditCurrentCards}
+                        showEditControls={canUseProtectedActions}
+                        editingStudyCardId={editingStudyCardId}
+                        editingStudyCard={editingStudyCard}
+                        editingQuestionCardId={editingQuestionCardId}
+                        editingQuestionCard={editingQuestionCard}
+                        unlinkedQuestionCount={moduleCardTable?.unlinked_question_count || 0}
+                        loading={moduleCardTableLoading}
+                        error={moduleCardTableError}
+                        onEditStudyCard={handleEditStudyCard}
+                        onEditingStudyCardChange={setEditingStudyCard}
+                        onSaveStudyCard={handleSaveStudyCard}
+                        onCancelStudyCardEdit={() => setEditingStudyCardId("")}
+                        onDeleteStudyCard={handleDeleteStudyCard}
+                        onEditQuestionCard={handleEditQuestionCard}
+                        onEditingQuestionCardChange={setEditingQuestionCard}
+                        onSaveQuestionCard={handleSaveQuestionCard}
+                        onCancelQuestionCardEdit={() => setEditingQuestionCardId("")}
+                        onDeleteQuestionCard={handleDeleteQuestionCard}
+                      />
+                    </>
+                  ) : (
+                    <ModuleHomePage
                     selectedModule={selectedModule}
                     moduleMindMapProps={{
                       moduleTitle: selectedModule?.title,
@@ -411,6 +588,7 @@ export function StudyAppMainContent({ model }) {
                     onRetryAutoJob={handleRetryAutoJob}
                     onNavigateToNoteGroup={navigateToNoteGroup}
                   />
+                  )
                 ) : (
                   <StudyScopeRouteContent
                     shouldHoldContent={shouldHoldSelectedNoteGroupContent}
@@ -423,6 +601,7 @@ export function StudyAppMainContent({ model }) {
                     handleRetryAutoJob={handleRetryAutoJob}
                     handleDeleteAutoJob={handleDeleteAutoJob}
                     isViewCardsPage={isViewCardsPage}
+                    isInlineStudyPage={isInlineStudyPage}
                     isStudyPage={isStudyPage}
                     isQuestionPage={isQuestionPage}
                     selectedConcept={selectedTopic}
@@ -471,6 +650,16 @@ export function StudyAppMainContent({ model }) {
                     isReviewing={isReviewing}
                     isReviewOverlayVisible={isReviewOverlayVisible}
                     readingAvailable={readingAvailable}
+                    readingMode={readingMode}
+                    activeSourceRangeIndex={activeSourceRangeIndex}
+                    effectiveCleanedText={effectiveCleanedText}
+                    readingContentRef={readingContentRef}
+                    readingHighlights={readingHighlights}
+                    readingPinnedCardId={readingPinnedCardId}
+                    sourceRangesByCardId={sourceRangesByCardId}
+                    pinnedSourceRanges={pinnedSourceRanges}
+                    pinnedStudyCard={pinnedStudyCard}
+                    studyNoteSections={studyNoteSections}
                     conceptTitleDraft={topicTitleDraft}
                     conceptDescriptionDraft={topicDescriptionDraft}
                     conceptError={topicError}
@@ -500,6 +689,7 @@ export function StudyAppMainContent({ model }) {
                     setIsChatOpen={setIsChatOpen}
                     setIsReadingOpen={setIsReadingOpen}
                     setProgressRange={setProgressRange}
+                    setReadingMode={setReadingMode}
                     setConceptTitleDraft={setTopicTitleDraft}
                     setConceptDescriptionDraft={setTopicDescriptionDraft}
                     setEditingStudyCard={setEditingStudyCard}
@@ -532,6 +722,11 @@ export function StudyAppMainContent({ model }) {
                     handleDeleteQuestionCard={handleDeleteQuestionCard}
                     openQuestionFocus={openQuestionFocus}
                     handleGenerateQuestions={handleGenerateQuestions}
+                    handleReadingModeChange={handleReadingModeChange}
+                    handleReadingSourceRangeNext={handleReadingSourceRangeNext}
+                    handleReadingSourceRangePrevious={handleReadingSourceRangePrevious}
+                    handleReadingUnpin={handleReadingUnpin}
+                    handleReadingViewInClean={handleReadingViewInClean}
                   />
                 )}
               </>
