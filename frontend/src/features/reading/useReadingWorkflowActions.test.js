@@ -118,4 +118,92 @@ describe("useReadingWorkflowActions", () => {
     expect(setActiveSourceRangeIndex).toHaveBeenCalledWith(0);
     globalThis.window = originalWindow;
   });
+
+  test("pins next and previous Study Cards by Derived Study Cards order", () => {
+    const querySelector = vi.fn(() => ({ scrollIntoView: vi.fn() }));
+    const setReadingPinnedCardId = vi.fn();
+    const setReadingHoverCardId = vi.fn();
+    const setActiveSourceRangeIndex = vi.fn();
+    const originalWindow = globalThis.window;
+    globalThis.window = immediateWindow();
+
+    const actions = useReadingWorkflowActions({
+      activeSourceRangeIndex: 0,
+      readingContentRef: { current: { querySelector } },
+      readingHoverCardId: "",
+      readingMode: "clean",
+      readingPinnedCardId: "card-2",
+      studyNoteSections: [
+        { study_card_id: "card-1" },
+        { study_card_id: "card-2" },
+        { study_card_id: "card-3" }
+      ],
+      setActiveSourceRangeIndex,
+      setReadingHoverCardId,
+      setReadingMode: vi.fn(),
+      setReadingPinnedCardId
+    });
+
+    actions.handleReadingNextStudyCard();
+    expect(setReadingPinnedCardId).toHaveBeenCalledWith("card-3");
+    expect(setReadingHoverCardId).toHaveBeenCalledWith("card-3");
+    expect(setActiveSourceRangeIndex).toHaveBeenCalledWith(0);
+    expect(querySelector).toHaveBeenCalledWith(
+      '[data-clean-card-id="card-3"][data-source-range-index="0"]'
+    );
+
+    actions.handleReadingPreviousStudyCard();
+    expect(setReadingPinnedCardId).toHaveBeenCalledWith("card-1");
+    expect(setReadingHoverCardId).toHaveBeenCalledWith("card-1");
+    globalThis.window = originalWindow;
+  });
+
+  test("wraps adjacent Study Card pinning at the ends", () => {
+    const querySelector = vi.fn(() => ({ scrollIntoView: vi.fn() }));
+    const setReadingPinnedCardId = vi.fn();
+    const originalWindow = globalThis.window;
+    globalThis.window = immediateWindow();
+
+    const actions = useReadingWorkflowActions({
+      activeSourceRangeIndex: 0,
+      readingContentRef: { current: { querySelector } },
+      readingHoverCardId: "",
+      readingMode: "clean",
+      readingPinnedCardId: "card-3",
+      studyNoteSections: [
+        { study_card_id: "card-1" },
+        { study_card_id: "card-2" },
+        { study_card_id: "card-3" }
+      ],
+      setActiveSourceRangeIndex: vi.fn(),
+      setReadingHoverCardId: vi.fn(),
+      setReadingMode: vi.fn(),
+      setReadingPinnedCardId
+    });
+
+    actions.handleReadingNextStudyCard();
+    expect(setReadingPinnedCardId).toHaveBeenCalledWith("card-1");
+    globalThis.window = originalWindow;
+  });
+
+  test("does not pin adjacent Study Cards when no Derived Study Cards are available", () => {
+    const setReadingPinnedCardId = vi.fn();
+
+    const actions = useReadingWorkflowActions({
+      activeSourceRangeIndex: 0,
+      readingContentRef: { current: { querySelector: vi.fn() } },
+      readingHoverCardId: "",
+      readingMode: "clean",
+      readingPinnedCardId: "card-3",
+      studyNoteSections: [],
+      setActiveSourceRangeIndex: vi.fn(),
+      setReadingHoverCardId: vi.fn(),
+      setReadingMode: vi.fn(),
+      setReadingPinnedCardId
+    });
+
+    actions.handleReadingNextStudyCard();
+    actions.handleReadingPreviousStudyCard();
+    expect(setReadingPinnedCardId).not.toHaveBeenCalled();
+  });
 });

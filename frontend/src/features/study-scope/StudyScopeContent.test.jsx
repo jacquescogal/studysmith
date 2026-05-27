@@ -92,12 +92,19 @@ describe("NoteGroupScopeContent inline Study route", () => {
           title: "Pinned card",
           content: "Full pinned Study Card content should be visible in a scrollable panel instead of hidden behind hover."
         }}
+        studyNoteSections={[
+          { study_card_id: "card-1", title: "Pinned card", content: "Pinned content" },
+          { study_card_id: "card-2", title: "Next card", content: "Next content" },
+          { study_card_id: "card-3", title: "Final card", content: "Final content" }
+        ]}
         readingHighlights={[
           { study_card_id: "card-1", start_index: 0, end_index: 5, kind: "related", range_index: 0 },
           { study_card_id: "card-1", start_index: 13, end_index: 19, kind: "active", range_index: 1 }
         ]}
         classes={classes}
         handleReadingModeChange={vi.fn()}
+        handleReadingPreviousStudyCard={vi.fn()}
+        handleReadingNextStudyCard={vi.fn()}
         handleReadingSourceRangePrevious={vi.fn()}
         handleReadingSourceRangeNext={vi.fn()}
         handleReadingUnpin={vi.fn()}
@@ -106,9 +113,14 @@ describe("NoteGroupScopeContent inline Study route", () => {
 
     expect(html).toContain("source-highlight related");
     expect(html).toContain("source-highlight active");
-    expect(html).toContain("Study Card 2 of 2");
+    expect(html).toContain("Study Card 1 of 3");
+    expect(html).toContain("Source range 2 of 2");
+    expect(html).toContain("aria-label=\"Pin previous Study Card\"");
+    expect(html).toContain("aria-label=\"Pin next Study Card\"");
     expect(html).toContain("Pinned card");
     expect(html).toContain("source-lookup-study-card-body");
+    expect(html).toContain('tabindex="0"');
+    expect(html).toContain('aria-label="Pinned Study Card content"');
     expect(html).toContain("Full pinned Study Card content should be visible in a scrollable panel instead of hidden behind hover.");
     expect(html).not.toContain("pinned-study-card-popover");
     expect(html).toContain("aria-label=\"Unpin Study Card\"");

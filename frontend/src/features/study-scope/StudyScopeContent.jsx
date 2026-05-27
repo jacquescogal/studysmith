@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowLeft, ArrowUp, Search, X } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Search, X } from "lucide-react";
 
 import { PageMindMapCard } from "@/features/mind-map/PageMindMapCard";
 import { MindMapPanel } from "@/features/mind-map/MindMapPanel";
@@ -178,6 +178,8 @@ export function StudyScopeContent({
   openQuestionFocus,
   handleGenerateQuestions,
   handleReadingModeChange,
+  handleReadingNextStudyCard,
+  handleReadingPreviousStudyCard,
   handleReadingSourceRangeNext,
   handleReadingSourceRangePrevious,
   handleReadingUnpin,
@@ -199,6 +201,18 @@ export function StudyScopeContent({
   }
 
   const isDefaultNonExplicitRoute = !isViewCardsPage && !isInlineStudyPage && !isStudyPage && !isQuestionPage;
+  const pinnedStudyCardOrderIndex = studyNoteSections.findIndex(
+    (section) => section.study_card_id === readingPinnedCardId
+  );
+  const pinnedStudyCardPositionLabel =
+    pinnedStudyCardOrderIndex >= 0
+      ? `Study Card ${pinnedStudyCardOrderIndex + 1} of ${studyNoteSections.length}`
+      : "Pinned Study Card";
+  const sourceRangePositionLabel = pinnedSourceRanges.length
+    ? `Source range ${Math.min(activeSourceRangeIndex + 1, pinnedSourceRanges.length)} of ${
+        pinnedSourceRanges.length
+      }`
+    : "";
 
   if (isMindMapPage || isDefaultNonExplicitRoute) {
     if (isConceptScope) {
@@ -342,9 +356,25 @@ export function StudyScopeContent({
               <div className="source-lookup-floating" aria-label="Pinned Study Card source controls">
                 <div className="source-lookup-nav">
                   <span>
-                    Study Card {Math.min(activeSourceRangeIndex + 1, pinnedSourceRanges.length)} of{" "}
-                    {pinnedSourceRanges.length}
+                    {pinnedStudyCardPositionLabel}
+                    {sourceRangePositionLabel ? (
+                      <small className="source-range-count">{sourceRangePositionLabel}</small>
+                    ) : null}
                   </span>
+                  <button
+                    type="button"
+                    aria-label="Pin previous Study Card"
+                    onClick={handleReadingPreviousStudyCard}
+                  >
+                    <ArrowLeft size={15} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Pin next Study Card"
+                    onClick={handleReadingNextStudyCard}
+                  >
+                    <ArrowRight size={15} aria-hidden="true" />
+                  </button>
                   <button
                     type="button"
                     aria-label="Previous source range"
