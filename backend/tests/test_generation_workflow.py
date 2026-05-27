@@ -1398,7 +1398,7 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
             patch.object(jobs, "generate_note_group_title_suggestions", return_value=defaults["title_suggestions"]),
             patch.object(jobs, "generate_cleaned_text_markdown", **mock_kwargs(defaults["cleaned_text"])),
             patch.object(jobs, "generate_study_cards_with_context", return_value=defaults["study_cards"]),
-            patch.object(jobs, "generate_formatted_sections", return_value=defaults["formatted_sections"]),
+            patch.object(jobs, "generate_formatted_sections", **mock_kwargs(defaults["formatted_sections"])),
             patch.object(jobs, "embed_texts", return_value=defaults["embeddings"]),
             patch.object(jobs, "generate_question_cards", **question_mock_kwargs),
             patch.object(jobs, "generate_mind_map_candidate_graph", **topic_mock_kwargs),
@@ -2019,6 +2019,8 @@ class DraftFirstAutoGenerationTests(unittest.TestCase):
             self.assertEqual(note_group.title, "Drafted title")
             self.assertEqual(note_group.cleaned_text_markdown, "Raw concept text with exact evidence.")
             self.assertIsNotNone(note_group.formatted_text)
+            self.assertEqual(note_group.formatted_sections[0]["study_card_id"], live_card.id)
+            self.assertNotIn(captured_refs[0], json.dumps(note_group.formatted_sections))
             self.assertEqual(note_group.mind_map_status, "complete")
             self.assertFalse(note_group.mind_map_stale)
             self.assertIsNotNone(note_group.mind_map_generated_at)

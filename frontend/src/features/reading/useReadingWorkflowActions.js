@@ -1,8 +1,10 @@
 export function useReadingWorkflowActions({
+  activeSourceRangeIndex = 0,
   readingContentRef,
   readingHoverCardId,
   readingMode,
   readingPinnedCardId,
+  setActiveSourceRangeIndex = () => {},
   setReadingHoverCardId,
   setReadingMode,
   setReadingPinnedCardId
@@ -18,15 +20,24 @@ export function useReadingWorkflowActions({
     }
   };
 
-  const jumpToCleanSource = (studyCardId) => {
+  const jumpToCleanSource = (studyCardId, rangeIndex = null) => {
     const container = readingContentRef.current;
     if (!container || !studyCardId) {
       return;
     }
-    const target = container.querySelector(`[data-clean-card-id="${studyCardId}"]`);
+    const target =
+      Number.isInteger(rangeIndex)
+        ? container.querySelector(
+            `[data-clean-card-id="${studyCardId}"][data-source-range-index="${rangeIndex}"]`
+          ) || container.querySelector(`[data-clean-card-id="${studyCardId}"]`)
+        : container.querySelector(`[data-clean-card-id="${studyCardId}"]`);
     if (target) {
       target.scrollIntoView({ behavior: "smooth", block: "center" });
     }
+  };
+
+  const scrollToCleanSourceRange = (studyCardId, rangeIndex) => {
+    window.setTimeout(() => jumpToCleanSource(studyCardId, rangeIndex), 0);
   };
 
   const handleReadingModeChange = (nextMode) => {
@@ -70,12 +81,41 @@ export function useReadingWorkflowActions({
     }, 0);
   };
 
-  const handleReadingViewInClean = (event, studyCardId) => {
+  const handleReadingViewInClean = (event, studyCardId, rangeIndex = 0) => {
     event.stopPropagation();
     setReadingMode("clean");
     setReadingHoverCardId(studyCardId);
     setReadingPinnedCardId(studyCardId);
-    window.setTimeout(() => jumpToCleanSource(studyCardId), 0);
+    setActiveSourceRangeIndex(rangeIndex);
+    scrollToCleanSourceRange(studyCardId, rangeIndex);
+  };
+
+  const handleReadingSourceRangeNext = (rangeCount) => {
+    if (!readingPinnedCardId || rangeCount < 1) {
+      return;
+    }
+    setActiveSourceRangeIndex((current) => {
+      const next = (current + 1) % rangeCount;
+      scrollToCleanSourceRange(readingPinnedCardId, next);
+      return next;
+    });
+  };
+
+  const handleReadingSourceRangePrevious = (rangeCount) => {
+    if (!readingPinnedCardId || rangeCount < 1) {
+      return;
+    }
+    setActiveSourceRangeIndex((current) => {
+      const next = (current - 1 + rangeCount) % rangeCount;
+      scrollToCleanSourceRange(readingPinnedCardId, next);
+      return next;
+    });
+  };
+
+  const handleReadingUnpin = () => {
+    setReadingPinnedCardId("");
+    setReadingHoverCardId("");
+    setActiveSourceRangeIndex(0);
   };
 
   const handleScrollNavToCard = (studyCardId) => {
@@ -87,8 +127,11 @@ export function useReadingWorkflowActions({
 
   return {
     handleReadingModeChange,
+    handleReadingSourceRangeNext,
+    handleReadingSourceRangePrevious,
     handleReadingTitleClick,
     handleReadingToggleMode,
+    handleReadingUnpin,
     handleReadingViewInClean,
     handleScrollNavToCard
   };

@@ -41,9 +41,6 @@ export function ModuleHomePage({
   classes,
   onChipFilterSelect,
   onResetChipFilters,
-  onOpenChat,
-  onOpenModuleMetadata,
-  onDeleteModule,
   onReviewCountChange,
   onStartReview,
   onNoteGroupDragOver,
@@ -113,33 +110,6 @@ export function ModuleHomePage({
             </div>
           </div>
         }
-        actions={
-          <>
-            <Button
-              type="button"
-              onClick={onOpenChat}
-              disabled={!canUseProtectedActions || !selectedModuleId || isReviewOverlayVisible}
-            >
-              Open chat
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={onOpenModuleMetadata}
-              disabled={!canManageSelectedSubject || !selectedModuleId || isReviewOverlayVisible}
-            >
-              Module settings
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              onClick={onDeleteModule}
-              disabled={!canManageSelectedSubject || !selectedModuleId || isReviewOverlayVisible}
-            >
-              Delete module
-            </Button>
-          </>
-        }
       />
       {moduleGenerationWorkflow?.jobs?.length ? (
         <section className={classes.panel} id="module-generation-workflow">
@@ -183,51 +153,6 @@ export function ModuleHomePage({
           </div>
         </section>
       ) : null}
-      <section className={classes.panel} id="module-review">
-        <h2>Review question cards</h2>
-        <div className="results-meta">
-          <div className="field inline">
-            <label htmlFor="module-review-count">Count</label>
-            <input
-              id="module-review-count"
-              type="number"
-              min="1"
-              max="200"
-              value={reviewCount}
-              onChange={onReviewCountChange}
-              disabled={isReviewing}
-            />
-          </div>
-          <button
-            className={classes.primaryButton}
-            type="button"
-            onClick={() => onStartReview("due", "module")}
-            disabled={!canUseProtectedActions || !selectedModuleId || isReviewing}
-          >
-            Review due
-          </button>
-          <button
-            className={classes.primaryButton}
-            type="button"
-            onClick={() => onStartReview("queue", "module")}
-            disabled={!canUseProtectedActions || !selectedModuleId || isReviewing}
-          >
-            Review next
-          </button>
-          <button
-            className={classes.outlineButton}
-            type="button"
-            onClick={() => onStartReview("all", "module")}
-            disabled={!canUseProtectedActions || !selectedModuleId || isReviewing}
-          >
-            Review all
-          </button>
-        </div>
-        {reviewError ? <p className={classes.errorText}>{reviewError}</p> : null}
-        <p className={classes.mutedText}>
-          Review sessions open in a modal so you can stay focused.
-        </p>
-      </section>
       <section className={classes.panel} id="module-timeline">
         <h2>Question timeline</h2>
         <div className="stats-grid">

@@ -2944,6 +2944,67 @@ def get_note_group_card_table(
     }
 
 
+@app.get("/modules/{module_id}/card-table", response_model=NoteGroupCardTableResponse)
+def get_module_card_table(
+    module_id: str,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(optional_user),
+):
+    require_module_study(db, current_user, module_id)
+
+    study_cards = (
+        db.query(StudyCard)
+        .join(NoteGroup, StudyCard.note_group_id == NoteGroup.id)
+        .filter(NoteGroup.module_id == module_id)
+        .order_by(NoteGroup.sort_order.asc(), StudyCard.created_at.asc())
+        .all()
+    )
+    question_cards = (
+        db.query(QuestionCard)
+        .join(NoteGroup, QuestionCard.note_group_id == NoteGroup.id)
+        .filter(NoteGroup.module_id == module_id)
+        .order_by(QuestionCard.created_at.asc())
+        .all()
+    )
+    state_by_card_id = _question_card_learning_state_map(db, question_cards, current_user)
+
+    questions_by_study_id = defaultdict(list)
+    unlinked_question_count = 0
+    for question_card in question_cards:
+        refs = _question_card_refs(question_card)
+        if not refs:
+            unlinked_question_count += 1
+            continue
+        state = state_by_card_id.get(question_card.id)
+        for study_card_id in refs:
+            questions_by_study_id[study_card_id].append(
+                {
+                    "id": question_card.id,
+                    "prompt": question_card.prompt,
+                    "mastery": None,
+                    "mastery_tier": "unknown",
+                    "success_rate": None,
+                    "median_response_time_ms": None,
+                    "reviews": state.reps if state else 0,
+                    "due_at": state.due_at if state else question_card.due_at,
+                }
+            )
+
+    return {
+        "rows": [
+            {
+                "study_card": {
+                    "id": study_card.id,
+                    "title": study_card.title,
+                },
+                "question_cards": questions_by_study_id.get(study_card.id, []),
+            }
+            for study_card in study_cards
+        ],
+        "unlinked_question_count": unlinked_question_count,
+    }
+
+
 @app.get("/study-cards/{study_card_id}", response_model=StudyCardOut)
 def get_study_card(
     study_card_id: str,

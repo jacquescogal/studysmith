@@ -104,6 +104,25 @@ The system SHALL render module, note-group, and Concept-focused mind maps with C
 - **WHEN** a user views a Concept-focused mind map
 - **THEN** the current Concept is the center scope, parent and child Concept cards use Concept behavior, Knowledge Nodes remain leaf knowledge, and Study Cards remain content artifacts
 
+### Requirement: Concept settings omit rename and description editing
+The system SHALL keep Concept settings focused on delete and regeneration actions and SHALL NOT expose Concept rename or Concept description editing from the Concept page settings workflow.
+
+#### Scenario: Concept settings actions
+- **WHEN** a user opens settings for a Concept page
+- **THEN** the settings workflow exposes delete Concept and regenerate Concept actions
+
+#### Scenario: Concept rename is not offered in settings
+- **WHEN** a user opens settings for a Concept page
+- **THEN** the settings workflow does not offer a Concept rename action
+
+#### Scenario: Concept description editing is not offered in settings
+- **WHEN** a user opens settings for a Concept page
+- **THEN** the settings workflow does not offer Concept description editing
+
+#### Scenario: Concept terminology remains canonical
+- **WHEN** Concept settings labels, confirmations, or errors render
+- **THEN** they use Concept terminology instead of Topic terminology
+
 ### Requirement: Concept sidebar directory navigation
 The system SHALL render the Concepts sidebar as a directory-style view of the module's single-parent Concept Tree when the sidebar is in Concepts mode and no Concept search is active.
 

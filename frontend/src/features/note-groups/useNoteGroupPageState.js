@@ -13,6 +13,7 @@ export function useNoteGroupPageState() {
   const [readingMode, setReadingMode] = useState("study");
   const [readingHoverCardId, setReadingHoverCardId] = useState("");
   const [readingPinnedCardId, setReadingPinnedCardId] = useState("");
+  const [activeSourceRangeIndex, setActiveSourceRangeIndex] = useState(0);
   const [progressRange, setProgressRange] = useState("30d");
   const [noteGroupNeedsReviewRegenerating, setNoteGroupNeedsReviewRegenerating] = useState(false);
   const [isReadingOpen, setIsReadingOpen] = useState(false);
@@ -70,6 +71,8 @@ export function useNoteGroupPageState() {
     setReadingHoverCardId,
     readingPinnedCardId,
     setReadingPinnedCardId,
+    activeSourceRangeIndex,
+    setActiveSourceRangeIndex,
     progressRange,
     setProgressRange,
     noteGroupNeedsReviewRegenerating,

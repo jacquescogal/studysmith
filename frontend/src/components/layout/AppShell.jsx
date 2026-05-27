@@ -17,6 +17,7 @@ export function AppShell({ sidebar, header, sectionNav, children, hasSidebar }) 
         <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
           {header}
           <div className={cn("grid gap-6", sectionNav && "xl:grid-cols-[minmax(0,1fr)_14rem]")}>
+            {sectionNav ? <div className="xl:hidden">{sectionNav}</div> : null}
             <main className="min-w-0">{children}</main>
             {sectionNav ? <div className="hidden xl:block">{sectionNav}</div> : null}
           </div>
