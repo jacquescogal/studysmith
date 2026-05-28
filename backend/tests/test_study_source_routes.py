@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -275,6 +277,24 @@ def test_module_card_table_allows_public_read_without_study_access(client):
     assert [row["study_card"]["id"] for row in payload["rows"]] == ["public-card"]
     assert payload["rows"][0]["study_card"]["title"] == "Public Front"
     assert payload["rows"][0]["question_cards"] == []
+
+
+def test_public_module_study_routes_ignore_invalid_optional_auth_token(client):
+    client.auth_user_id["id"] = None
+    auth_override = app.dependency_overrides.pop(get_auth_context)
+    try:
+        with patch(
+            "app.auth.validate_supabase_jwt",
+            side_effect=HTTPException(status_code=401, detail="Invalid authentication token"),
+        ):
+            headers = {"Authorization": "Bearer stale-token"}
+            study_response = client.get("/modules/public-module/study-sources", headers=headers)
+            card_table_response = client.get("/modules/public-module/card-table", headers=headers)
+    finally:
+        app.dependency_overrides[get_auth_context] = auth_override
+
+    assert study_response.status_code == 200
+    assert card_table_response.status_code == 200
 
 
 def test_concept_study_sources_respect_descendant_toggle_and_dedupe(client):
