@@ -214,6 +214,34 @@ describe("useReadingWorkflowActions", () => {
     globalThis.window = originalWindow;
   });
 
+  test("next Study Card navigation follows flattened visible Study Card order", () => {
+    const setReadingPinnedCardId = vi.fn();
+    const setReadingHoverCardId = vi.fn();
+    const setActiveSourceRangeIndex = vi.fn();
+    const originalWindow = globalThis.window;
+    globalThis.window = immediateWindow();
+
+    const actions = useReadingWorkflowActions({
+      readingPinnedCardId: "card-a",
+      visibleStudyCardOrder: [
+        { id: "card-a", noteGroupId: "note-1" },
+        { id: "card-b", noteGroupId: "note-2" }
+      ],
+      setReadingPinnedCardId,
+      setActiveSourceRangeIndex,
+      setReadingHoverCardId,
+      setReadingMode: vi.fn(),
+      readingContentRef: { current: null }
+    });
+
+    actions.handleReadingNextStudyCard();
+
+    expect(setReadingPinnedCardId).toHaveBeenCalledWith("card-b");
+    expect(setReadingHoverCardId).toHaveBeenCalledWith("card-b");
+    expect(setActiveSourceRangeIndex).toHaveBeenCalledWith(0);
+    globalThis.window = originalWindow;
+  });
+
   test("keeps adjacent Study Card pinning bounded at the ends", () => {
     const querySelector = vi.fn(() => ({ scrollIntoView: vi.fn() }));
     const setReadingPinnedCardId = vi.fn();

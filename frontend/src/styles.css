@@ -2051,6 +2051,17 @@ textarea {
   background: rgba(31, 44, 74, 0.05);
 }
 
+.source-lookup-nav button.source-lookup-boundary {
+  border-color: #2f69aa;
+  background: rgba(47, 105, 170, 0.12);
+  color: #1f4f82;
+}
+
+.source-lookup-nav button.source-lookup-boundary:hover {
+  background: rgba(47, 105, 170, 0.18);
+  color: #163f69;
+}
+
 .source-lookup-nav button:disabled {
   opacity: 0.42;
   background: rgba(31, 44, 74, 0.04);
