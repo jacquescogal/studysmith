@@ -45,25 +45,34 @@ The engineering work is mostly in the coordination:
 - making Tutor Chat retrieval scoped to a Module, Note Group, or Concept;
 - preserving public read access while keeping creator actions authenticated.
 
-## Screenshots To Add
+## Product Walkthrough
 
-<example image: StudySmith module page showing Note Groups, Mind Map, Review dock, and Tutor Chat entry point>
+StudySmith is built around a small set of connected workflows:
 
-<example image: Auto Workflow status showing cleaned source text, generated Study Cards, and generated Question Cards>
+![alt text](resources/module_page.png)
 
-<example image: Source Text modal with a pinned Study Card and highlighted source ranges>
+- the Module workspace organizes Note Groups, Concept maps, review state, and
+  Tutor Chat from one view;
 
-<example image: Concept Mind Map showing Concept nodes, Knowledge Nodes, and descendant Study Card counts>
+![alt text](resources/generation_page.png)
 
-<example image: Review session showing a Question Card, answer feedback, and linked Study Card context>
+- the Auto Workflow turns raw source text into cleaned text, Study Cards,
+  Question Cards, embeddings, and review-ready artifacts;
 
-### Tool-Use Demo Screenshots
+![alt text](resources/source_text_page.png)
 
-<example image: search tool use showing an exact keyword lookup returning matching source sections and Study Cards>
+- the Source Text view keeps generated Study Cards tied to their supporting
+  source ranges;
 
-<example image: semantic_search tool use showing vector retrieval of related Study Cards with source-backed references>
+![alt text](resources/concept_mind_map.png)
 
-<example image: crawl tool use showing external/source material ingestion before it becomes a Note Group>
+- Concept pages aggregate Study Cards across Note Groups for focused study and
+  review;
+
+![alt text](resources/review.png)
+
+- Tutor Chat retrieves from Study Cards, so answers can point back to the same
+  knowledge objects used for review.
 
 ## Architecture
 
@@ -106,57 +115,7 @@ Supabase Postgres
 5. The UI polls workflow state and renders generated material as it becomes
    available.
 
-<example sequence diagram: PlantUML diagram for Note Group Auto Workflow>
-
-```plantuml
-@startuml
-title StudySmith - Note Group Auto Workflow
-
-actor User
-participant "React App" as UI
-participant "FastAPI API" as API
-participant "Auto Workflow Worker" as Worker
-database "Supabase Postgres" as DB
-participant "OpenAI Responses API" as OpenAI
-database "pgvector" as Vector
-
-User -> UI: Paste raw text + Unique ID
-UI -> API: POST /modules/{module_id}/note-groups/auto
-API -> DB: Check Unique ID and create Note Group
-API -> DB: Create Job and workflow stages
-API --> UI: Job accepted
-
-loop Poll workflow
-  UI -> API: GET /modules/{module_id}/generation-workflow
-  API -> DB: Read stage status
-  API --> UI: Workflow snapshot
-end
-
-Worker -> DB: Load pending Job and Note Group
-Worker -> OpenAI: Clean source text
-OpenAI --> Worker: Cleaned Text
-Worker -> DB: Save Cleaned Text
-
-Worker -> OpenAI: Suggest title and Concepts
-OpenAI --> Worker: Title + Concept candidates
-Worker -> DB: Upsert Concepts
-
-Worker -> OpenAI: Generate Study Cards
-OpenAI --> Worker: Study Card payloads
-Worker -> DB: Save Study Cards and source ranges
-Worker -> OpenAI: Embed Study Cards
-OpenAI --> Worker: Embedding vectors
-Worker -> Vector: Upsert embeddings
-
-Worker -> OpenAI: Generate Question Cards
-OpenAI --> Worker: Question Card payloads
-Worker -> DB: Save Question Cards and FSRS defaults
-Worker -> DB: Mark Job completed
-UI -> API: Refresh Module / Note Group data
-API --> UI: Generated study experience
-
-@enduml
-```
+![alt text](resources/generation_workflow.png)
 
 ### Tutor Chat And Retrieval
 
@@ -164,84 +123,16 @@ Tutor Chat answers from Study Cards, not directly from a free-form prompt. The
 retrieval boundary defaults to the Module and can narrow to a Note Group or
 Concept.
 
-<example sequence diagram: PlantUML diagram for Tutor Chat retrieval flow>
 
-```plantuml
-@startuml
-title StudySmith - Tutor Chat Retrieval Flow
+![alt text](resources/tutor_retrieval_flow.png)
 
-actor User
-participant "React App" as UI
-participant "FastAPI API" as API
-database "Supabase Postgres" as DB
-participant "OpenAI Embeddings" as Embed
-database "pgvector" as Vector
-participant "OpenAI Chat" as Chat
+### Retrieval Flow
 
-User -> UI: Ask a question in Tutor Chat
-UI -> API: POST /chat
-API -> DB: Resolve Module / Note Group / Concept scope
-API -> Embed: Embed user question
-Embed --> API: Query vector
-API -> Vector: semantic_search within scope
-Vector --> API: Ranked Study Cards
-API -> DB: Load Study Card details and references
-API -> Chat: Answer using retrieved context only
-Chat --> API: Grounded answer + referenced Study Card IDs
-API --> UI: Answer with Study Card references
-UI --> User: Show response and linked context
+The retrieval path combines exact scope selection with semantic search over
+embedded Study Cards. This keeps chat responses and review context tied to the
+same source-backed knowledge model.
 
-@enduml
-```
-
-### Search, Semantic Search, And Crawl Tool Flow
-
-This diagram is for the portfolio demo screenshots above. It frames the expected
-tool-use story: exact search finds known terms, semantic search finds related
-knowledge, and crawl/import turns external material into a Note Group that can
-join the same workflow.
-
-<example sequence diagram: PlantUML diagram for search, semantic_search, and crawl tool flow>
-
-```plantuml
-@startuml
-title StudySmith - Tool Use Demo Flow
-
-actor User
-participant "React App" as UI
-participant "FastAPI API" as API
-participant "Tool Router" as Tools
-database "Supabase Postgres" as DB
-database "pgvector" as Vector
-participant "Crawler / Importer" as Crawl
-participant "OpenAI" as OpenAI
-
-User -> UI: Ask for an explanation or source-backed answer
-UI -> API: Submit query with selected scope
-API -> Tools: Decide retrieval tools
-
-alt Exact source lookup
-  Tools -> DB: search(keyword, scope)
-  DB --> Tools: Matching source sections and cards
-else Conceptual retrieval
-  Tools -> OpenAI: Embed query
-  OpenAI --> Tools: Query vector
-  Tools -> Vector: semantic_search(vector, scope)
-  Vector --> Tools: Related Study Cards
-else New source import
-  Tools -> Crawl: crawl(url or document)
-  Crawl --> Tools: Extracted source text
-  Tools -> DB: Create Note Group candidate
-end
-
-Tools --> API: Retrieved evidence and candidate context
-API -> OpenAI: Synthesize answer with citations/references
-OpenAI --> API: Grounded response
-API --> UI: Answer + referenced Study Cards / source sections
-UI --> User: Inspect answer, cards, and source evidence
-
-@enduml
-```
+![alt text](resources/retrieval_flow.png)
 
 ## Repository Map
 
