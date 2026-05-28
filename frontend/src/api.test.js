@@ -22,6 +22,7 @@ import {
   listSubjectSharingUsers,
   listSubjects,
   requestSubjectPublic,
+  requestCreatorRole,
   setAccessTokenProvider,
   updateAdminUserRole,
   upsertSubjectAccess
@@ -45,6 +46,17 @@ describe("admin and access API calls", () => {
     await getCurrentUser();
 
     expect(fetchMock).toHaveBeenCalledWith("/me", expect.any(Object));
+  });
+
+  test("requestCreatorRole posts current user request endpoint", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ id: "user-1" }));
+
+    await requestCreatorRole();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/me/creator-role-request",
+      expect.objectContaining({ method: "POST" })
+    );
   });
 
   test("listAdminUsers calls admin users endpoint", async () => {

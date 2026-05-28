@@ -236,6 +236,7 @@ export function AdminPanel({ subjects, selectedSubjectId, onSubjectUpdated, onCl
               <TableRow>
                 <TableHead>Email</TableHead>
                 <TableHead>Role</TableHead>
+                <TableHead>Request</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -256,11 +257,18 @@ export function AdminPanel({ subjects, selectedSubjectId, onSubjectUpdated, onCl
                       ))}
                     </select>
                   </TableCell>
+                  <TableCell>
+                    {user.creator_role_requested_at ? (
+                      <Badge variant="outline">Creator requested</Badge>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">None</span>
+                    )}
+                  </TableCell>
                 </TableRow>
               ))}
               {!users.length ? (
                 <TableRow>
-                  <TableCell colSpan={2} className="text-muted-foreground">
+                  <TableCell colSpan={3} className="text-muted-foreground">
                     No users yet.
                   </TableCell>
                 </TableRow>

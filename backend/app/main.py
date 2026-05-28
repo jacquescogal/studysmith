@@ -73,6 +73,7 @@ from app.mind_map import (
 from app.models import (
     APP_ROLE_ADMIN,
     APP_ROLE_CREATOR,
+    APP_ROLE_READER,
     APP_ROLES,
     DEFAULT_MODULE_SETTINGS,
     Job,
@@ -321,6 +322,27 @@ def _ensure_subject_access_columns(target_engine=engine) -> None:
             conn.commit()
 
 
+def _ensure_user_creator_role_request_columns(target_engine=engine) -> None:
+    backend_name = target_engine.url.get_backend_name()
+    if backend_name == "postgresql":
+        with target_engine.connect() as conn:
+            conn.execute(
+                text(
+                    "ALTER TABLE users "
+                    "ADD COLUMN IF NOT EXISTS creator_role_requested_at TIMESTAMP WITH TIME ZONE"
+                )
+            )
+            conn.commit()
+        return
+    if backend_name == "sqlite":
+        with target_engine.connect() as conn:
+            result = conn.execute(text("PRAGMA table_info(users)"))
+            columns = {row[1] for row in result}
+            if "creator_role_requested_at" not in columns:
+                conn.execute(text("ALTER TABLE users ADD COLUMN creator_role_requested_at DATETIME"))
+                conn.commit()
+
+
 def _ensure_pgvector_extension(target_engine=engine) -> None:
     if target_engine.url.get_backend_name() != "postgresql":
         return
@@ -375,6 +397,7 @@ _ensure_module_intent_columns()
 _ensure_topic_chip_description_column()
 _ensure_subject_intent_columns()
 _ensure_subject_access_columns()
+_ensure_user_creator_role_request_columns()
 
 app = FastAPI(title="Study System API")
 
@@ -389,6 +412,20 @@ app.add_middleware(
 
 @app.get("/me", response_model=UserOut)
 def get_current_user_profile(current_user: User = Depends(require_user)):
+    return current_user
+
+
+@app.post("/me/creator-role-request", response_model=UserOut)
+def request_creator_role(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    if current_user.app_role != APP_ROLE_READER:
+        raise HTTPException(status_code=400, detail="Only readers can request creator access")
+    if current_user.creator_role_requested_at is None:
+        current_user.creator_role_requested_at = datetime.utcnow()
+        db.commit()
+        db.refresh(current_user)
     return current_user
 
 
@@ -1040,6 +1077,8 @@ def update_user_role(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     user.app_role = payload.app_role
+    if payload.app_role != APP_ROLE_READER:
+        user.creator_role_requested_at = None
     db.commit()
     db.refresh(user)
     return user
