@@ -2231,9 +2231,46 @@ def delete_topic(
     return delete_concept(topic_id, db=db, current_user=current_user)
 
 
-def _topic_allowed_study_ids(db: Session, topic: TopicChip) -> list[str]:
+def _descendant_topic_ids(db: Session, topic: TopicChip) -> list[str]:
     rows = (
-        db.query(StudyCard.id)
+        db.query(TopicChip.id, TopicChip.parent_topic_id, TopicChip.sort_order, TopicChip.label)
+        .filter(TopicChip.module_id == topic.module_id)
+        .order_by(TopicChip.sort_order.asc(), TopicChip.label.asc(), TopicChip.id.asc())
+        .all()
+    )
+    children_by_parent: dict[str, list[tuple[str, int | None, str]]] = {}
+    for topic_id, parent_topic_id, sort_order, label in rows:
+        if parent_topic_id:
+            children_by_parent.setdefault(parent_topic_id, []).append((topic_id, sort_order, label))
+
+    descendants: list[str] = []
+    visited = {topic.id}
+    stack = [child_id for child_id, _sort_order, _label in reversed(children_by_parent.get(topic.id, []))]
+    while stack:
+        current_id = stack.pop()
+        if current_id in visited:
+            continue
+        visited.add(current_id)
+        descendants.append(current_id)
+        child_ids = [child_id for child_id, _sort_order, _label in children_by_parent.get(current_id, [])]
+        stack.extend(reversed(child_ids))
+    return descendants
+
+
+def _topic_scope_ids(db: Session, topic: TopicChip, include_descendants: bool = True) -> list[str]:
+    if not include_descendants:
+        return [topic.id]
+    return [topic.id, *_descendant_topic_ids(db, topic)]
+
+
+def _topic_allowed_study_ids(
+    db: Session,
+    topic: TopicChip,
+    include_descendants: bool = True,
+) -> list[str]:
+    topic_ids = _topic_scope_ids(db, topic, include_descendants=include_descendants)
+    rows = (
+        db.query(StudyCard.id, StudyCard.created_at)
         .join(NoteGroup, StudyCard.note_group_id == NoteGroup.id)
         .join(
             study_card_topic_chips,
@@ -2241,16 +2278,23 @@ def _topic_allowed_study_ids(db: Session, topic: TopicChip) -> list[str]:
         )
         .filter(
             NoteGroup.module_id == topic.module_id,
-            study_card_topic_chips.c.chip_id == topic.id,
+            study_card_topic_chips.c.chip_id.in_(topic_ids),
         )
-        .order_by(StudyCard.created_at.asc())
+        .order_by(StudyCard.created_at.asc(), StudyCard.id.asc())
         .all()
     )
-    return [row[0] for row in rows]
+    seen: set[str] = set()
+    study_ids: list[str] = []
+    for study_id, _created_at in rows:
+        if study_id in seen:
+            continue
+        seen.add(study_id)
+        study_ids.append(study_id)
+    return study_ids
 
 
 def _topic_question_cards(db: Session, topic: TopicChip) -> list[QuestionCard]:
-    allowed_study_ids = set(_topic_allowed_study_ids(db, topic))
+    allowed_study_ids = set(_topic_allowed_study_ids(db, topic, include_descendants=False))
     if not allowed_study_ids:
         return []
     cards = (
@@ -2270,35 +2314,40 @@ def _topic_question_cards(db: Session, topic: TopicChip) -> list[QuestionCard]:
 @app.get("/concepts/{concept_id}/study-cards", response_model=StudyCardList)
 def list_concept_study_cards(
     concept_id: str,
+    include_descendants: bool = Query(default=True),
     db: Session = Depends(get_db),
     current_user: User | None = Depends(optional_user),
 ):
     topic = require_topic_read(db, current_user, concept_id)
-    cards = (
-        db.query(StudyCard)
-        .join(NoteGroup, StudyCard.note_group_id == NoteGroup.id)
-        .join(
-            study_card_topic_chips,
-            StudyCard.id == study_card_topic_chips.c.study_card_id,
-        )
-        .filter(
-            NoteGroup.module_id == topic.module_id,
-            study_card_topic_chips.c.chip_id == concept_id,
-        )
-        .order_by(StudyCard.created_at.asc())
-        .distinct()
-        .all()
+    allowed_study_ids = _topic_allowed_study_ids(
+        db,
+        topic,
+        include_descendants=include_descendants,
     )
-    return {"study_cards": cards}
+    if not allowed_study_ids:
+        return {"study_cards": []}
+    cards_by_id = {
+        card.id: card
+        for card in db.query(StudyCard)
+        .filter(StudyCard.id.in_(allowed_study_ids))
+        .all()
+    }
+    return {"study_cards": [cards_by_id[study_id] for study_id in allowed_study_ids if study_id in cards_by_id]}
 
 
 @app.get("/topics/{topic_id}/study-cards", response_model=StudyCardList)
 def list_topic_study_cards(
     topic_id: str,
+    include_descendants: bool = Query(default=True),
     db: Session = Depends(get_db),
     current_user: User | None = Depends(optional_user),
 ):
-    return list_concept_study_cards(topic_id, db=db, current_user=current_user)
+    return list_concept_study_cards(
+        topic_id,
+        include_descendants=include_descendants,
+        db=db,
+        current_user=current_user,
+    )
 
 
 @app.get("/concepts/{concept_id}/question-cards", response_model=QuestionCardList)
@@ -3628,7 +3677,9 @@ def chat(
         concept = require_topic_read(db, current_user, payload.concept_id)
         if concept.module_id != module.id:
             raise HTTPException(status_code=404, detail="Concept not found")
-        concept_allowed_study_ids = set(_topic_allowed_study_ids(db, concept))
+        concept_allowed_study_ids = set(
+            _topic_allowed_study_ids(db, concept, include_descendants=False)
+        )
         if not concept_allowed_study_ids:
             return {
                 "answer": "I couldn't find that in your study cards yet.",
