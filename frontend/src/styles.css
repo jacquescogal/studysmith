@@ -1847,17 +1847,17 @@ textarea {
 .reading-section-body p {
   margin: 0 0 10px;
   line-height: 1.6;
-  color: var(--muted);
+  color: var(--ink);
 }
 
 .reading-section-body ul {
   margin: 0 0 10px;
   padding-left: 20px;
-  color: var(--muted);
+  color: var(--ink);
 }
 
 .clean-source {
-  color: var(--muted);
+  color: var(--ink);
   line-height: 1.65;
   padding: 6px 2px 24px;
 }
@@ -2045,7 +2045,7 @@ textarea {
   white-space: pre-wrap;
   font-size: 0.8rem;
   line-height: 1.45;
-  color: var(--muted);
+  color: var(--ink);
 }
 
 .review-meta {

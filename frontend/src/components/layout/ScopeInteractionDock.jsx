@@ -90,7 +90,11 @@ export function ScopeInteractionDock({
       {review ? (
         <div className="scope-dock-review">
           <div className="scope-dock-review-divider" aria-hidden="true" />
-          <div className="scope-dock-review-title">Review</div>
+          <div className="scope-dock-review-title">Review Questions</div>
+          <div className="scope-dock-review-header">
+            <span>Total</span>
+            <span className="scope-dock-count">{maxReviewCount}</span>
+          </div>
           <div className="scope-dock-review-header">
             <span>Due</span>
             <span className="scope-dock-count">{Number(review.dueCount) || 0}</span>

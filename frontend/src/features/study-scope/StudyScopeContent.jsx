@@ -334,21 +334,21 @@ export function StudyScopeContent({
           <div className="segmented-control" role="group" aria-label="Study reading mode">
             <button
               type="button"
-              className={readingMode === "clean" ? "active" : ""}
-              onClick={() =>
-                handleReadingModeChange ? handleReadingModeChange("clean") : setReadingMode("clean")
-              }
-            >
-              Source Text
-            </button>
-            <button
-              type="button"
               className={readingMode === "study" ? "active" : ""}
               onClick={() =>
                 handleReadingModeChange ? handleReadingModeChange("study") : setReadingMode("study")
               }
             >
               Derived Study Cards
+            </button>
+            <button
+              type="button"
+              className={readingMode === "clean" ? "active" : ""}
+              onClick={() =>
+                handleReadingModeChange ? handleReadingModeChange("clean") : setReadingMode("clean")
+              }
+            >
+              Source Text
             </button>
           </div>
         </div>
