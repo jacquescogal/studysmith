@@ -89,6 +89,7 @@ describe("useStudyScopeData", () => {
     expect(listConceptQuestionCards).toHaveBeenCalledWith("concept-1", {
       includeDescendants: false
     });
+    expect(getConceptStudySources).not.toHaveBeenCalled();
   });
 
   test("loads Module Study source payloads on Module Study pages", async () => {
@@ -117,6 +118,7 @@ describe("useStudyScopeData", () => {
     renderToStaticMarkup(
       React.createElement(TestComponent, {
         selectedConceptId: "concept-1",
+        isStudyPage: true,
         includeDescendantStudyCards: false,
         selectedModuleIdRef: { current: "module-1" },
         selectedSubjectIdRef: { current: "subject-1" },
@@ -135,5 +137,27 @@ describe("useStudyScopeData", () => {
     expect(lastHookResult.studySourceNoteGroups).toEqual([
       { id: "note-b", study_cards: [] }
     ]);
+  });
+
+  test("does not load Concept Study source payloads outside Study pages", () => {
+    renderToStaticMarkup(
+      React.createElement(TestComponent, {
+        selectedConceptId: "concept-1",
+        includeDescendantStudyCards: false,
+        selectedModuleIdRef: { current: "module-1" },
+        selectedSubjectIdRef: { current: "subject-1" },
+        setSelectedSubjectId: vi.fn(),
+        setSelectedModuleId: vi.fn(),
+        setRouteRestoreError: vi.fn()
+      })
+    );
+
+    expect(listConceptStudyCards).toHaveBeenCalledWith("concept-1", {
+      includeDescendants: false
+    });
+    expect(listConceptQuestionCards).toHaveBeenCalledWith("concept-1", {
+      includeDescendants: false
+    });
+    expect(getConceptStudySources).not.toHaveBeenCalled();
   });
 });
