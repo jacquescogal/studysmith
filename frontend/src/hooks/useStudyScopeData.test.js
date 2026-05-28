@@ -34,7 +34,16 @@ const apiMocks = vi.hoisted(() => ({
   getModuleStudySources: vi.fn(() =>
     Promise.resolve({ note_groups: [{ id: "note-a", study_cards: [] }] })
   ),
-  getNoteGroup: vi.fn(),
+  getNoteGroup: vi.fn(() =>
+    Promise.resolve({
+      id: "note-a",
+      title: "Alpha",
+      sort_order: 1,
+      topic_chips: [],
+      formatted_sections: [],
+      cleaned_text_markdown: "alpha source"
+    })
+  ),
   listAllModules: vi.fn(),
   listConceptQuestionCards: vi.fn(() => Promise.resolve({ question_cards: [] })),
   listConceptStudyCards: vi.fn(() => Promise.resolve({ study_cards: [] })),
@@ -139,7 +148,37 @@ describe("useStudyScopeData", () => {
     ]);
   });
 
-  test("does not load Concept Study source payloads outside Study pages", () => {
+  test("loads Note Group Study source payloads on inline Study pages", async () => {
+    renderToStaticMarkup(
+      React.createElement(TestComponent, {
+        selectedNoteGroupId: "note-a",
+        isInlineStudyPage: true,
+        selectedModuleIdRef: { current: "module-1" },
+        selectedSubjectIdRef: { current: "subject-1" },
+        setSelectedSubjectId: vi.fn(),
+        setSelectedModuleId: vi.fn(),
+        setRouteRestoreError: vi.fn()
+      })
+    );
+
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(lastHookResult.studySourceNoteGroups).toEqual([
+      {
+        id: "note-a",
+        title: "Alpha",
+        sort_order: 1,
+        cleaned_text_markdown: "alpha source",
+        formatted_sections: [],
+        study_cards: []
+      }
+    ]);
+  });
+
+  test("does not load Concept Study source payloads outside Study or inline Study pages", () => {
     renderToStaticMarkup(
       React.createElement(TestComponent, {
         selectedConceptId: "concept-1",
