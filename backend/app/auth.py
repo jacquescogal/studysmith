@@ -116,8 +116,13 @@ def get_auth_context(
     token = _bearer_token(authorization)
     if not token:
         return AuthContext(user=None)
-    claims = validate_supabase_jwt(token)
-    user = get_or_create_user_from_claims(db, claims)
+    try:
+        claims = validate_supabase_jwt(token)
+        user = get_or_create_user_from_claims(db, claims)
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            return AuthContext(user=None)
+        raise
     return AuthContext(user=user)
 
 
