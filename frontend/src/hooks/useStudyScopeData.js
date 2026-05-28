@@ -181,24 +181,26 @@ export function useStudyScopeData({
         }
       });
 
-    const sourceRequest = selectedConceptId
-      ? getConceptStudySources(selectedConceptId, conceptOptions)
-      : selectedNoteGroupId
-        ? noteGroupRequest.then((group) => ({
-            note_groups: [
-              {
-                id: group.id,
-                title: group.title,
-                sort_order: group.sort_order,
-                cleaned_text_markdown: group.cleaned_text_markdown || "",
-                formatted_sections: group.formatted_sections || [],
-                study_cards: []
-              }
-            ]
-          }))
-        : canLoadModuleStudySources
-          ? getModuleStudySources(selectedModuleId)
-          : Promise.resolve({ note_groups: [] });
+    const sourceRequest = isStudyPage
+      ? selectedConceptId
+        ? getConceptStudySources(selectedConceptId, conceptOptions)
+        : selectedNoteGroupId
+          ? noteGroupRequest.then((group) => ({
+              note_groups: [
+                {
+                  id: group.id,
+                  title: group.title,
+                  sort_order: group.sort_order,
+                  cleaned_text_markdown: group.cleaned_text_markdown || "",
+                  formatted_sections: group.formatted_sections || [],
+                  study_cards: []
+                }
+              ]
+            }))
+          : canLoadModuleStudySources
+            ? getModuleStudySources(selectedModuleId)
+            : Promise.resolve({ note_groups: [] })
+      : Promise.resolve({ note_groups: [] });
     sourceRequest
       .then((data) => {
         if (!cancelled) {
