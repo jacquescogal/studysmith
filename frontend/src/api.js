@@ -562,8 +562,17 @@ export function getTopicMindMap(topicId) {
   return getConceptMindMap(topicId);
 }
 
-export function listConceptStudyCards(conceptId) {
-  return request(`/concepts/${conceptId}/study-cards`);
+function includeDescendantsParam(options = {}) {
+  const params = new URLSearchParams();
+  if (options.includeDescendants === false) {
+    params.set("include_descendants", "false");
+  }
+  return params.toString();
+}
+
+export function listConceptStudyCards(conceptId, options = {}) {
+  const query = includeDescendantsParam(options);
+  return request(`/concepts/${conceptId}/study-cards${query ? `?${query}` : ""}`);
 }
 
 export function listTopicStudyCards(topicId) {
@@ -612,8 +621,9 @@ export function listQuestionCards(noteGroupId) {
   return request(`/note-groups/${noteGroupId}/question-cards`);
 }
 
-export function listConceptQuestionCards(conceptId) {
-  return request(`/concepts/${conceptId}/question-cards`);
+export function listConceptQuestionCards(conceptId, options = {}) {
+  const query = includeDescendantsParam(options);
+  return request(`/concepts/${conceptId}/question-cards${query ? `?${query}` : ""}`);
 }
 
 export function listTopicQuestionCards(topicId) {
@@ -666,8 +676,9 @@ export function getModuleQuestionTimeline(moduleId, chipIds = []) {
   return request(`/modules/${moduleId}/question-cards/timeline${suffix}`);
 }
 
-export function getConceptQuestionTimeline(conceptId) {
-  return request(`/concepts/${conceptId}/question-cards/timeline`);
+export function getConceptQuestionTimeline(conceptId, options = {}) {
+  const query = includeDescendantsParam(options);
+  return request(`/concepts/${conceptId}/question-cards/timeline${query ? `?${query}` : ""}`);
 }
 
 export function getTopicQuestionTimeline(topicId) {
@@ -690,10 +701,13 @@ export function listModuleReviewQuestionCards(moduleId, mode, limit) {
   return request(`/modules/${moduleId}/question-cards/review?${params.toString()}`);
 }
 
-export function listConceptReviewQuestionCards(conceptId, mode, limit) {
+export function listConceptReviewQuestionCards(conceptId, mode, limit, options = {}) {
   const params = new URLSearchParams({ mode });
   if (limit) {
     params.set("limit", String(limit));
+  }
+  if (options.includeDescendants === false) {
+    params.set("include_descendants", "false");
   }
   return request(`/concepts/${conceptId}/question-cards/review?${params.toString()}`);
 }

@@ -14,6 +14,7 @@ const emptyTimeline = {
 export function useConceptPageData({
   conceptId = "",
   questionCards = [],
+  includeDescendantStudyCards = true,
   reviewRefreshToken = 0,
   mindMapRefreshToken = 0,
   shouldHoldContent = false
@@ -71,7 +72,9 @@ export function useConceptPageData({
 
     const loadTimeline = async () => {
       try {
-        const data = await getConceptQuestionTimeline(conceptId);
+        const data = await getConceptQuestionTimeline(conceptId, {
+          includeDescendants: includeDescendantStudyCards
+        });
         if (!cancelled) {
           setQuestionTimeline(normalizeTimeline(data.timeline));
         }
@@ -86,7 +89,13 @@ export function useConceptPageData({
     return () => {
       cancelled = true;
     };
-  }, [conceptId, questionCards, reviewRefreshToken, shouldHoldContent]);
+  }, [
+    conceptId,
+    includeDescendantStudyCards,
+    questionCards,
+    reviewRefreshToken,
+    shouldHoldContent
+  ]);
 
   return {
     conceptMindMap,
