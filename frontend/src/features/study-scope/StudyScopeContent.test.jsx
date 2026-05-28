@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test, vi } from "vitest";
 
@@ -9,6 +12,24 @@ const classes = {
 };
 
 describe("NoteGroupScopeContent inline Study route", () => {
+  test("defines bounded inline Study reading layout styles", () => {
+    const css = fs.readFileSync(
+      path.resolve(process.cwd(), "src/styles.css"),
+      "utf8"
+    );
+
+    expect(css).toContain(".inline-study-panel");
+    expect(css).toContain("max-height: calc(100svh - 220px)");
+    expect(css).toContain(".inline-study-header");
+    expect(css).toContain(".inline-study-scroll");
+    expect(css).toContain("overflow-y: auto");
+    expect(css).toContain("overscroll-behavior: contain");
+    expect(css).toContain(".source-lookup-floating");
+    expect(css).toContain("margin-inline: auto");
+    expect(css).toContain(".clean-source.has-pin");
+    expect(css).toContain("padding-bottom: 240px");
+  });
+
   test("renders friendly Study mode labels and derived Study Card content", () => {
     const html = renderToStaticMarkup(
       <NoteGroupScopeContent

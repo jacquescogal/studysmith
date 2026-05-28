@@ -758,9 +758,27 @@ textarea {
   opacity: 0.55;
 }
 
+.inline-study-panel {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100svh - 220px);
+  min-height: min(680px, calc(100svh - 220px));
+  overflow: hidden;
+}
+
+.inline-study-header {
+  flex: 0 0 auto;
+}
+
 .inline-reading-content {
   margin-top: 18px;
-  max-height: none;
+}
+
+.inline-study-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 8px;
 }
 
 @media (max-width: 768px) {
@@ -1815,6 +1833,10 @@ textarea {
   padding: 6px 2px 24px;
 }
 
+.clean-source.has-pin {
+  padding-bottom: 240px;
+}
+
 .clean-source h2,
 .clean-source h3 {
   color: var(--ink);
@@ -1890,7 +1912,7 @@ textarea {
   bottom: 0;
   z-index: 6;
   width: min(420px, 100%);
-  margin-left: auto;
+  margin-inline: auto;
   display: grid;
   gap: 8px;
   padding: 10px;
