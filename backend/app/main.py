@@ -3146,20 +3146,36 @@ def get_module_card_table(
     db: Session = Depends(get_db),
     current_user: User | None = Depends(optional_user),
 ):
-    require_module_study(db, current_user, module_id)
+    module = require_module_read(db, current_user, module_id)
+    sort_nulls_last = case((NoteGroup.sort_order.is_(None), 1), else_=0)
+    note_group_filters = [NoteGroup.module_id == module_id]
+    if not can_maintain_subject(current_user, module.subject):
+        note_group_filters.append(
+            NoteGroup.generation_status.in_(READABLE_NOTE_GROUP_GENERATION_STATUSES)
+        )
 
     study_cards = (
         db.query(StudyCard)
         .join(NoteGroup, StudyCard.note_group_id == NoteGroup.id)
-        .filter(NoteGroup.module_id == module_id)
-        .order_by(NoteGroup.sort_order.asc(), StudyCard.created_at.asc())
+        .filter(*note_group_filters)
+        .order_by(
+            sort_nulls_last,
+            NoteGroup.sort_order.asc(),
+            StudyCard.created_at.asc(),
+            StudyCard.id.asc(),
+        )
         .all()
     )
     question_cards = (
         db.query(QuestionCard)
         .join(NoteGroup, QuestionCard.note_group_id == NoteGroup.id)
-        .filter(NoteGroup.module_id == module_id)
-        .order_by(QuestionCard.created_at.asc())
+        .filter(*note_group_filters)
+        .order_by(
+            sort_nulls_last,
+            NoteGroup.sort_order.asc(),
+            QuestionCard.created_at.asc(),
+            QuestionCard.id.asc(),
+        )
         .all()
     )
     state_by_card_id = _question_card_learning_state_map(db, question_cards, current_user)
