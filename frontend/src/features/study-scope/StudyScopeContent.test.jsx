@@ -29,8 +29,8 @@ describe("NoteGroupScopeContent inline Study route", () => {
     expect(css).toContain(".inline-study-scroll .clean-source.has-pin");
     expect(css).toContain("padding-bottom: 240px");
     expect(css).toContain(".source-lookup-study-card-body");
-    expect(css).toContain("height: 180px");
-    expect(css).toContain("\n  height: 180px");
+    expect(css).toContain("height: 100px");
+    expect(css).toContain("\n  height: 100px");
     expect(css).toContain("overflow-y: auto");
   });
 
