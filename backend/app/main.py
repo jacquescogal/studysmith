@@ -2306,10 +2306,18 @@ def _serialize_study_source_note_groups(
                 "sort_order": group.sort_order,
                 "cleaned_text_markdown": group.cleaned_text_markdown,
                 "formatted_sections": group.formatted_sections,
-                "study_cards": study_cards_by_note_group_id.get(group.id, []),
+                "study_cards": [
+                    {
+                        "id": card.id,
+                        "front": card.title,
+                        "back": card.content,
+                        "source_ranges": card.source_ranges,
+                        "concept_ids": sorted(topic.id for topic in card.topic_chips),
+                    }
+                    for card in study_cards_by_note_group_id.get(group.id, [])
+                ],
             }
             for group in note_groups
-            if study_cards_by_note_group_id.get(group.id)
         ]
     }
 
@@ -2344,7 +2352,7 @@ def get_module_study_sources(
     db: Session = Depends(get_db),
     current_user: User | None = Depends(optional_user),
 ):
-    module = require_module_study(db, current_user, module_id)
+    module = require_module_read(db, current_user, module_id)
     sort_nulls_last = case((NoteGroup.sort_order.is_(None), 1), else_=0)
     note_group_query = db.query(NoteGroup).filter(NoteGroup.module_id == module_id)
     if not can_maintain_subject(current_user, module.subject):
@@ -2363,7 +2371,7 @@ def get_module_study_sources(
 
     cards = (
         db.query(StudyCard)
-        .options(selectinload(StudyCard.source_ranges))
+        .options(selectinload(StudyCard.source_ranges), selectinload(StudyCard.topic_chips))
         .join(NoteGroup, StudyCard.note_group_id == NoteGroup.id)
         .filter(StudyCard.note_group_id.in_(note_group_ids), NoteGroup.module_id == module_id)
         .order_by(sort_nulls_last, NoteGroup.sort_order.asc(), StudyCard.created_at.asc(), StudyCard.id.asc())
@@ -2390,7 +2398,7 @@ def get_concept_study_sources(
     sort_nulls_last = case((NoteGroup.sort_order.is_(None), 1), else_=0)
     cards = (
         db.query(StudyCard)
-        .options(selectinload(StudyCard.source_ranges))
+        .options(selectinload(StudyCard.source_ranges), selectinload(StudyCard.topic_chips))
         .join(NoteGroup, StudyCard.note_group_id == NoteGroup.id)
         .filter(StudyCard.id.in_(allowed_study_ids), NoteGroup.module_id == topic.module_id)
     )
