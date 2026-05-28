@@ -10,6 +10,7 @@ export function useReviewWorkflowActions(ctx) {
     deleteQuestionCard,
     formatAnswerLabels,
     getStudyCard,
+    includeDescendantStudyCards = true,
     listConceptReviewQuestionCards,
     listModuleReviewQuestionCards,
     listReviewQuestionCards,
@@ -94,7 +95,8 @@ const startReview = async (mode, scope = "note-group") => {
             ? await listConceptReviewQuestionCards(
                 selectedTopicId,
                 mode,
-                mode === "queue" ? Number(reviewCount) || 10 : undefined
+                mode === "queue" ? Number(reviewCount) || 10 : undefined,
+                { includeDescendants: includeDescendantStudyCards }
               )
           : await listReviewQuestionCards(
               selectedNoteGroupId,

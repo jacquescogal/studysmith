@@ -35,6 +35,7 @@ const resolveModuleForRouteRestore = async (moduleId) => {
 export function useStudyScopeData({
   selectedNoteGroupId = "",
   selectedConceptId = "",
+  includeDescendantStudyCards = true,
   routeNoteGroupId = "",
   routeConceptId = "",
   shouldHoldContent = false,
@@ -86,6 +87,7 @@ export function useStudyScopeData({
     setQuestionCardError("");
     setQuestionJobStatus("idle");
     let cancelled = false;
+    const conceptOptions = { includeDescendants: includeDescendantStudyCards };
 
     const loadScope = async () => {
       try {
@@ -151,7 +153,7 @@ export function useStudyScopeData({
     loadScope();
 
     const studyRequest = selectedConceptId
-      ? listConceptStudyCards(selectedConceptId)
+      ? listConceptStudyCards(selectedConceptId, conceptOptions)
       : listStudyCards(selectedNoteGroupId);
     studyRequest
       .then((data) => {
@@ -166,7 +168,7 @@ export function useStudyScopeData({
       });
 
     const questionRequest = selectedConceptId
-      ? listConceptQuestionCards(selectedConceptId)
+      ? listConceptQuestionCards(selectedConceptId, conceptOptions)
       : listQuestionCards(selectedNoteGroupId);
     questionRequest
       .then((data) => {
@@ -186,6 +188,7 @@ export function useStudyScopeData({
   }, [
     routeConceptId,
     routeNoteGroupId,
+    includeDescendantStudyCards,
     selectedConceptId,
     selectedModuleIdRef,
     selectedNoteGroupId,

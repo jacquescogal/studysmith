@@ -7,10 +7,14 @@ import {
   deleteSubjectAccess,
   generateNoteGroupMindMap,
   getCurrentUser,
+  getConceptQuestionTimeline,
   getModuleMindMap,
   getNoteGroupMindMap,
   keepSubjectPrivate,
   listAdminUsers,
+  listConceptQuestionCards,
+  listConceptReviewQuestionCards,
+  listConceptStudyCards,
   listPublicSubjects,
   listPublicSubjectRequests,
   listSubjectAccess,
@@ -143,6 +147,44 @@ describe("mind map API calls", () => {
       3,
       "/note-groups/note-1/mind-map/generate",
       expect.objectContaining({ method: "POST" })
+    );
+  });
+});
+
+describe("Concept API calls", () => {
+  test("Concept card helpers can exclude descendant Concept data", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(() =>
+        Promise.resolve(jsonResponse({ study_cards: [], question_cards: [] }))
+      );
+
+    await listConceptStudyCards("concept-1", { includeDescendants: false });
+    await listConceptQuestionCards("concept-1", { includeDescendants: false });
+    await getConceptQuestionTimeline("concept-1", { includeDescendants: false });
+    await listConceptReviewQuestionCards("concept-1", "due", 10, {
+      includeDescendants: false
+    });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/concepts/concept-1/study-cards?include_descendants=false",
+      expect.any(Object)
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/concepts/concept-1/question-cards?include_descendants=false",
+      expect.any(Object)
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/concepts/concept-1/question-cards/timeline?include_descendants=false",
+      expect.any(Object)
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      "/concepts/concept-1/question-cards/review?mode=due&limit=10&include_descendants=false",
+      expect.any(Object)
     );
   });
 });
