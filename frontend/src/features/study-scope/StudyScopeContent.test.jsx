@@ -202,6 +202,9 @@ describe("NoteGroupScopeContent inline Study route", () => {
     expect(css).toMatch(
       /\.source-lookup-study-card-scroll\s*\{[^}]*overscroll-behavior:\s*contain;/s
     );
+    expect(css).toMatch(/\.clean-source\s*\{[^}]*color:\s*var\(--ink\);/s);
+    expect(css).toMatch(/\.reading-section-body p\s*\{[^}]*color:\s*var\(--ink\);/s);
+    expect(css).toMatch(/\.source-lookup-study-card-body\s*\{[^}]*color:\s*var\(--ink\);/s);
     expect(css).toMatch(/\.source-lookup-nav button:disabled\s*\{[^}]*opacity:\s*0\.42;/s);
   });
 
@@ -231,6 +234,9 @@ describe("NoteGroupScopeContent inline Study route", () => {
     expect(html).toContain(">Study</");
     expect(html).toContain("Source Text");
     expect(html).toContain("Derived Study Cards");
+    expect(html.indexOf(">Derived Study Cards</button>")).toBeLessThan(
+      html.indexOf(">Source Text</button>")
+    );
     expect(html).toContain('class="panel inline-study-panel"');
     expect(html).toContain("inline-study-header");
     expect(html).toContain("reading-content inline-reading-content inline-study-scroll");

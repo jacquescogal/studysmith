@@ -45,10 +45,13 @@ describe("ScopeInteractionDock", () => {
     expect(html).toContain(">Study</");
     expect(html).toContain("scope-dock-review-divider");
     expect(html).toContain("scope-dock-review-title");
-    expect(html).toContain(">Review</div>");
+    expect(html).toContain(">Review Questions</div>");
+    expect(html).toContain(">Total</span>");
+    expect(html).toContain(">23</span>");
     expect(html).toContain(">Due</span>");
     expect(html).toContain(">Review Due</");
     expect(html).toContain(">4</span>");
+    expect(html.indexOf(">Total</span>")).toBeLessThan(html.indexOf(">Due</span>"));
     expect(html).toContain("type=\"range\"");
     expect(html).toContain("aria-label=\"Review count\"");
     expect(html).toContain("min=\"0\"");
