@@ -20,6 +20,61 @@ const getValidSourceRanges = (sourceRangesByCardId, studyCardId) => {
   );
 };
 
+const getSourceGroupRangesByCardId = (sourceGroup) => {
+  const map = new Map();
+  (sourceGroup?.study_cards || []).forEach((card) => {
+    map.set(card.id, Array.isArray(card.source_ranges) ? card.source_ranges : []);
+  });
+  return map;
+};
+
+export const resolveSourceTextModalPayload = ({
+  activeSourceGroup,
+  activeSourceRangeIndex = 0,
+  effectiveCleanedText = "",
+  hasScopedSourceGroups = false,
+  pinnedSourceRanges = [],
+  readingAvailable = false,
+  readingHighlights = [],
+  readingPinnedCardId = "",
+  sourceRangesByCardId
+}) => {
+  const activeSourceRangesByCardId = getSourceGroupRangesByCardId(activeSourceGroup);
+  const getModalValidSourceRanges = (studyCardId) => {
+    if (!hasScopedSourceGroups) {
+      return getValidSourceRanges(sourceRangesByCardId, studyCardId);
+    }
+    const scopedRanges = getValidSourceRanges(activeSourceRangesByCardId, studyCardId);
+    if (scopedRanges.length) {
+      return scopedRanges;
+    }
+    return getValidSourceRanges(sourceRangesByCardId, studyCardId);
+  };
+  const modalEffectiveCleanedText = hasScopedSourceGroups
+    ? activeSourceGroup?.cleaned_text_markdown || ""
+    : effectiveCleanedText;
+  const modalPinnedSourceRanges = hasScopedSourceGroups
+    ? getModalValidSourceRanges(readingPinnedCardId)
+    : pinnedSourceRanges;
+  const modalReadingHighlights = hasScopedSourceGroups
+    ? readingPinnedCardId
+      ? getModalValidSourceRanges(readingPinnedCardId).map((range, index) => ({
+          ...range,
+          study_card_id: readingPinnedCardId,
+          kind: activeSourceRangeIndex === index ? "active" : "related",
+          range_index: index
+        }))
+      : []
+    : readingHighlights;
+
+  return {
+    modalEffectiveCleanedText,
+    modalPinnedSourceRanges,
+    modalReadingAvailable: readingAvailable || Boolean(modalEffectiveCleanedText),
+    modalReadingHighlights
+  };
+};
+
 function QuestionTimelinePanel({ panelClass, mutedTextClass, questionTimeline }) {
   return (
     <section className={panelClass} id="question-timeline">
@@ -355,47 +410,33 @@ export function StudyScopeContent({
     selectedNoteGroupId ||
     "";
   const activeSourceGroup = sourceGroupsById.get(resolvedSourceNoteGroupId);
-  const activeSourceRangesByCardId = useMemo(() => {
-    const map = new Map();
-    (activeSourceGroup?.study_cards || []).forEach((card) => {
-      map.set(card.id, Array.isArray(card.source_ranges) ? card.source_ranges : []);
-    });
-    return map;
-  }, [activeSourceGroup]);
-  const activeSourceText = activeSourceGroup?.cleaned_text_markdown || "";
   const hasScopedSourceGroups = studySourceNoteGroups.length > 0;
-  const modalSourceRangesByCardId = hasScopedSourceGroups
-    ? activeSourceRangesByCardId
-    : sourceRangesByCardId;
-  const modalEffectiveCleanedText = hasScopedSourceGroups
-    ? activeSourceText
-    : effectiveCleanedText;
-  const modalPinnedSourceRanges = hasScopedSourceGroups
-    ? getValidSourceRanges(modalSourceRangesByCardId, readingPinnedCardId)
-    : pinnedSourceRanges;
-  const modalReadingHighlights = useMemo(() => {
-    if (!hasScopedSourceGroups) {
-      return readingHighlights;
-    }
-    if (!readingPinnedCardId) {
-      return [];
-    }
-    return getValidSourceRanges(modalSourceRangesByCardId, readingPinnedCardId).map(
-      (range, index) => ({
-        ...range,
-        study_card_id: readingPinnedCardId,
-        kind: activeSourceRangeIndex === index ? "active" : "related",
-        range_index: index
-      })
-    );
-  }, [
+  const {
+    modalEffectiveCleanedText,
+    modalPinnedSourceRanges,
+    modalReadingAvailable,
+    modalReadingHighlights
+  } = useMemo(() => resolveSourceTextModalPayload({
+    activeSourceGroup,
     activeSourceRangeIndex,
+    effectiveCleanedText,
     hasScopedSourceGroups,
-    modalSourceRangesByCardId,
+    pinnedSourceRanges,
+    readingAvailable,
     readingHighlights,
-    readingPinnedCardId
+    readingPinnedCardId,
+    sourceRangesByCardId
+  }), [
+    activeSourceGroup,
+    activeSourceRangeIndex,
+    effectiveCleanedText,
+    hasScopedSourceGroups,
+    pinnedSourceRanges,
+    readingAvailable,
+    readingHighlights,
+    readingPinnedCardId,
+    sourceRangesByCardId
   ]);
-  const modalReadingAvailable = readingAvailable || Boolean(modalEffectiveCleanedText);
 
   if (shouldHoldContent) {
     return (

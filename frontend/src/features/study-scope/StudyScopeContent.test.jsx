@@ -4,7 +4,12 @@ import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test, vi } from "vitest";
 
-import { ConceptScopeContent, NoteGroupScopeContent, SourceTextContainer } from "./StudyScopeContent";
+import {
+  ConceptScopeContent,
+  NoteGroupScopeContent,
+  SourceTextContainer,
+  resolveSourceTextModalPayload
+} from "./StudyScopeContent";
 
 const classes = {
   panel: "panel",
@@ -321,6 +326,67 @@ describe("NoteGroupScopeContent inline Study route", () => {
     expect(html).toContain("aria-label=\"View source text for Card with source\"");
     expect(html).toContain("aria-label=\"Source text unavailable for Card without source\"");
     expect(html).toContain("disabled=\"\"");
+  });
+
+  test("Source Text modal falls back to existing ranges when scoped Note Group has no embedded Study Cards", () => {
+    const studySourceNoteGroups = [
+      {
+        id: "note-a",
+        title: "Alpha",
+        cleaned_text_markdown: "alpha source",
+        study_cards: []
+      }
+    ];
+    const fallbackRangesByCardId = new Map([
+      ["card-1", [{ start_index: 0, end_index: 5 }]]
+    ]);
+    const {
+      modalEffectiveCleanedText,
+      modalPinnedSourceRanges,
+      modalReadingAvailable,
+      modalReadingHighlights
+    } = resolveSourceTextModalPayload({
+      activeSourceGroup: studySourceNoteGroups[0],
+      activeSourceRangeIndex: 0,
+      effectiveCleanedText: "legacy source",
+      hasScopedSourceGroups: Boolean(studySourceNoteGroups.length),
+      pinnedSourceRanges: [],
+      readingAvailable: true,
+      readingHighlights: [],
+      readingPinnedCardId: "card-1",
+      sourceRangesByCardId: fallbackRangesByCardId
+    });
+
+    const html = renderToStaticMarkup(
+      <SourceTextContainer
+        activeSourceRangeIndex={0}
+        classes={classes}
+        effectiveCleanedText={modalEffectiveCleanedText}
+        hasPreviousSourceRange={false}
+        hasNextSourceRange={false}
+        noteGroupOptions={[{ value: "note-a", label: "Alpha" }]}
+        activeSourceNoteGroupId="note-a"
+        onSourceNoteGroupChange={vi.fn()}
+        readingPinnedCardId="card-1"
+        readingAvailable={modalReadingAvailable}
+        readingHighlights={modalReadingHighlights}
+        pinnedSourceRanges={modalPinnedSourceRanges}
+        pinnedStudyCard={{
+          id: "card-1",
+          note_group_id: "note-a",
+          title: "Pinned card",
+          content: "Pinned content"
+        }}
+        pinnedStudyCardPositionLabel="Study Card 1 of 1"
+        sourceRangePositionLabel={`Source range 1 of ${modalPinnedSourceRanges.length}`}
+      />
+    );
+
+    expect(html).toContain("Source range 1 of 1");
+    expect(html).toContain("source-highlight active");
+    expect(getButtonMarkup(html, "Previous source range")).toContain("disabled");
+    expect(getButtonMarkup(html, "Next source range")).toContain("disabled");
+    expect(html).toContain("alpha");
   });
 
   test("renders highlighted Source Text with wrapped controls and pinned card preview", () => {
