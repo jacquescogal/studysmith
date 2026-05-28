@@ -4,7 +4,7 @@ import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test, vi } from "vitest";
 
-import { ConceptScopeContent, NoteGroupScopeContent } from "./StudyScopeContent";
+import { ConceptScopeContent, NoteGroupScopeContent, SourceTextContainer } from "./StudyScopeContent";
 
 const classes = {
   panel: "panel",
@@ -232,11 +232,10 @@ describe("NoteGroupScopeContent inline Study route", () => {
     );
 
     expect(html).toContain(">Study</");
-    expect(html).toContain("Source Text");
+    expect(html).toContain("View Source Text");
     expect(html).toContain("Derived Study Cards");
-    expect(html.indexOf(">Derived Study Cards</button>")).toBeLessThan(
-      html.indexOf(">Source Text</button>")
-    );
+    expect(html).not.toContain("segmented-control");
+    expect(html).not.toContain("Study reading mode");
     expect(html).toContain('class="panel inline-study-panel"');
     expect(html).toContain("inline-study-header");
     expect(html).toContain("reading-content inline-reading-content inline-study-scroll");
@@ -277,17 +276,15 @@ describe("NoteGroupScopeContent inline Study route", () => {
 
   test("renders highlighted Source Text with wrapped controls and pinned card preview", () => {
     const html = renderToStaticMarkup(
-      <NoteGroupScopeContent
-        shouldHoldContent={false}
-        isViewCardsPage={false}
-        isInlineStudyPage
-        isStudyPage={false}
-        isQuestionPage={false}
+      <SourceTextContainer
         readingAvailable
-        readingMode="clean"
         effectiveCleanedText="first source\nsecond source"
         readingPinnedCardId="card-1"
         activeSourceRangeIndex={1}
+        hasPreviousStudyCard={false}
+        hasNextStudyCard
+        hasPreviousSourceRange
+        hasNextSourceRange={false}
         pinnedSourceRanges={[
           { start_index: 0, end_index: 5 },
           { start_index: 13, end_index: 19 }
@@ -297,18 +294,14 @@ describe("NoteGroupScopeContent inline Study route", () => {
           title: "Pinned card",
           content: "Full pinned Study Card content should be visible in a scrollable panel instead of hidden behind hover."
         }}
-        studyNoteSections={[
-          { title: "Section heading", content: "No card id here" },
-          { study_card_id: "card-1", title: "Pinned card", content: "Pinned content" },
-          { study_card_id: "card-2", title: "Next card", content: "Next content" },
-          { study_card_id: "card-3", title: "Final card", content: "Final content" }
-        ]}
+        pinnedStudyCardPositionLabel="Study Card 1 of 3"
+        sourceRangePositionLabel="Source range 2 of 2"
         readingHighlights={[
           { study_card_id: "card-1", start_index: 0, end_index: 5, kind: "related", range_index: 0 },
           { study_card_id: "card-1", start_index: 13, end_index: 19, kind: "active", range_index: 1 }
         ]}
         classes={classes}
-        handleReadingModeChange={vi.fn()}
+        onBackToStudyCards={vi.fn()}
         handleReadingPreviousStudyCard={vi.fn()}
         handleReadingNextStudyCard={vi.fn()}
         handleReadingSourceRangePrevious={vi.fn()}
@@ -319,9 +312,7 @@ describe("NoteGroupScopeContent inline Study route", () => {
 
     expect(html).toContain("source-highlight related");
     expect(html).toContain("source-highlight active");
-    expect(html).toContain('class="panel inline-study-panel"');
-    expect(html).toContain("inline-study-header");
-    expect(html).toContain("reading-content inline-reading-content inline-study-scroll");
+    expect(html).toContain("reading-content source-text-modal-content inline-study-scroll");
     expect(html).toContain("Study Card 1 of 3");
     expect(html).toContain("Source range 2 of 2");
     expect(html).toContain("aria-label=\"Pin previous Study Card\"");
@@ -343,17 +334,15 @@ describe("NoteGroupScopeContent inline Study route", () => {
 
   test("disables pinned navigation at the last Study Card and first source range", () => {
     const html = renderToStaticMarkup(
-      <NoteGroupScopeContent
-        shouldHoldContent={false}
-        isViewCardsPage={false}
-        isInlineStudyPage
-        isStudyPage={false}
-        isQuestionPage={false}
+      <SourceTextContainer
         readingAvailable
-        readingMode="clean"
         effectiveCleanedText="first source\nsecond source"
         readingPinnedCardId="card-3"
         activeSourceRangeIndex={0}
+        hasPreviousStudyCard
+        hasNextStudyCard={false}
+        hasPreviousSourceRange={false}
+        hasNextSourceRange
         pinnedSourceRanges={[
           { start_index: 0, end_index: 5 },
           { start_index: 13, end_index: 19 }
@@ -363,16 +352,13 @@ describe("NoteGroupScopeContent inline Study route", () => {
           title: "Final card",
           content: "Final pinned content"
         }}
-        studyNoteSections={[
-          { study_card_id: "card-1", title: "First card", content: "First content" },
-          { study_card_id: "card-2", title: "Middle card", content: "Middle content" },
-          { study_card_id: "card-3", title: "Final card", content: "Final content" }
-        ]}
+        pinnedStudyCardPositionLabel="Study Card 3 of 3"
+        sourceRangePositionLabel="Source range 1 of 2"
         readingHighlights={[
           { study_card_id: "card-3", start_index: 0, end_index: 5, kind: "active", range_index: 0 }
         ]}
         classes={classes}
-        handleReadingModeChange={vi.fn()}
+        onBackToStudyCards={vi.fn()}
         handleReadingPreviousStudyCard={vi.fn()}
         handleReadingNextStudyCard={vi.fn()}
         handleReadingSourceRangePrevious={vi.fn()}
@@ -389,31 +375,26 @@ describe("NoteGroupScopeContent inline Study route", () => {
 
   test("keeps pinned Study Card controls visible without source ranges", () => {
     const html = renderToStaticMarkup(
-      <NoteGroupScopeContent
-        shouldHoldContent={false}
-        isViewCardsPage={false}
-        isInlineStudyPage
-        isStudyPage={false}
-        isQuestionPage={false}
+      <SourceTextContainer
         readingAvailable
-        readingMode="clean"
         effectiveCleanedText="first source\nsecond source"
         readingPinnedCardId="card-2"
         activeSourceRangeIndex={0}
+        hasPreviousStudyCard
+        hasNextStudyCard
+        hasPreviousSourceRange={false}
+        hasNextSourceRange={false}
         pinnedSourceRanges={[]}
         pinnedStudyCard={{
           id: "card-2",
           title: "No source card",
           content: "This Study Card has no valid source range."
         }}
-        studyNoteSections={[
-          { study_card_id: "card-1", title: "Pinned card", content: "Pinned content" },
-          { study_card_id: "card-2", title: "No source card", content: "No source content" },
-          { study_card_id: "card-3", title: "Final card", content: "Final content" }
-        ]}
+        pinnedStudyCardPositionLabel="Study Card 2 of 3"
+        sourceRangePositionLabel=""
         readingHighlights={[]}
         classes={classes}
-        handleReadingModeChange={vi.fn()}
+        onBackToStudyCards={vi.fn()}
         handleReadingPreviousStudyCard={vi.fn()}
         handleReadingNextStudyCard={vi.fn()}
         handleReadingSourceRangePrevious={vi.fn()}
@@ -450,7 +431,8 @@ describe("NoteGroupScopeContent inline Study route", () => {
     );
 
     expect(html).toContain("Study content is unavailable for this Note Group.");
-    expect(html).toContain("Source Text");
+    expect(html).toContain("View Source Text");
+    expect(html).toContain("disabled");
     expect(html).toContain("Derived Study Cards");
   });
 });
