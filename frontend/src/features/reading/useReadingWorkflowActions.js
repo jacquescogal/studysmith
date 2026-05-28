@@ -10,6 +10,10 @@ export function useReadingWorkflowActions({
   setReadingMode,
   setReadingPinnedCardId
 }) {
+  const orderedStudyCardIds = studyNoteSections
+    .map((section) => section.study_card_id)
+    .filter(Boolean);
+
   const scrollTargetIntoReadingContainer = (target, block = "start") => {
     const container = readingContentRef.current;
     if (!container || !target) {
@@ -117,7 +121,10 @@ export function useReadingWorkflowActions({
       return;
     }
     setActiveSourceRangeIndex((current) => {
-      const next = (current + 1) % rangeCount;
+      const next = Math.min(current + 1, rangeCount - 1);
+      if (next === current) {
+        return current;
+      }
       scrollToCleanSourceRange(readingPinnedCardId, next);
       return next;
     });
@@ -128,26 +135,25 @@ export function useReadingWorkflowActions({
       return;
     }
     setActiveSourceRangeIndex((current) => {
-      const next = (current - 1 + rangeCount) % rangeCount;
+      const next = Math.max(current - 1, 0);
+      if (next === current) {
+        return current;
+      }
       scrollToCleanSourceRange(readingPinnedCardId, next);
       return next;
     });
   };
 
   const getAdjacentStudyCardId = (direction) => {
-    const orderedIds = studyNoteSections
-      .map((section) => section.study_card_id)
-      .filter(Boolean);
-    if (!orderedIds.length) {
+    if (!orderedStudyCardIds.length) {
       return "";
     }
-    const currentIndex = orderedIds.indexOf(readingPinnedCardId);
-    const baseIndex = currentIndex >= 0 ? currentIndex : 0;
-    const nextIndex =
-      direction === "previous"
-        ? (baseIndex - 1 + orderedIds.length) % orderedIds.length
-        : (baseIndex + 1) % orderedIds.length;
-    return orderedIds[nextIndex];
+    const currentIndex = orderedStudyCardIds.indexOf(readingPinnedCardId);
+    if (currentIndex < 0) {
+      return "";
+    }
+    const nextIndex = direction === "previous" ? currentIndex - 1 : currentIndex + 1;
+    return orderedStudyCardIds[nextIndex] || "";
   };
 
   const pinAdjacentStudyCard = (direction) => {
