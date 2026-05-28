@@ -71,6 +71,15 @@ def client():
             sort_order=0,
             created_at=datetime.utcnow(),
         )
+        note_empty = NoteGroup(
+            id="note-empty",
+            module_id=module.id,
+            title="Empty",
+            raw_text="empty raw",
+            cleaned_text_markdown="empty source",
+            sort_order=None,
+            created_at=datetime.utcnow() + timedelta(minutes=3),
+        )
         card_parent = StudyCard(
             id="card-parent",
             note_group_id=note_a.id,
@@ -102,6 +111,22 @@ def client():
         card_parent.topic_chips.extend([parent, child])
         card_child.topic_chips.append(child)
         card_hidden.topic_chips.append(parent)
+        public_subject = Subject(id="public-subject", title="Public Subject", visibility="public")
+        public_module = Module(id="public-module", subject_id=public_subject.id, title="Public Module")
+        public_note = NoteGroup(
+            id="public-note",
+            module_id=public_module.id,
+            title="Public Note",
+            raw_text="public raw",
+            cleaned_text_markdown="public source",
+            sort_order=1,
+        )
+        public_card = StudyCard(
+            id="public-card",
+            note_group_id=public_note.id,
+            title="Public Front",
+            content="Public Back",
+        )
         db.add_all(
             [
                 owner,
@@ -114,10 +139,15 @@ def client():
                 note_a,
                 note_b,
                 note_hidden,
+                note_empty,
                 card_parent,
                 card_child,
                 card_b,
                 card_hidden,
+                public_subject,
+                public_module,
+                public_note,
+                public_card,
                 StudyCardSourceRange(
                     id="range-parent",
                     note_group_id=note_a.id,
@@ -155,7 +185,9 @@ def client():
             yield db
 
         app.dependency_overrides[get_db] = override_db
-        app.dependency_overrides[get_auth_context] = lambda: AuthContext(user=db.get(User, auth_user_id["id"]))
+        app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+            user=db.get(User, auth_user_id["id"]) if auth_user_id["id"] else None
+        )
         test_client = TestClient(app)
         test_client.auth_user_id = auth_user_id
         yield test_client
@@ -168,13 +200,39 @@ def test_module_study_sources_follow_note_group_order(client):
     response = client.get("/modules/module-1/study-sources")
     assert response.status_code == 200
     payload = response.json()
-    assert [group["id"] for group in payload["note_groups"]] == ["note-b", "note-a"]
+    assert [group["id"] for group in payload["note_groups"]] == ["note-b", "note-a", "note-empty"]
     assert payload["note_groups"][0]["title"] == "Second"
     assert payload["note_groups"][0]["cleaned_text_markdown"] == "second source"
     assert [card["id"] for card in payload["note_groups"][0]["study_cards"]] == ["card-b"]
     assert payload["note_groups"][0]["study_cards"][0]["source_ranges"] == [
         {"start_index": 0, "end_index": 6}
     ]
+
+
+def test_module_study_sources_include_empty_readable_note_groups(client):
+    response = client.get("/modules/module-1/study-sources")
+    assert response.status_code == 200
+    payload = response.json()
+    empty_group = next(group for group in payload["note_groups"] if group["id"] == "note-empty")
+    assert empty_group["study_cards"] == []
+    assert empty_group["cleaned_text_markdown"] == "empty source"
+
+
+def test_module_study_sources_use_front_back_and_concept_ids(client):
+    response = client.get("/modules/module-1/study-sources")
+    assert response.status_code == 200
+    payload = response.json()
+    parent_card = next(
+        card
+        for group in payload["note_groups"]
+        for card in group["study_cards"]
+        if card["id"] == "card-parent"
+    )
+    assert parent_card["front"] == "Parent Card"
+    assert parent_card["back"] == "parent content"
+    assert parent_card["concept_ids"] == ["concept-child", "concept-parent"]
+    assert "title" not in parent_card
+    assert "content" not in parent_card
 
 
 def test_module_study_sources_hide_non_readable_note_groups_for_readers(client):
@@ -185,6 +243,16 @@ def test_module_study_sources_hide_non_readable_note_groups_for_readers(client):
     assert "card-hidden" not in [
         card["id"] for group in payload["note_groups"] for card in group["study_cards"]
     ]
+
+
+def test_module_study_sources_allow_public_read_without_study_access(client):
+    client.auth_user_id["id"] = None
+    response = client.get("/modules/public-module/study-sources")
+    assert response.status_code == 200
+    payload = response.json()
+    assert [group["id"] for group in payload["note_groups"]] == ["public-note"]
+    assert payload["note_groups"][0]["study_cards"][0]["front"] == "Public Front"
+    assert payload["note_groups"][0]["study_cards"][0]["back"] == "Public Back"
 
 
 def test_concept_study_sources_respect_descendant_toggle_and_dedupe(client):
