@@ -104,6 +104,7 @@ describe("StudyAppMainContent", () => {
     expect(html).not.toContain("Question timeline");
     expect(html).not.toContain("Note groups");
     expect(html).toContain("scope-interaction-dock");
+    expect(html).toContain(">Study</span>");
     expect(html).not.toContain("On this page");
     expect(ModuleMindMapPage).toHaveBeenCalledOnce();
     expect(ModuleMindMapPage.mock.calls[0][0].moduleTitle).toBe("Cell biology");
@@ -669,6 +670,7 @@ describe("StudyAppMainContent", () => {
     );
 
     expect(html).toContain("Concept scope");
+    expect(html).toContain(">Study</span>");
     expect(html).toContain("Include descendant Study Cards");
     expect(html).not.toContain("checked");
     expect(ConceptScopeContent).toHaveBeenCalledOnce();

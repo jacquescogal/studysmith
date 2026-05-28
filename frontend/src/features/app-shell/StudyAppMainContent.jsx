@@ -22,7 +22,7 @@ import { TutorChatDialog } from "@/features/chat/TutorChatDialog";
 import { appShellClasses, generationWorkflowStageLabel, generationWorkflowStatusLabel, generationWorkflowTitle, selectStyles } from "@/features/app-shell/appShellUi";
 import { countWords, formatCreatedAt, getNoteGroupStatusMeta } from "@/lib/format";
 import { renderCleanedMarkdown, renderMarkdownBlocks } from "@/lib/text-rendering";
-import { conceptPath, moduleMindMapPath, modulePath, moduleViewCardsPath, noteGroupMindMapPath, noteGroupPath } from "@/lib/routes";
+import { conceptPath, moduleMindMapPath, modulePath, moduleStudyPath, moduleViewCardsPath, noteGroupMindMapPath, noteGroupPath } from "@/lib/routes";
 
 const {
   panel: panelClass,
@@ -278,6 +278,11 @@ export function StudyAppMainContent({ model }) {
   const isMindMapPage = currentPanel === "mind-map" || (!isExplicitDockRoute && (!currentPanel || currentPanel === "overview"));
   const isMindMapSelected = isMindMapPage;
   const settingsDisabled = !canManageSelectedSubject || !canUseProtectedActions || isReviewOverlayVisible;
+  const moduleStudyUnavailable =
+    Boolean(moduleStats) &&
+    !moduleStatsLoading &&
+    !readingAvailable &&
+    Number(moduleStats.studyCount || 0) <= 0;
   const moduleMindMapProps = {
     moduleTitle: selectedModule?.title,
     graph: moduleMindMap,
@@ -319,6 +324,14 @@ export function StudyAppMainContent({ model }) {
               label: "View Cards",
               active: isViewCardsPage,
               onClick: () => navigate(conceptPath(selectedSubjectCode, selectedModuleCode, selectedTopicCode, "view-cards"))
+            },
+            {
+              id: "study",
+              label: "Study",
+              active: isInlineStudyPage,
+              disabled: !readingAvailable,
+              disabledReason: "Study content is unavailable",
+              onClick: () => navigate(conceptPath(selectedSubjectCode, selectedModuleCode, selectedTopicCode, "study"))
             }
           ]}
           settings={{
@@ -386,6 +399,14 @@ export function StudyAppMainContent({ model }) {
             label: "View Cards",
             active: isViewCardsPage,
             onClick: () => navigate(moduleViewCardsPath(selectedSubjectCode, selectedModuleCode))
+          },
+          {
+            id: "study",
+            label: "Study",
+            active: isInlineStudyPage,
+            disabled: moduleStudyUnavailable,
+            disabledReason: "Study content is unavailable",
+            onClick: () => navigate(moduleStudyPath(selectedSubjectCode, selectedModuleCode))
         }
       ]}
       settings={{
@@ -499,7 +520,44 @@ export function StudyAppMainContent({ model }) {
             ) : (
               <>
                 {!selectedNoteGroupId && !selectedTopicId ? (
-                  isViewCardsPage ? (
+                  isInlineStudyPage ? (
+                    <NoteGroupScopeContent
+                      isInlineStudyPage={isInlineStudyPage}
+                      selectedNoteGroup={null}
+                      selectedNoteGroupId=""
+                      selectedModuleId={selectedModuleId}
+                      readingAvailable={readingAvailable}
+                      activeSourceRangeIndex={activeSourceRangeIndex}
+                      effectiveCleanedText={effectiveCleanedText}
+                      readingContentRef={readingContentRef}
+                      readingHighlights={readingHighlights}
+                      readingPinnedCardId={readingPinnedCardId}
+                      sourceRangesByCardId={sourceRangesByCardId}
+                      pinnedSourceRanges={pinnedSourceRanges}
+                      pinnedStudyCard={pinnedStudyCard}
+                      studyNoteGroups={studyNoteGroups}
+                      studyNoteSections={studyNoteSections}
+                      studySourceNoteGroups={studySourceNoteGroups}
+                      visibleStudyCardOrder={visibleStudyCardOrder}
+                      classes={{
+                        panel: panelClass,
+                        mutedText: mutedTextClass,
+                        primaryButton: primaryButtonClass,
+                        outlineButton: outlineButtonClass,
+                        smallOutlineButton: smallOutlineButtonClass,
+                        destructiveOutlineButton: destructiveOutlineButtonClass,
+                        buttonRow: buttonRowClass
+                      }}
+                      setReadingMode={setReadingMode}
+                      handleReadingModeChange={handleReadingModeChange}
+                      handleReadingNextStudyCard={handleReadingNextStudyCard}
+                      handleReadingPreviousStudyCard={handleReadingPreviousStudyCard}
+                      handleReadingSourceRangeNext={handleReadingSourceRangeNext}
+                      handleReadingSourceRangePrevious={handleReadingSourceRangePrevious}
+                      handleReadingUnpin={handleReadingUnpin}
+                      handleReadingViewInClean={handleReadingViewInClean}
+                    />
+                  ) : isViewCardsPage ? (
                     <>
                       <section className="flex flex-wrap items-start gap-3">
                         <div>

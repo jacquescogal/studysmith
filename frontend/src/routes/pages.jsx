@@ -35,6 +35,10 @@ export function ModuleCardsPage(props) {
   return <AppShellRoutePage {...props} />;
 }
 
+export function ModuleStudyPage(props) {
+  return <AppShellRoutePage {...props} />;
+}
+
 export function NoteGroupCreatePage(props) {
   return <AppShellRoutePage {...props} />;
 }

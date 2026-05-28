@@ -28,6 +28,7 @@ describe("app route tree", () => {
     ["/app/subject/S1/module/M1", "module-default-mind-map"],
     ["/app/subject/S1/module/M1/mind-map", "module-mind-map"],
     ["/app/subject/S1/module/M1/view-cards", "module-view-cards"],
+    ["/app/subject/S1/module/M1/study", "module-study"],
     ["/app/subject/S1/module/M1/create-note-group", "note-group-create"],
     [
       "/app/subject/S1/module/M1/note-groups/N1",
@@ -64,6 +65,10 @@ describe("app route tree", () => {
     [
       "/app/subject/S1/module/M1/concepts/C1/view-cards",
       "concept-view-cards"
+    ],
+    [
+      "/app/subject/S1/module/M1/concepts/C1/study",
+      "concept-study"
     ],
     [
       "/app/subject/S1/module/M1/concepts/C1/study-cards",
