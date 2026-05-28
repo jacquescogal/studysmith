@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fsrs import Rating
 from sqlalchemy import case, func, or_, text
-from sqlalchemy.orm import Session, joinedload, sessionmaker
+from sqlalchemy.orm import Session, joinedload, selectinload, sessionmaker
 
 from app.db import Base, engine, get_db
 from sqlalchemy.exc import IntegrityError
@@ -2344,18 +2344,29 @@ def get_module_study_sources(
     db: Session = Depends(get_db),
     current_user: User | None = Depends(optional_user),
 ):
-    require_module_study(db, current_user, module_id)
-    note_groups = (
-        db.query(NoteGroup)
-        .filter(NoteGroup.module_id == module_id)
-        .order_by(NoteGroup.sort_order.asc(), NoteGroup.created_at.asc(), NoteGroup.id.asc())
-        .all()
-    )
+    module = require_module_study(db, current_user, module_id)
+    sort_nulls_last = case((NoteGroup.sort_order.is_(None), 1), else_=0)
+    note_group_query = db.query(NoteGroup).filter(NoteGroup.module_id == module_id)
+    if not can_maintain_subject(current_user, module.subject):
+        note_group_query = note_group_query.filter(
+            NoteGroup.generation_status.in_(READABLE_NOTE_GROUP_GENERATION_STATUSES)
+        )
+    note_groups = note_group_query.order_by(
+        sort_nulls_last,
+        NoteGroup.sort_order.asc(),
+        NoteGroup.created_at.asc(),
+        NoteGroup.id.asc(),
+    ).all()
+    note_group_ids = [group.id for group in note_groups]
+    if not note_group_ids:
+        return {"note_groups": []}
+
     cards = (
         db.query(StudyCard)
+        .options(selectinload(StudyCard.source_ranges))
         .join(NoteGroup, StudyCard.note_group_id == NoteGroup.id)
-        .filter(NoteGroup.module_id == module_id)
-        .order_by(NoteGroup.sort_order.asc(), StudyCard.created_at.asc(), StudyCard.id.asc())
+        .filter(StudyCard.note_group_id.in_(note_group_ids), NoteGroup.module_id == module_id)
+        .order_by(sort_nulls_last, NoteGroup.sort_order.asc(), StudyCard.created_at.asc(), StudyCard.id.asc())
         .all()
     )
     cards_by_group: dict[str, list[StudyCard]] = defaultdict(list)
@@ -2376,11 +2387,17 @@ def get_concept_study_sources(
     if not allowed_study_ids:
         return {"note_groups": []}
 
+    sort_nulls_last = case((NoteGroup.sort_order.is_(None), 1), else_=0)
     cards = (
         db.query(StudyCard)
+        .options(selectinload(StudyCard.source_ranges))
         .join(NoteGroup, StudyCard.note_group_id == NoteGroup.id)
         .filter(StudyCard.id.in_(allowed_study_ids), NoteGroup.module_id == topic.module_id)
-        .order_by(NoteGroup.sort_order.asc(), StudyCard.created_at.asc(), StudyCard.id.asc())
+    )
+    if not can_maintain_subject(current_user, topic.module.subject):
+        cards = cards.filter(NoteGroup.generation_status.in_(READABLE_NOTE_GROUP_GENERATION_STATUSES))
+    cards = (
+        cards.order_by(sort_nulls_last, NoteGroup.sort_order.asc(), StudyCard.created_at.asc(), StudyCard.id.asc())
         .all()
     )
     allowed_order = {study_id: index for index, study_id in enumerate(allowed_study_ids)}
@@ -2392,7 +2409,7 @@ def get_concept_study_sources(
     note_groups = (
         db.query(NoteGroup)
         .filter(NoteGroup.id.in_(group_ids), NoteGroup.module_id == topic.module_id)
-        .order_by(NoteGroup.sort_order.asc(), NoteGroup.created_at.asc(), NoteGroup.id.asc())
+        .order_by(sort_nulls_last, NoteGroup.sort_order.asc(), NoteGroup.created_at.asc(), NoteGroup.id.asc())
         .all()
     )
     cards_by_group: dict[str, list[StudyCard]] = defaultdict(list)

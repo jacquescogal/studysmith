@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 from app.auth import AuthContext, get_auth_context
 from app.db import Base, get_db
 from app.main import app
-from app.models import Module, NoteGroup, StudyCard, StudyCardSourceRange, Subject, TopicChip, User
+from app.models import Module, NoteGroup, StudyCard, StudyCardSourceRange, Subject, SubjectAccess, TopicChip, User
 
 
 @pytest.fixture
@@ -24,8 +24,15 @@ def client():
 
     db = SessionLocal()
     try:
-        user = User(id="user-1", supabase_user_id="user-sub", email="user@example.com", app_role="creator")
-        subject = Subject(id="subject-1", title="Subject", owner_user_id=user.id)
+        owner = User(id="owner", supabase_user_id="owner-sub", email="owner@example.com", app_role="creator")
+        reader = User(id="reader", supabase_user_id="reader-sub", email="reader@example.com", app_role="reader")
+        subject = Subject(id="subject-1", title="Subject", owner_user_id=owner.id)
+        reader_access = SubjectAccess(
+            id="reader-access",
+            subject_id=subject.id,
+            user_id=reader.id,
+            access_level="reader",
+        )
         module = Module(id="module-1", subject_id=subject.id, title="Module")
         parent = TopicChip(id="concept-parent", module_id=module.id, label="Parent", sort_order=1)
         child = TopicChip(
@@ -42,7 +49,7 @@ def client():
             raw_text="first raw",
             cleaned_text_markdown="first source",
             formatted_sections_json='[{"study_card_id":"card-parent","title":"Parent","content":"parent","anchor":"parent"}]',
-            sort_order=2,
+            sort_order=None,
             created_at=datetime.utcnow() + timedelta(minutes=2),
         )
         note_b = NoteGroup(
@@ -53,6 +60,16 @@ def client():
             cleaned_text_markdown="second source",
             sort_order=1,
             created_at=datetime.utcnow() + timedelta(minutes=1),
+        )
+        note_hidden = NoteGroup(
+            id="note-hidden",
+            module_id=module.id,
+            title="Hidden",
+            raw_text="hidden raw",
+            cleaned_text_markdown="hidden source",
+            generation_status="generating",
+            sort_order=0,
+            created_at=datetime.utcnow(),
         )
         card_parent = StudyCard(
             id="card-parent",
@@ -75,20 +92,32 @@ def client():
             content="second content",
             created_at=datetime.utcnow(),
         )
+        card_hidden = StudyCard(
+            id="card-hidden",
+            note_group_id=note_hidden.id,
+            title="Hidden Card",
+            content="hidden content",
+            created_at=datetime.utcnow() - timedelta(minutes=1),
+        )
         card_parent.topic_chips.extend([parent, child])
         card_child.topic_chips.append(child)
+        card_hidden.topic_chips.append(parent)
         db.add_all(
             [
-                user,
+                owner,
+                reader,
                 subject,
+                reader_access,
                 module,
                 parent,
                 child,
                 note_a,
                 note_b,
+                note_hidden,
                 card_parent,
                 card_child,
                 card_b,
+                card_hidden,
                 StudyCardSourceRange(
                     id="range-parent",
                     note_group_id=note_a.id,
@@ -110,16 +139,26 @@ def client():
                     start_index=0,
                     end_index=6,
                 ),
+                StudyCardSourceRange(
+                    id="range-hidden",
+                    note_group_id=note_hidden.id,
+                    study_card_id=card_hidden.id,
+                    start_index=0,
+                    end_index=6,
+                ),
             ]
         )
         db.commit()
+        auth_user_id = {"id": "reader"}
 
         def override_db():
             yield db
 
         app.dependency_overrides[get_db] = override_db
-        app.dependency_overrides[get_auth_context] = lambda: AuthContext(user=db.get(User, "user-1"))
-        yield TestClient(app)
+        app.dependency_overrides[get_auth_context] = lambda: AuthContext(user=db.get(User, auth_user_id["id"]))
+        test_client = TestClient(app)
+        test_client.auth_user_id = auth_user_id
+        yield test_client
     finally:
         app.dependency_overrides.clear()
         db.close()
@@ -135,6 +174,16 @@ def test_module_study_sources_follow_note_group_order(client):
     assert [card["id"] for card in payload["note_groups"][0]["study_cards"]] == ["card-b"]
     assert payload["note_groups"][0]["study_cards"][0]["source_ranges"] == [
         {"start_index": 0, "end_index": 6}
+    ]
+
+
+def test_module_study_sources_hide_non_readable_note_groups_for_readers(client):
+    response = client.get("/modules/module-1/study-sources")
+    assert response.status_code == 200
+    payload = response.json()
+    assert "note-hidden" not in [group["id"] for group in payload["note_groups"]]
+    assert "card-hidden" not in [
+        card["id"] for group in payload["note_groups"] for card in group["study_cards"]
     ]
 
 
