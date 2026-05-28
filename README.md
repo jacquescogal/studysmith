@@ -1,4 +1,4 @@
-# StudySmith
+# StudySmith <img src="resources/favicon.ico" width="50" height="50">
 
 StudySmith is an AI-assisted learning workspace that turns raw study material
 into structured Study Cards, source-grounded Question Cards, review schedules,
