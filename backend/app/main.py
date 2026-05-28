@@ -324,16 +324,6 @@ def _ensure_subject_access_columns(target_engine=engine) -> None:
 
 def _ensure_user_creator_role_request_columns(target_engine=engine) -> None:
     backend_name = target_engine.url.get_backend_name()
-    if backend_name == "postgresql":
-        with target_engine.connect() as conn:
-            conn.execute(
-                text(
-                    "ALTER TABLE users "
-                    "ADD COLUMN IF NOT EXISTS creator_role_requested_at TIMESTAMP WITH TIME ZONE"
-                )
-            )
-            conn.commit()
-        return
     if backend_name == "sqlite":
         with target_engine.connect() as conn:
             result = conn.execute(text("PRAGMA table_info(users)"))
