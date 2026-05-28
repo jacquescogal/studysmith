@@ -810,6 +810,14 @@ textarea {
   padding-right: 8px;
 }
 
+.source-text-dialog {
+  max-height: min(90vh, 760px);
+}
+
+.source-text-modal-content {
+  max-height: calc(min(90vh, 760px) - 130px);
+}
+
 @media (max-width: 768px) {
   .study-page-header {
     padding: 16px;
