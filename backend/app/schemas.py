@@ -175,6 +175,30 @@ class StudyCardOut(BaseModel):
         from_attributes = True
 
 
+class StudySourceNoteGroupStudyCardOut(BaseModel):
+    id: str
+    note_group_id: str
+    title: Optional[str] = None
+    content: str
+    source_ranges: List["StudyCardSourceRangeOut"] = []
+
+    class Config:
+        from_attributes = True
+
+
+class StudySourceNoteGroupOut(BaseModel):
+    id: str
+    title: Optional[str] = None
+    sort_order: Optional[int] = None
+    cleaned_text_markdown: Optional[str] = None
+    formatted_sections: List["NoteGroupSectionOut"] = []
+    study_cards: List[StudySourceNoteGroupStudyCardOut] = []
+
+
+class StudySourceResponse(BaseModel):
+    note_groups: List[StudySourceNoteGroupOut]
+
+
 class MindMapNodeOut(BaseModel):
     id: str
     node_type: str
@@ -515,6 +539,8 @@ class IntentChatResponse(BaseModel):
 NoteGroupOut.update_forward_refs()
 StudyCardOut.update_forward_refs()
 StudyCardSourceRangeOut.update_forward_refs()
+StudySourceNoteGroupStudyCardOut.update_forward_refs()
+StudySourceNoteGroupOut.update_forward_refs()
 ChatRequest.update_forward_refs()
 
 

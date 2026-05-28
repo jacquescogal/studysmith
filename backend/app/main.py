@@ -182,6 +182,7 @@ from app.schemas import (
     StudyCardReview,
     StudyCardReviewResult,
     StudyCardUpdate,
+    StudySourceResponse,
     TopicChipAttach,
     TopicChipCreate,
     TopicChipOut,
@@ -2293,6 +2294,26 @@ def _topic_allowed_study_ids(
     return study_ids
 
 
+def _serialize_study_source_note_groups(
+    note_groups: list[NoteGroup],
+    study_cards_by_note_group_id: dict[str, list[StudyCard]],
+) -> dict:
+    return {
+        "note_groups": [
+            {
+                "id": group.id,
+                "title": group.title,
+                "sort_order": group.sort_order,
+                "cleaned_text_markdown": group.cleaned_text_markdown,
+                "formatted_sections": group.formatted_sections,
+                "study_cards": study_cards_by_note_group_id.get(group.id, []),
+            }
+            for group in note_groups
+            if study_cards_by_note_group_id.get(group.id)
+        ]
+    }
+
+
 def _topic_question_cards(
     db: Session,
     topic: TopicChip,
@@ -2315,6 +2336,84 @@ def _topic_question_cards(
         for card in cards
         if any(ref in allowed_study_ids for ref in _question_card_refs(card))
     ]
+
+
+@app.get("/modules/{module_id}/study-sources", response_model=StudySourceResponse)
+def get_module_study_sources(
+    module_id: str,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(optional_user),
+):
+    require_module_study(db, current_user, module_id)
+    note_groups = (
+        db.query(NoteGroup)
+        .filter(NoteGroup.module_id == module_id)
+        .order_by(NoteGroup.sort_order.asc(), NoteGroup.created_at.asc(), NoteGroup.id.asc())
+        .all()
+    )
+    cards = (
+        db.query(StudyCard)
+        .join(NoteGroup, StudyCard.note_group_id == NoteGroup.id)
+        .filter(NoteGroup.module_id == module_id)
+        .order_by(NoteGroup.sort_order.asc(), StudyCard.created_at.asc(), StudyCard.id.asc())
+        .all()
+    )
+    cards_by_group: dict[str, list[StudyCard]] = defaultdict(list)
+    for card in cards:
+        cards_by_group[card.note_group_id].append(card)
+    return _serialize_study_source_note_groups(note_groups, cards_by_group)
+
+
+@app.get("/concepts/{concept_id}/study-sources", response_model=StudySourceResponse)
+def get_concept_study_sources(
+    concept_id: str,
+    include_descendants: bool = Query(default=True),
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(optional_user),
+):
+    topic = require_topic_read(db, current_user, concept_id)
+    allowed_study_ids = _topic_allowed_study_ids(db, topic, include_descendants=include_descendants)
+    if not allowed_study_ids:
+        return {"note_groups": []}
+
+    cards = (
+        db.query(StudyCard)
+        .join(NoteGroup, StudyCard.note_group_id == NoteGroup.id)
+        .filter(StudyCard.id.in_(allowed_study_ids), NoteGroup.module_id == topic.module_id)
+        .order_by(NoteGroup.sort_order.asc(), StudyCard.created_at.asc(), StudyCard.id.asc())
+        .all()
+    )
+    allowed_order = {study_id: index for index, study_id in enumerate(allowed_study_ids)}
+    unique_cards = sorted(
+        {card.id: card for card in cards}.values(),
+        key=lambda card: allowed_order.get(card.id, len(allowed_order)),
+    )
+    group_ids = {card.note_group_id for card in unique_cards}
+    note_groups = (
+        db.query(NoteGroup)
+        .filter(NoteGroup.id.in_(group_ids), NoteGroup.module_id == topic.module_id)
+        .order_by(NoteGroup.sort_order.asc(), NoteGroup.created_at.asc(), NoteGroup.id.asc())
+        .all()
+    )
+    cards_by_group: dict[str, list[StudyCard]] = defaultdict(list)
+    for card in unique_cards:
+        cards_by_group[card.note_group_id].append(card)
+    return _serialize_study_source_note_groups(note_groups, cards_by_group)
+
+
+@app.get("/topics/{topic_id}/study-sources", response_model=StudySourceResponse)
+def get_topic_study_sources(
+    topic_id: str,
+    include_descendants: bool = Query(default=True),
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(optional_user),
+):
+    return get_concept_study_sources(
+        topic_id,
+        include_descendants=include_descendants,
+        db=db,
+        current_user=current_user,
+    )
 
 
 @app.get("/concepts/{concept_id}/study-cards", response_model=StudyCardList)
