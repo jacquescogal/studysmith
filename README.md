@@ -1,103 +1,69 @@
 # StudySmith
 
-StudySmith is a local-first learning workspace that turns raw study material
-into structured study cards, scheduled question cards, and retrieval-grounded
-Tutor Chat.
+StudySmith is an AI-assisted learning workspace that turns raw study material
+into structured Study Cards, source-grounded Question Cards, review schedules,
+Concept maps, and Tutor Chat.
 
-Paste lecture notes, textbook excerpts, articles, or exam material into a note
-group. The app cleans the source text, derives atomic study cards, generates
-assessment questions, embeds the cards for retrieval, and schedules review with
-FSRS. The result is a study system that keeps generation, provenance, review,
-  and chat tied to the same source-of-truth knowledge objects.
+The product goal is simple: paste serious source material once, then study,
+review, inspect provenance, and ask questions from the same knowledge objects.
 
-## Why This Project Is Interesting
+## What It Does
 
-- **End-to-end AI workflow orchestration**: a single Auto Workflow handles
-  source validation, title suggestions, Concept assignment, study card generation,
-  question card generation, embedding, and background job recovery.
-- **Grounded retrieval design**: Tutor Chat retrieves from study cards within a
-  module-level RAG Boundary, can narrow to a note group or Concepts, and returns
-  study card references used in the answer.
-- **Learning-aware data model**: Subjects, modules, note groups, study cards,
-  question cards, Concepts, source ranges, short codes, and jobs are modeled as
-  explicit domain concepts instead of being folded into generic blobs.
-- **Spaced repetition built in**: question cards store FSRS scheduling state,
-  support due/review-next/review-all modes, and become stale when supporting
-  study cards change.
-- **Source provenance**: generated study cards can link back to evidence ranges
-  in cleaned text, which supports a reading view aligned with the generated
-  cards.
-- **Production-shaped local app**: FastAPI serves the API and, after build, the
-  Vite frontend from one process; Supabase local development provides Postgres,
-  Auth, and pgvector through Docker.
+- Cleans raw notes into readable source-preserving markdown.
+- Generates atomic Study Cards and linked Question Cards.
+- Schedules review with FSRS.
+- Embeds Study Cards in pgvector for semantic retrieval.
+- Builds module and Concept mind maps from generated knowledge.
+- Lets users inspect the source text behind generated cards.
+- Answers Tutor Chat questions using retrieved Study Card context.
+- Supports public read-only study pages and authenticated creator workflows.
 
-## Product Flow
+## Product Shape
 
 ```text
 Subject
-`-- Module                         default RAG Boundary and review scope
+`-- Module                         review and retrieval boundary
     `-- Note Group                  one source chunk or study session
-        |-- Cleaned Text            markdown-preserved source material
-        |-- Formatted Sections      reading view mapped to study cards
-        |-- Study Cards             atomic retrieval source of truth
+        |-- Cleaned Text            preserved source material
+        |-- Formatted Sections      source reading view aligned to Study Cards
+        |-- Study Cards             retrieval source of truth
         `-- Question Cards          FSRS-scheduled assessment artifacts
 ```
 
-1. Create a subject and module, optionally using Intent Chat to shape the title,
-   goal, and scope.
-2. Create a note group from raw text and a unique ID.
-3. Let the background Auto Workflow generate cleaned text, Concepts, study cards,
-   formatted sections, and question cards.
-4. Review question cards by due date, queue order, or full drill mode.
-5. Ask Tutor Chat questions against the selected module, note group, or Concepts.
+## Why This Project Is Interesting
 
-## Core Features
+StudySmith is not a thin wrapper around a chat box. It has a domain model, a
+background generation workflow, provenance tracking, spaced repetition, and a
+retrieval layer that all point back to the same Study Card objects.
 
-### AI-Assisted Study Material Ingestion
+The engineering work is mostly in the coordination:
 
-- Duplicate-aware note group creation through unique IDs.
-- Optional additional generation instructions at module or note group scope.
-- Cleaned Text generation that preserves source meaning while normalizing
-  formatting.
-- Formatted Sections that map readable source sections to specific study cards.
-- Concept assignment using a module-owned reusable Concept pool.
-- Retry, cancel, resume, and status tracking for background generation jobs.
+- keeping generated artifacts inspectable and editable;
+- avoiding vague "AI output" blobs by modeling Subjects, Modules, Note Groups,
+  Concepts, Study Cards, Question Cards, source ranges, review state, and jobs;
+- handling long-running AI generation as resumable background workflow stages;
+- making Tutor Chat retrieval scoped to a Module, Note Group, or Concept;
+- preserving public read access while keeping creator actions authenticated.
 
-### Study Cards And Provenance
+## Screenshots To Add
 
-- Study cards are atomic knowledge units and the retrieval source of truth.
-- Cards can be created or edited manually after generation.
-- Source ranges connect generated study cards back to evidence spans in cleaned
-  text.
-- Editing a study card marks dependent question cards as stale.
-- Study cards are embedded in pgvector for similarity search.
+<example image: StudySmith module page showing Note Groups, Mind Map, Review dock, and Tutor Chat entry point>
 
-### Question Cards And Review
+<example image: Auto Workflow status showing cleaned source text, generated Study Cards, and generated Question Cards>
 
-- MCQ and multi-answer question cards with option explanations.
-- Question cards reference the study cards that support their answers.
-- FSRS scheduling fields are persisted per card.
-- Review modes support due cards, upcoming queue cards, and all cards.
-- Module, note group, and Concept review scopes share the same scheduling model.
-- Timelines summarize due, week, month, six-month, and long-term review load.
+<example image: Source Text modal with a pinned Study Card and highlighted source ranges>
 
-### Tutor Chat
+<example image: Concept Mind Map showing Concept nodes, Knowledge Nodes, and descendant Study Card counts>
 
-- Retrieval-grounded answers from study card context.
-- Module-level default RAG Boundary with optional note group narrowing.
-- Concept filtering for focused explanations.
-- Conversation history support.
-- Responses return the study card references used to answer.
+<example image: Review session showing a Question Card, answer feedback, and linked Study Card context>
 
-### Navigation And UI
+### Tool-Use Demo Screenshots
 
-- React + Vite single-page app with subject, module, note group, and Concept
-  routes.
-- Stable short-code routes for user-facing navigation.
-- Module overview with note group stats, due counts, stale counts, and review
-  timeline.
-- Concept pages for cross-note-group study and review.
-- Reading dialog aligned to generated study cards.
+<example image: search tool use showing an exact keyword lookup returning matching source sections and Study Cards>
+
+<example image: semantic_search tool use showing vector retrieval of related Study Cards with source-backed references>
+
+<example image: crawl tool use showing external/source material ingestion before it becomes a Note Group>
 
 ## Architecture
 
@@ -110,160 +76,219 @@ FastAPI application
        |
        | SQLAlchemy ORM
        v
-Supabase Postgres domain database
+Supabase Postgres
        |
-       +--> Postgres pgvector embeddings
-       |
-       +--> OpenAI Responses API and embeddings
-       |
-       +--> Background auto-generation worker
+       +-- pgvector Study Card embeddings
+       +-- Supabase Auth
+       +-- OpenAI generation, chat, and embeddings
+       +-- Background Auto Workflow worker
 ```
-
-### Backend
-
-- `backend/app/main.py`: FastAPI routes, review queries, route resolution, and
-  static frontend serving.
-- `backend/app/models.py`: SQLAlchemy domain models and relationships.
-- `backend/app/schemas.py`: Pydantic request/response contracts.
-- `backend/app/jobs.py`: Auto Workflow and question generation job execution.
-- `backend/app/openai_client.py`: OpenAI prompt orchestration, JSON response
-  parsing, generation, chat, and embeddings.
-- `backend/app/vector_store.py`: pgvector-backed embedding persistence and similarity search.
-- `backend/app/fsrs_utils.py`: FSRS initialization and review transitions.
-- `backend/app/source_ranges.py`: source evidence matching for generated cards.
-- `backend/app/short_codes.py`: compact URL-safe route aliases.
-
-### Frontend
-
-- `frontend/src/App.jsx`: application state, route restoration, and workflow
-  coordination.
-- `frontend/src/api.js`: typed API client functions for backend routes.
-- `frontend/src/features/*`: feature views for subjects, modules, note groups,
-  study cards, question cards, review, reading, Concepts, and Tutor Chat.
-- `frontend/src/components/*`: shared layout, dialog, feedback, and UI
-  primitives.
-
-## API Surface
-
-The FastAPI app exposes routes for:
-
-- Subjects, modules, note groups, Concepts, study cards, and question cards.
-- Intent Chat for subject and module setup.
-- Auto Workflow job creation, retry, cancel, and status polling.
-- Module, note group, and Concept overviews.
-- Review queues and question timelines.
-- Stable app route resolution through short codes.
-- Tutor Chat over retrieved study card context.
-
-OpenAPI docs are available from a running backend at
-`http://localhost:8000/docs`.
-
-## Tech Stack
 
 | Layer | Technology |
 | --- | --- |
-| Frontend | React 18, Vite, React Router, shadcn-style UI primitives, Tailwind CSS |
-| Backend | Python, FastAPI, SQLAlchemy, Pydantic |
-| Relational storage | Supabase Postgres |
-| Vector storage | pgvector |
-| AI generation | OpenAI Responses API |
-| Embeddings | OpenAI `text-embedding-3-small` by default |
-| Spaced repetition | FSRS |
-| Local runtime | Supabase local stack plus Makefile-driven development |
+| Frontend | React 18, Vite, React Router, Tailwind CSS |
+| Backend | FastAPI, SQLAlchemy, Pydantic |
+| Database | Supabase Postgres |
+| Vector search | pgvector |
+| AI | OpenAI Responses API and embeddings |
+| Review scheduling | FSRS |
+| Deployment | Docker image served as one Render Web Service |
 
-Default model settings are configured in `backend/app/config.py` and can be
-overridden with environment variables:
+## Key Workflows
 
-```env
-OPENAI_WEAK_MODEL=gpt-5.4-mini
-OPENAI_STRONG_MODEL=gpt-5.4
-OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+### Auto Workflow
+
+1. User creates a Note Group from raw text.
+2. The backend checks source uniqueness and starts a background job.
+3. OpenAI cleans the text, proposes Concepts, generates Study Cards, and creates
+   Question Cards.
+4. Study Cards are embedded into pgvector.
+5. The UI polls workflow state and renders generated material as it becomes
+   available.
+
+<example sequence diagram: PlantUML diagram for Note Group Auto Workflow>
+
+```plantuml
+@startuml
+title StudySmith - Note Group Auto Workflow
+
+actor User
+participant "React App" as UI
+participant "FastAPI API" as API
+participant "Auto Workflow Worker" as Worker
+database "Supabase Postgres" as DB
+participant "OpenAI Responses API" as OpenAI
+database "pgvector" as Vector
+
+User -> UI: Paste raw text + Unique ID
+UI -> API: POST /modules/{module_id}/note-groups/auto
+API -> DB: Check Unique ID and create Note Group
+API -> DB: Create Job and workflow stages
+API --> UI: Job accepted
+
+loop Poll workflow
+  UI -> API: GET /modules/{module_id}/generation-workflow
+  API -> DB: Read stage status
+  API --> UI: Workflow snapshot
+end
+
+Worker -> DB: Load pending Job and Note Group
+Worker -> OpenAI: Clean source text
+OpenAI --> Worker: Cleaned Text
+Worker -> DB: Save Cleaned Text
+
+Worker -> OpenAI: Suggest title and Concepts
+OpenAI --> Worker: Title + Concept candidates
+Worker -> DB: Upsert Concepts
+
+Worker -> OpenAI: Generate Study Cards
+OpenAI --> Worker: Study Card payloads
+Worker -> DB: Save Study Cards and source ranges
+Worker -> OpenAI: Embed Study Cards
+OpenAI --> Worker: Embedding vectors
+Worker -> Vector: Upsert embeddings
+
+Worker -> OpenAI: Generate Question Cards
+OpenAI --> Worker: Question Card payloads
+Worker -> DB: Save Question Cards and FSRS defaults
+Worker -> DB: Mark Job completed
+UI -> API: Refresh Module / Note Group data
+API --> UI: Generated study experience
+
+@enduml
 ```
 
-## Getting Started
+### Tutor Chat And Retrieval
 
-### Requirements
+Tutor Chat answers from Study Cards, not directly from a free-form prompt. The
+retrieval boundary defaults to the Module and can narrow to a Note Group or
+Concept.
 
-- Docker Desktop, Python 3.10+, and Node.js 18+
-- An OpenAI API key
+<example sequence diagram: PlantUML diagram for Tutor Chat retrieval flow>
 
-### Local Environment Files
+```plantuml
+@startuml
+title StudySmith - Tutor Chat Retrieval Flow
 
-Environment variable names are mostly the same in local and production, but the
-values are different.
+actor User
+participant "React App" as UI
+participant "FastAPI API" as API
+database "Supabase Postgres" as DB
+participant "OpenAI Embeddings" as Embed
+database "pgvector" as Vector
+participant "OpenAI Chat" as Chat
 
-| File | Purpose |
-| --- | --- |
-| `.env.local.example` | Template for local development with the Supabase Docker stack |
-| `.env.prod.example` | Checklist for Render and the remote Supabase project |
-| `.env` | Your ignored local config, read by both backend and frontend dev servers |
+User -> UI: Ask a question in Tutor Chat
+UI -> API: POST /chat
+API -> DB: Resolve Module / Note Group / Concept scope
+API -> Embed: Embed user question
+Embed --> API: Query vector
+API -> Vector: semantic_search within scope
+Vector --> API: Ranked Study Cards
+API -> DB: Load Study Card details and references
+API -> Chat: Answer using retrieved context only
+Chat --> API: Grounded answer + referenced Study Card IDs
+API --> UI: Answer with Study Card references
+UI --> User: Show response and linked context
 
-Create your local config first:
+@enduml
+```
+
+### Search, Semantic Search, And Crawl Tool Flow
+
+This diagram is for the portfolio demo screenshots above. It frames the expected
+tool-use story: exact search finds known terms, semantic search finds related
+knowledge, and crawl/import turns external material into a Note Group that can
+join the same workflow.
+
+<example sequence diagram: PlantUML diagram for search, semantic_search, and crawl tool flow>
+
+```plantuml
+@startuml
+title StudySmith - Tool Use Demo Flow
+
+actor User
+participant "React App" as UI
+participant "FastAPI API" as API
+participant "Tool Router" as Tools
+database "Supabase Postgres" as DB
+database "pgvector" as Vector
+participant "Crawler / Importer" as Crawl
+participant "OpenAI" as OpenAI
+
+User -> UI: Ask for an explanation or source-backed answer
+UI -> API: Submit query with selected scope
+API -> Tools: Decide retrieval tools
+
+alt Exact source lookup
+  Tools -> DB: search(keyword, scope)
+  DB --> Tools: Matching source sections and cards
+else Conceptual retrieval
+  Tools -> OpenAI: Embed query
+  OpenAI --> Tools: Query vector
+  Tools -> Vector: semantic_search(vector, scope)
+  Vector --> Tools: Related Study Cards
+else New source import
+  Tools -> Crawl: crawl(url or document)
+  Crawl --> Tools: Extracted source text
+  Tools -> DB: Create Note Group candidate
+end
+
+Tools --> API: Retrieved evidence and candidate context
+API -> OpenAI: Synthesize answer with citations/references
+OpenAI --> API: Grounded response
+API --> UI: Answer + referenced Study Cards / source sections
+UI --> User: Inspect answer, cards, and source evidence
+
+@enduml
+```
+
+## Repository Map
+
+```text
+backend/
+  app/
+    main.py              FastAPI routes and static frontend serving
+    models.py            SQLAlchemy domain models
+    jobs.py              Auto Workflow execution
+    openai_client.py     OpenAI generation, chat, and embeddings
+    vector_store.py      pgvector persistence and retrieval
+    fsrs_utils.py        review scheduling transitions
+  tests/
+
+frontend/
+  src/
+    features/            product areas and route content
+    hooks/               data loading and workflow state
+    api.js               API client
+
+supabase/
+  migrations/            Postgres schema source of truth
+```
+
+## Local Development
+
+Requirements:
+
+- Docker Desktop
+- Python 3.10+
+- Node.js 18+
+- OpenAI API key
+
+Create local configuration:
 
 ```bash
 cp .env.local.example .env
 ```
 
-Then edit `.env` and set:
-
-- `OPENAI_API_KEY`
-- `ADMIN_EMAILS`
-- the local Supabase publishable and secret keys from `make supabase-status`
-
-### Local Supabase
-
-Local Supabase is a Docker stack managed by the Supabase CLI. It provides:
-
-- Postgres database
-- Supabase Auth
-- Mailpit inbox for local magic-link emails
-- Supabase Studio
-
-Start it after Docker Desktop is running:
+Start Supabase locally:
 
 ```bash
 make supabase-start
-```
-
-Print the local URLs and keys:
-
-```bash
 make supabase-status
 ```
 
-Use that output to fill these `.env` values:
-
-```env
-SUPABASE_SECRET_KEY=...
-VITE_SUPABASE_PUBLISHABLE_KEY=...
-```
-
-Local magic-link emails are captured in Mailpit, not sent to a real inbox:
-
-```text
-http://127.0.0.1:54324
-```
-
-Open Supabase Studio at:
-
-```text
-http://127.0.0.1:54323
-```
-
-Reset local Supabase data with:
-
-```bash
-npx supabase@latest db reset
-```
-
-### Local App Servers
-
-`make run` does not start Supabase. It starts only the application servers:
-
-- FastAPI backend on `http://localhost:8000`
-- Vite frontend on `http://localhost:5173`
-
-Run this after `make supabase-start`:
+Set the local Supabase keys and `OPENAI_API_KEY` in `.env`, then run:
 
 ```bash
 make run
@@ -275,105 +300,62 @@ Open:
 http://localhost:5173
 ```
 
-The local development shape is:
+## Production
 
-```text
-Browser -> Vite frontend :5173
-Browser -> local Supabase Auth :54321
-FastAPI backend :8000 -> local Supabase Postgres :54322
+The Dockerfile builds the Vite frontend and copies it into the FastAPI image, so
+the deployed app runs as one Render Web Service.
+
+Core production environment variables:
+
+```env
+OPENAI_API_KEY=
+OPENAI_WEAK_MODEL=gpt-5.4-mini
+OPENAI_STRONG_MODEL=gpt-5.4
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+
+DATABASE_URL=postgresql://postgres.<project-ref>:<password>@<pooler-host>:6543/postgres
+
+SUPABASE_URL=https://<project-ref>.supabase.co
+SUPABASE_SECRET_KEY=
+SUPABASE_JWKS_URL=https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json
+SUPABASE_JWT_ISSUER=https://<project-ref>.supabase.co/auth/v1
+SUPABASE_JWT_AUDIENCE=authenticated
+
+VITE_SUPABASE_URL=https://<project-ref>.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=
+
+ADMIN_EMAILS=
 ```
 
-### Local Command Summary
-
-| Command | What it does |
-| --- | --- |
-| `make supabase-start` | Starts the local Supabase Docker stack |
-| `make supabase-status` | Prints local Supabase URLs, database URL, publishable key, and secret key |
-| `make supabase-stop` | Stops the local Supabase Docker stack |
-| `make run` | Starts the local FastAPI and Vite app servers |
-| `make stop` | Stops app servers listening on ports `8000` and `5173` |
-
-### Manual Dependency Setup
-
-Install backend dependencies:
-
-```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cd ..
-```
-
-Install frontend dependencies:
-
-```bash
-cd frontend
-npm install
-cd ..
-```
-
-### Docker App Container
-
-```bash
-make supabase-start
-docker compose up --build
-```
-
-Open `http://localhost:8000`. The container connects to the local Supabase
-database through `host.docker.internal` unless `DOCKER_DATABASE_URL` is set.
-
-### Production-Style Local Run
-
-```bash
-make build
-make run-prod
-```
-
-Open `http://localhost:8000`. The backend serves the built frontend and API from
-one uvicorn process.
+`VITE_API_BASE_URL` should be blank when the frontend and API are served from
+the same Render service.
 
 ## Testing
 
-Run backend tests from `backend/`:
+Backend:
 
 ```bash
+cd backend
 python -m pytest tests
 ```
 
-The current test suite covers route exposure, note group creation constraints,
-module overview aggregation, Concept-scoped review behavior, short-code routes,
-OpenAI model routing, unique ID creation behavior, and source range matching.
-
-Run frontend tests from `frontend/`:
+Frontend:
 
 ```bash
-npm test -- --run
+cd frontend
+npm test
 ```
 
-## Data And Reset Notes
-
-Local app data lives in the Supabase Docker stack. Reset it with:
+Production Docker frontend stage:
 
 ```bash
-npx supabase@latest db reset
+docker build --target frontend-build --progress=plain .
 ```
 
 ## Current Boundaries
 
-- The app uses Supabase Auth plus FastAPI authorization. The frontend does not
-  query app tables directly.
-- The AI integration is OpenAI-first. Model names are configurable, but replacing
-  the provider requires changing `backend/app/openai_client.py`.
-- Supabase migrations are the source of truth for Postgres schema changes.
-
-## Roadmap
-
-- [ ] Provider abstraction for OpenAI-compatible and local model backends.
-- [ ] Frontend test coverage for core creation, review, and chat flows.
-- [ ] Import/export support for portable study archives.
-- [ ] Richer analytics on review history, mastery, and stale card resolution.
-- [x] Single-process production-style local run.
-- [x] Module-level review and timeline views.
-- [x] Concept-scoped study and review pages.
-- [x] Short-code app routes.
+- The frontend uses Supabase only for Auth; app data access goes through FastAPI.
+- The AI provider is OpenAI-first.
+- Postgres migrations in `supabase/migrations` are the schema source of truth.
+- Review state is stored per user, while Study Cards and Question Cards remain
+  shared study artifacts.
