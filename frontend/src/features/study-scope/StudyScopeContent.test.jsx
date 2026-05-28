@@ -28,6 +28,10 @@ describe("NoteGroupScopeContent inline Study route", () => {
     expect(css).toContain("margin-inline: auto");
     expect(css).toContain(".inline-study-scroll .clean-source.has-pin");
     expect(css).toContain("padding-bottom: 240px");
+    expect(css).toContain(".source-lookup-study-card-body");
+    expect(css).toContain("height: 180px");
+    expect(css).toContain("\n  height: 180px");
+    expect(css).toContain("overflow-y: auto");
   });
 
   test("renders friendly Study mode labels and derived Study Card content", () => {

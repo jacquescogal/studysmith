@@ -1994,7 +1994,7 @@ textarea {
 }
 
 .source-lookup-study-card-body {
-  max-height: 180px;
+  height: 180px;
   overflow-y: auto;
   padding-right: 6px;
   white-space: pre-wrap;
