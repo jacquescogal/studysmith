@@ -255,6 +255,28 @@ def test_module_study_sources_allow_public_read_without_study_access(client):
     assert payload["note_groups"][0]["study_cards"][0]["back"] == "Public Back"
 
 
+def test_module_card_table_hides_non_readable_note_groups_for_readers(client):
+    response = client.get("/modules/module-1/card-table")
+    assert response.status_code == 200
+    payload = response.json()
+    assert [row["study_card"]["id"] for row in payload["rows"]] == [
+        "card-b",
+        "card-parent",
+        "card-child",
+    ]
+    assert "card-hidden" not in [row["study_card"]["id"] for row in payload["rows"]]
+
+
+def test_module_card_table_allows_public_read_without_study_access(client):
+    client.auth_user_id["id"] = None
+    response = client.get("/modules/public-module/card-table")
+    assert response.status_code == 200
+    payload = response.json()
+    assert [row["study_card"]["id"] for row in payload["rows"]] == ["public-card"]
+    assert payload["rows"][0]["study_card"]["title"] == "Public Front"
+    assert payload["rows"][0]["question_cards"] == []
+
+
 def test_concept_study_sources_respect_descendant_toggle_and_dedupe(client):
     included = client.get("/concepts/concept-parent/study-sources").json()
     assert [card["id"] for group in included["note_groups"] for card in group["study_cards"]] == [
