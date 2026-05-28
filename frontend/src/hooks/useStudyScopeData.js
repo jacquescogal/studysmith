@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 
 import {
   getConcept,
+  getConceptStudySources,
   getModule,
+  getModuleStudySources,
   getNoteGroup,
   listAllModules,
   listConceptQuestionCards,
@@ -33,8 +35,10 @@ const resolveModuleForRouteRestore = async (moduleId) => {
 };
 
 export function useStudyScopeData({
+  selectedModuleId = "",
   selectedNoteGroupId = "",
   selectedConceptId = "",
+  isStudyPage = false,
   includeDescendantStudyCards = true,
   routeNoteGroupId = "",
   routeConceptId = "",
@@ -46,6 +50,7 @@ export function useStudyScopeData({
   setRouteRestoreError
 } = {}) {
   const [studyCards, setStudyCards] = useState([]);
+  const [studySourceNoteGroups, setStudySourceNoteGroups] = useState([]);
   const [studyCardError, setStudyCardError] = useState("");
   const [questionCards, setQuestionCards] = useState([]);
   const [questionCardError, setQuestionCardError] = useState("");
@@ -58,8 +63,11 @@ export function useStudyScopeData({
   const [conceptDescriptionDraft, setConceptDescriptionDraft] = useState("");
 
   useEffect(() => {
-    if (!selectedNoteGroupId && !selectedConceptId) {
+    const canLoadModuleStudySources = Boolean(selectedModuleId && isStudyPage);
+
+    if (!selectedNoteGroupId && !selectedConceptId && !canLoadModuleStudySources) {
       setStudyCards([]);
+      setStudySourceNoteGroups([]);
       setQuestionCards([]);
       setNoteGroupConceptIds([]);
       setMetadataTitleDraft("");
@@ -72,6 +80,7 @@ export function useStudyScopeData({
 
     if (shouldHoldContent) {
       setStudyCards([]);
+      setStudySourceNoteGroups([]);
       setQuestionCards([]);
       setNoteGroupConceptIds([]);
       setMetadataTitleDraft("");
@@ -88,6 +97,10 @@ export function useStudyScopeData({
     setQuestionJobStatus("idle");
     let cancelled = false;
     const conceptOptions = { includeDescendants: includeDescendantStudyCards };
+    const noteGroupRequest =
+      selectedNoteGroupId && !selectedConceptId
+        ? withRouteRestoreTimeout(getNoteGroup(selectedNoteGroupId), "Note group restore")
+        : null;
 
     const loadScope = async () => {
       try {
@@ -107,10 +120,7 @@ export function useStudyScopeData({
           return;
         }
 
-        const data = await withRouteRestoreTimeout(
-          getNoteGroup(selectedNoteGroupId),
-          "Note group restore"
-        );
+        const data = await noteGroupRequest;
         if (cancelled) {
           return;
         }
@@ -150,11 +160,15 @@ export function useStudyScopeData({
       }
     };
 
-    loadScope();
+    if (selectedNoteGroupId || selectedConceptId) {
+      loadScope();
+    }
 
     const studyRequest = selectedConceptId
       ? listConceptStudyCards(selectedConceptId, conceptOptions)
-      : listStudyCards(selectedNoteGroupId);
+      : selectedNoteGroupId
+        ? listStudyCards(selectedNoteGroupId)
+        : Promise.resolve({ study_cards: [] });
     studyRequest
       .then((data) => {
         if (!cancelled) {
@@ -167,9 +181,42 @@ export function useStudyScopeData({
         }
       });
 
+    const sourceRequest = selectedConceptId
+      ? getConceptStudySources(selectedConceptId, conceptOptions)
+      : selectedNoteGroupId
+        ? noteGroupRequest.then((group) => ({
+            note_groups: [
+              {
+                id: group.id,
+                title: group.title,
+                sort_order: group.sort_order,
+                cleaned_text_markdown: group.cleaned_text_markdown || "",
+                formatted_sections: group.formatted_sections || [],
+                study_cards: []
+              }
+            ]
+          }))
+        : canLoadModuleStudySources
+          ? getModuleStudySources(selectedModuleId)
+          : Promise.resolve({ note_groups: [] });
+    sourceRequest
+      .then((data) => {
+        if (!cancelled) {
+          setStudySourceNoteGroups(data.note_groups || []);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setStudySourceNoteGroups([]);
+          setStudyCardError(error.message || "Failed to load Study source text");
+        }
+      });
+
     const questionRequest = selectedConceptId
       ? listConceptQuestionCards(selectedConceptId, conceptOptions)
-      : listQuestionCards(selectedNoteGroupId);
+      : selectedNoteGroupId
+        ? listQuestionCards(selectedNoteGroupId)
+        : Promise.resolve({ question_cards: [] });
     questionRequest
       .then((data) => {
         if (!cancelled) {
@@ -190,18 +237,21 @@ export function useStudyScopeData({
     routeNoteGroupId,
     includeDescendantStudyCards,
     selectedConceptId,
+    selectedModuleId,
     selectedModuleIdRef,
     selectedNoteGroupId,
     selectedSubjectIdRef,
     setRouteRestoreError,
     setSelectedModuleId,
     setSelectedSubjectId,
-    shouldHoldContent
+    shouldHoldContent,
+    isStudyPage
   ]);
 
   return {
     studyCards,
     setStudyCards,
+    studySourceNoteGroups,
     studyCardError,
     setStudyCardError,
     questionCards,

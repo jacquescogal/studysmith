@@ -4,7 +4,12 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const reactMocks = vi.hoisted(() => ({
   useEffect: vi.fn((effect) => effect()),
-  useState: vi.fn((initialValue) => [initialValue, vi.fn()])
+  stateSetters: [],
+  useState: vi.fn((initialValue) => {
+    const setter = vi.fn();
+    reactMocks.stateSetters.push(setter);
+    return [initialValue, setter];
+  })
 }));
 
 vi.mock("react", async () => ({
@@ -15,28 +20,43 @@ vi.mock("react", async () => ({
 
 const apiMocks = vi.hoisted(() => ({
   getConcept: vi.fn(() => Promise.resolve({ label: "Stacks", description: "" })),
+  getConceptStudySources: vi.fn(() =>
+    Promise.resolve({ note_groups: [{ id: "note-b", study_cards: [] }] })
+  ),
   getModule: vi.fn(),
+  getModuleStudySources: vi.fn(() =>
+    Promise.resolve({ note_groups: [{ id: "note-a", study_cards: [] }] })
+  ),
   getNoteGroup: vi.fn(),
   listAllModules: vi.fn(),
   listConceptQuestionCards: vi.fn(() => Promise.resolve({ question_cards: [] })),
   listConceptStudyCards: vi.fn(() => Promise.resolve({ study_cards: [] })),
-  listQuestionCards: vi.fn(),
-  listStudyCards: vi.fn()
+  listQuestionCards: vi.fn(() => Promise.resolve({ question_cards: [] })),
+  listStudyCards: vi.fn(() => Promise.resolve({ study_cards: [] }))
 }));
 
 vi.mock("../api.js", () => apiMocks);
 
-import { listConceptQuestionCards, listConceptStudyCards } from "../api.js";
+import {
+  getConceptStudySources,
+  getModuleStudySources,
+  listConceptQuestionCards,
+  listConceptStudyCards
+} from "../api.js";
 import { useStudyScopeData } from "./useStudyScopeData";
 
+let lastHookResult;
+
 function TestComponent(props) {
-  useStudyScopeData(props);
+  lastHookResult = useStudyScopeData(props);
   return null;
 }
 
 describe("useStudyScopeData", () => {
   beforeEach(() => {
     globalThis.window = { setTimeout };
+    reactMocks.stateSetters = [];
+    lastHookResult = undefined;
   });
 
   afterEach(() => {
@@ -63,5 +83,53 @@ describe("useStudyScopeData", () => {
     expect(listConceptQuestionCards).toHaveBeenCalledWith("concept-1", {
       includeDescendants: false
     });
+  });
+
+  test("loads Module Study source payloads on Module Study pages", async () => {
+    renderToStaticMarkup(
+      React.createElement(TestComponent, {
+        selectedModuleId: "module-1",
+        isStudyPage: true,
+        selectedModuleIdRef: { current: "module-1" },
+        selectedSubjectIdRef: { current: "subject-1" },
+        setSelectedSubjectId: vi.fn(),
+        setSelectedModuleId: vi.fn(),
+        setRouteRestoreError: vi.fn()
+      })
+    );
+
+    expect(getModuleStudySources).toHaveBeenCalledWith("module-1");
+
+    await Promise.resolve();
+
+    expect(lastHookResult).toHaveProperty("studySourceNoteGroups");
+    expect(reactMocks.stateSetters[1]).toHaveBeenCalledWith([
+      { id: "note-a", study_cards: [] }
+    ]);
+  });
+
+  test("loads Concept Study source payloads with descendant inclusion disabled", async () => {
+    renderToStaticMarkup(
+      React.createElement(TestComponent, {
+        selectedConceptId: "concept-1",
+        includeDescendantStudyCards: false,
+        selectedModuleIdRef: { current: "module-1" },
+        selectedSubjectIdRef: { current: "subject-1" },
+        setSelectedSubjectId: vi.fn(),
+        setSelectedModuleId: vi.fn(),
+        setRouteRestoreError: vi.fn()
+      })
+    );
+
+    expect(getConceptStudySources).toHaveBeenCalledWith("concept-1", {
+      includeDescendants: false
+    });
+
+    await Promise.resolve();
+
+    expect(lastHookResult).toHaveProperty("studySourceNoteGroups");
+    expect(reactMocks.stateSetters[1]).toHaveBeenCalledWith([
+      { id: "note-b", study_cards: [] }
+    ]);
   });
 });
