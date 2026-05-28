@@ -207,6 +207,78 @@ class TopicScopeRoutesTests(unittest.TestCase):
             1,
         )
 
+    def test_concept_question_and_review_cards_follow_descendant_scope(self):
+        import app.db as db_module
+
+        with patch.object(db_module, "engine", self.engine):
+            from app.main import (
+                get_concept_question_timeline,
+                list_concept_question_cards,
+                list_concept_review_question_cards,
+            )
+
+        db = self.seed_topic_scope()
+        try:
+            module = db.get(Module, "module-1")
+            parent = db.get(TopicChip, "topic-1")
+            child = TopicChip(id="topic-child", module_id=module.id, label="Child", parent_topic_id=parent.id)
+            group = db.get(NoteGroup, "group-b")
+            child_card = StudyCard(id="study-child", note_group_id=group.id, title="Child", content="Child")
+            child_card.topic_chips.append(child)
+            child_question = QuestionCard(
+                id="question-child",
+                note_group_id=group.id,
+                type="multiple_choice",
+                prompt="Child prompt",
+                options_json='["A"]',
+                correct_option_indices_json="[0]",
+                study_card_refs_json='["study-child"]',
+                stale=False,
+                due_at=datetime.utcnow() - timedelta(hours=1),
+            )
+            db.add_all([child, child_card, child_question])
+            db.commit()
+
+            user = db.get(User, "user-1")
+            default_questions = list_concept_question_cards("topic-1", db=db, current_user=user)
+            direct_questions = list_concept_question_cards(
+                "topic-1",
+                include_descendants=False,
+                db=db,
+                current_user=user,
+            )
+            default_timeline = get_concept_question_timeline("topic-1", db=db, current_user=user)
+            direct_timeline = get_concept_question_timeline(
+                "topic-1",
+                include_descendants=False,
+                db=db,
+                current_user=user,
+            )
+            default_review = list_concept_review_question_cards(
+                "topic-1",
+                mode="due",
+                limit=10,
+                db=db,
+                current_user=user,
+            )
+            direct_review = list_concept_review_question_cards(
+                "topic-1",
+                mode="due",
+                limit=10,
+                include_descendants=False,
+                db=db,
+                current_user=user,
+            )
+        finally:
+            db.close()
+
+        self.assertIn("question-child", [card["id"] for card in default_questions["question_cards"]])
+        self.assertNotIn("question-child", [card["id"] for card in direct_questions["question_cards"]])
+        self.assertEqual(default_timeline["question_count"], 3)
+        self.assertEqual(direct_timeline["question_count"], 2)
+        self.assertIn("question-child", [card["id"] for card in default_review["question_cards"]])
+        self.assertNotIn("question-child", [card["id"] for card in direct_review["question_cards"]])
+
     def test_legacy_topic_routes_delegate_to_concept_handlers(self):
         import app.db as db_module
 

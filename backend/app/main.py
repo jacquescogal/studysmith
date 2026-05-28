@@ -2293,8 +2293,14 @@ def _topic_allowed_study_ids(
     return study_ids
 
 
-def _topic_question_cards(db: Session, topic: TopicChip) -> list[QuestionCard]:
-    allowed_study_ids = set(_topic_allowed_study_ids(db, topic, include_descendants=False))
+def _topic_question_cards(
+    db: Session,
+    topic: TopicChip,
+    include_descendants: bool = True,
+) -> list[QuestionCard]:
+    allowed_study_ids = set(
+        _topic_allowed_study_ids(db, topic, include_descendants=include_descendants)
+    )
     if not allowed_study_ids:
         return []
     cards = (
@@ -2353,11 +2359,12 @@ def list_topic_study_cards(
 @app.get("/concepts/{concept_id}/question-cards", response_model=QuestionCardList)
 def list_concept_question_cards(
     concept_id: str,
+    include_descendants: bool = Query(default=True),
     db: Session = Depends(get_db),
     current_user: User | None = Depends(optional_user),
 ):
     topic = require_topic_read(db, current_user, concept_id)
-    cards = _topic_question_cards(db, topic)
+    cards = _topic_question_cards(db, topic, include_descendants=include_descendants)
     state_by_card_id = _question_card_learning_state_map(db, cards, current_user)
     return {"question_cards": _serialize_question_cards_for_user(cards, state_by_card_id)}
 
@@ -2368,10 +2375,16 @@ def list_concept_question_cards(
 )
 def list_topic_question_cards(
     topic_id: str,
+    include_descendants: bool = Query(default=True),
     db: Session = Depends(get_db),
     current_user: User | None = Depends(optional_user),
 ):
-    return list_concept_question_cards(topic_id, db=db, current_user=current_user)
+    return list_concept_question_cards(
+        topic_id,
+        include_descendants=include_descendants,
+        db=db,
+        current_user=current_user,
+    )
 
 
 @app.get(
@@ -2380,11 +2393,12 @@ def list_topic_question_cards(
 )
 def get_concept_question_timeline(
     concept_id: str,
+    include_descendants: bool = Query(default=True),
     db: Session = Depends(get_db),
     current_user: User | None = Depends(optional_user),
 ):
     topic = require_topic_read(db, current_user, concept_id)
-    cards = _topic_question_cards(db, topic)
+    cards = _topic_question_cards(db, topic, include_descendants=include_descendants)
     state_by_card_id = _question_card_learning_state_map(db, cards, current_user)
     timeline = _build_question_timeline(cards, datetime.now(timezone.utc), state_by_card_id)
     return {
@@ -2400,10 +2414,16 @@ def get_concept_question_timeline(
 )
 def get_topic_question_timeline(
     topic_id: str,
+    include_descendants: bool = Query(default=True),
     db: Session = Depends(get_db),
     current_user: User | None = Depends(optional_user),
 ):
-    return get_concept_question_timeline(topic_id, db=db, current_user=current_user)
+    return get_concept_question_timeline(
+        topic_id,
+        include_descendants=include_descendants,
+        db=db,
+        current_user=current_user,
+    )
 
 
 @app.get("/concepts/{concept_id}/question-cards/review", response_model=QuestionCardList)
@@ -2411,12 +2431,13 @@ def list_concept_review_question_cards(
     concept_id: str,
     mode: str = Query(default="due"),
     limit: int = Query(default=10, ge=1, le=200),
+    include_descendants: bool = Query(default=True),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_user),
 ):
     topic = require_topic_study(db, current_user, concept_id)
     now = datetime.now(timezone.utc)
-    cards = _topic_question_cards(db, topic)
+    cards = _topic_question_cards(db, topic, include_descendants=include_descendants)
     state_by_card_id = _question_card_learning_state_map(db, cards, current_user)
     cards = _review_cards_for_mode(cards, mode, limit, state_by_card_id, now)
     return {"question_cards": _serialize_question_cards_for_user(cards, state_by_card_id)}
@@ -2427,6 +2448,7 @@ def list_topic_review_question_cards(
     topic_id: str,
     mode: str = Query(default="due"),
     limit: int = Query(default=10, ge=1, le=200),
+    include_descendants: bool = Query(default=True),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_user),
 ):
@@ -2434,6 +2456,7 @@ def list_topic_review_question_cards(
         topic_id,
         mode=mode,
         limit=limit,
+        include_descendants=include_descendants,
         db=db,
         current_user=current_user,
     )
