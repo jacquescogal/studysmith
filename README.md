@@ -1,5 +1,7 @@
 # StudySmith
 
+Live demo: www.study-smith.com
+
 StudySmith is an AI-assisted learning workspace that turns raw study material
 into structured Study Cards, source-grounded Question Cards, review schedules,
 Concept maps, and Tutor Chat.
