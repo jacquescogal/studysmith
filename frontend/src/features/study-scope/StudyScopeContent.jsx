@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Search, X } from "lucide-react";
 
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -55,13 +55,16 @@ function QuestionTimelinePanel({ panelClass, mutedTextClass, questionTimeline })
 
 export function SourceTextContainer({
   activeSourceRangeIndex = 0,
+  activeSourceNoteGroupId = "",
   classes,
   effectiveCleanedText,
   hasNextSourceRange,
   hasNextStudyCard,
   hasPreviousSourceRange,
   hasPreviousStudyCard,
+  noteGroupOptions = [],
   onBackToStudyCards,
+  onSourceNoteGroupChange,
   handleReadingNextStudyCard,
   handleReadingPreviousStudyCard,
   handleReadingSourceRangeNext,
@@ -82,6 +85,23 @@ export function SourceTextContainer({
 
   return (
     <div className="reading-content source-text-modal-content inline-study-scroll" ref={readingContentRef}>
+      {noteGroupOptions?.length ? (
+        <label className="source-note-group-picker">
+          <span>Note Group</span>
+          <select
+            aria-label="Select source Note Group"
+            value={activeSourceNoteGroupId}
+            onChange={(event) => onSourceNoteGroupChange?.(event.target.value)}
+            disabled={Boolean(readingPinnedCardId)}
+          >
+            {noteGroupOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
       <div className={`clean-source${readingPinnedCardId ? " has-pin" : ""}`}>
         {renderCleanedMarkdown(effectiveCleanedText || "", readingHighlights)}
       </div>
@@ -235,6 +255,7 @@ export function StudyScopeContent({
   pinnedStudyCard,
   studyNoteSections = [],
   studyNoteGroups = [],
+  studySourceNoteGroups = [],
   conceptTitleDraft,
   conceptDescriptionDraft,
   conceptError,
@@ -298,6 +319,83 @@ export function StudyScopeContent({
   handleReadingViewInClean
 }) {
   const [sourceTextOpen, setSourceTextOpen] = useState(readingMode === "clean");
+  const [activeSourceNoteGroupId, setActiveSourceNoteGroupId] = useState("");
+  const sourceGroupsById = useMemo(
+    () => new Map((studySourceNoteGroups || []).map((group) => [group.id, group])),
+    [studySourceNoteGroups]
+  );
+  const sourceNoteGroupOptions = useMemo(
+    () =>
+      (studySourceNoteGroups || []).map((group, index) => ({
+        value: group.id,
+        label: group.title || `Note Group ${index + 1}`
+      })),
+    [studySourceNoteGroups]
+  );
+  const pinnedSourceNoteGroupId = useMemo(() => {
+    if (!readingPinnedCardId) {
+      return "";
+    }
+    if (pinnedStudyCard?.note_group_id) {
+      return pinnedStudyCard.note_group_id;
+    }
+    const sourceGroup = (studySourceNoteGroups || []).find((group) =>
+      (group.study_cards || []).some((card) => card.id === readingPinnedCardId)
+    );
+    return sourceGroup?.id || "";
+  }, [pinnedStudyCard, readingPinnedCardId, studySourceNoteGroups]);
+  const activeSourceSelectionId =
+    activeSourceNoteGroupId && sourceGroupsById.has(activeSourceNoteGroupId)
+      ? activeSourceNoteGroupId
+      : "";
+  const resolvedSourceNoteGroupId =
+    pinnedSourceNoteGroupId ||
+    activeSourceSelectionId ||
+    studySourceNoteGroups[0]?.id ||
+    selectedNoteGroupId ||
+    "";
+  const activeSourceGroup = sourceGroupsById.get(resolvedSourceNoteGroupId);
+  const activeSourceRangesByCardId = useMemo(() => {
+    const map = new Map();
+    (activeSourceGroup?.study_cards || []).forEach((card) => {
+      map.set(card.id, Array.isArray(card.source_ranges) ? card.source_ranges : []);
+    });
+    return map;
+  }, [activeSourceGroup]);
+  const activeSourceText = activeSourceGroup?.cleaned_text_markdown || "";
+  const hasScopedSourceGroups = studySourceNoteGroups.length > 0;
+  const modalSourceRangesByCardId = hasScopedSourceGroups
+    ? activeSourceRangesByCardId
+    : sourceRangesByCardId;
+  const modalEffectiveCleanedText = hasScopedSourceGroups
+    ? activeSourceText
+    : effectiveCleanedText;
+  const modalPinnedSourceRanges = hasScopedSourceGroups
+    ? getValidSourceRanges(modalSourceRangesByCardId, readingPinnedCardId)
+    : pinnedSourceRanges;
+  const modalReadingHighlights = useMemo(() => {
+    if (!hasScopedSourceGroups) {
+      return readingHighlights;
+    }
+    if (!readingPinnedCardId) {
+      return [];
+    }
+    return getValidSourceRanges(modalSourceRangesByCardId, readingPinnedCardId).map(
+      (range, index) => ({
+        ...range,
+        study_card_id: readingPinnedCardId,
+        kind: activeSourceRangeIndex === index ? "active" : "related",
+        range_index: index
+      })
+    );
+  }, [
+    activeSourceRangeIndex,
+    hasScopedSourceGroups,
+    modalSourceRangesByCardId,
+    readingHighlights,
+    readingPinnedCardId
+  ]);
+  const modalReadingAvailable = readingAvailable || Boolean(modalEffectiveCleanedText);
 
   if (shouldHoldContent) {
     return (
@@ -327,16 +425,16 @@ export function StudyScopeContent({
   const hasNextStudyCard =
     pinnedStudyCardOrderIndex >= 0 &&
     pinnedStudyCardOrderIndex < orderedStudyCardIds.length - 1;
-  const activeSourceRangeNumber = Math.min(activeSourceRangeIndex + 1, pinnedSourceRanges.length);
-  const hasPreviousSourceRange = pinnedSourceRanges.length > 0 && activeSourceRangeIndex > 0;
+  const activeSourceRangeNumber = Math.min(activeSourceRangeIndex + 1, modalPinnedSourceRanges.length);
+  const hasPreviousSourceRange = modalPinnedSourceRanges.length > 0 && activeSourceRangeIndex > 0;
   const hasNextSourceRange =
-    pinnedSourceRanges.length > 0 && activeSourceRangeIndex < pinnedSourceRanges.length - 1;
+    modalPinnedSourceRanges.length > 0 && activeSourceRangeIndex < modalPinnedSourceRanges.length - 1;
   const pinnedStudyCardPositionLabel =
     pinnedStudyCardOrderIndex >= 0
       ? `Study Card ${pinnedStudyCardOrderIndex + 1} of ${orderedStudyCardIds.length}`
       : "Pinned Study Card";
-  const sourceRangePositionLabel = pinnedSourceRanges.length
-    ? `Source range ${activeSourceRangeNumber} of ${pinnedSourceRanges.length}`
+  const sourceRangePositionLabel = modalPinnedSourceRanges.length
+    ? `Source range ${activeSourceRangeNumber} of ${modalPinnedSourceRanges.length}`
     : "";
   const openSourceTextModal = () => {
     setSourceTextOpen(true);
@@ -346,8 +444,11 @@ export function StudyScopeContent({
     }
     setReadingMode?.("clean");
   };
-  const handleStudyCardSourceOpen = (event, studyCardId, rangeIndex = 0) => {
+  const handleStudyCardSourceOpen = (event, studyCardId, rangeIndex = 0, sourceNoteGroupId = "") => {
     setSourceTextOpen(true);
+    if (sourceNoteGroupId) {
+      setActiveSourceNoteGroupId(sourceNoteGroupId);
+    }
     if (handleReadingViewInClean) {
       handleReadingViewInClean(event, studyCardId, rangeIndex);
       return;
@@ -359,6 +460,7 @@ export function StudyScopeContent({
     const studyCardId = card.id || card.study_card_id || "";
     const title = card.title || `Study Card ${index + 1}`;
     const content = card.content || "";
+    const sourceNoteGroupId = card.note_group_id || card.source_note_group_id || selectedNoteGroupId || "";
     const sourceRanges = getValidSourceRanges(sourceRangesByCardId, studyCardId);
     const sourceDisabled = !sourceRanges.length;
 
@@ -377,7 +479,7 @@ export function StudyScopeContent({
               : `View source text for ${title}`
           }
           disabled={sourceDisabled}
-          onClick={(event) => handleStudyCardSourceOpen(event, studyCardId, 0)}
+          onClick={(event) => handleStudyCardSourceOpen(event, studyCardId, 0, sourceNoteGroupId)}
         >
           <Search size={16} aria-hidden="true" />
         </button>
@@ -401,24 +503,27 @@ export function StudyScopeContent({
         </DialogHeader>
         <SourceTextContainer
           activeSourceRangeIndex={activeSourceRangeIndex}
+          activeSourceNoteGroupId={resolvedSourceNoteGroupId}
           classes={classes}
-          effectiveCleanedText={effectiveCleanedText}
+          effectiveCleanedText={modalEffectiveCleanedText}
           hasNextSourceRange={hasNextSourceRange}
           hasNextStudyCard={hasNextStudyCard}
           hasPreviousSourceRange={hasPreviousSourceRange}
           hasPreviousStudyCard={hasPreviousStudyCard}
+          noteGroupOptions={sourceNoteGroupOptions}
           onBackToStudyCards={() => setSourceTextOpen(false)}
+          onSourceNoteGroupChange={setActiveSourceNoteGroupId}
           handleReadingNextStudyCard={handleReadingNextStudyCard}
           handleReadingPreviousStudyCard={handleReadingPreviousStudyCard}
           handleReadingSourceRangeNext={handleReadingSourceRangeNext}
           handleReadingSourceRangePrevious={handleReadingSourceRangePrevious}
           handleReadingUnpin={handleReadingUnpin}
-          pinnedSourceRanges={pinnedSourceRanges}
+          pinnedSourceRanges={modalPinnedSourceRanges}
           pinnedStudyCard={pinnedStudyCard}
           pinnedStudyCardPositionLabel={pinnedStudyCardPositionLabel}
-          readingAvailable={readingAvailable}
+          readingAvailable={modalReadingAvailable}
           readingContentRef={readingContentRef}
-          readingHighlights={readingHighlights}
+          readingHighlights={modalReadingHighlights}
           readingPinnedCardId={readingPinnedCardId}
           sourceRangePositionLabel={sourceRangePositionLabel}
         />
@@ -566,7 +671,8 @@ export function StudyScopeContent({
                       {
                         id: section.study_card_id,
                         title: section.title || `Section ${index + 1}`,
-                        content: section.content || ""
+                        content: section.content || "",
+                        source_note_group_id: section.source_note_group_id || ""
                       },
                       index,
                       section.anchor || "section"
