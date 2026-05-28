@@ -48,16 +48,40 @@ function conceptTypeLabel(value) {
   return conceptTypeLabels[value] || value.replace(/_/g, " ");
 }
 
-function conceptBadges(concept) {
+function studyCardCountBadges(node) {
   const badges = [];
+  const hasAggregateCountSet =
+    Object.hasOwn(node, "direct_study_card_count") &&
+    Object.hasOwn(node, "descendant_study_card_count") &&
+    Object.hasOwn(node, "total_study_card_count");
+  const hasMeaningfulAggregateCounts =
+    hasAggregateCountSet &&
+    (Number(node.direct_study_card_count || 0) > 0 ||
+      Number(node.descendant_study_card_count || 0) > 0 ||
+      Number(node.total_study_card_count || 0) > 0 ||
+      !node.study_card_count);
+  if (hasMeaningfulAggregateCounts && Object.hasOwn(node, "direct_study_card_count")) {
+    badges.push(`${node.direct_study_card_count} direct ${node.direct_study_card_count === 1 ? "card" : "cards"}`);
+  }
+  if (hasMeaningfulAggregateCounts && Object.hasOwn(node, "descendant_study_card_count")) {
+    badges.push(`${node.descendant_study_card_count} descendant ${node.descendant_study_card_count === 1 ? "card" : "cards"}`);
+  }
+  if (hasMeaningfulAggregateCounts && Object.hasOwn(node, "total_study_card_count")) {
+    badges.push(`${node.total_study_card_count} total ${node.total_study_card_count === 1 ? "card" : "cards"}`);
+  }
+  if (!badges.length && node.study_card_count) {
+    badges.push(`${node.study_card_count} ${node.study_card_count === 1 ? "card" : "cards"}`);
+  }
+  return badges;
+}
+
+function conceptBadges(concept) {
+  const badges = studyCardCountBadges(concept);
   if (concept.concept_type) {
     badges.push(conceptTypeLabel(concept.concept_type));
   }
   if (concept.importance) {
     badges.push(concept.importance);
-  }
-  if (concept.study_card_count) {
-    badges.push(`${concept.study_card_count} ${concept.study_card_count === 1 ? "card" : "cards"}`);
   }
   if (concept.note_group_count > 1) {
     badges.push(`${concept.note_group_count} Note Groups`);
@@ -71,9 +95,9 @@ function countBadge(count, singular, plural) {
 
 function topicBadges(topic) {
   return [
-    "Concept",
+    ...studyCardCountBadges(topic),
     topic.knowledge_node_status === "needs_review" ? "Needs review" : null,
-    countBadge(topic.study_card_count, "card", "cards"),
+    "Concept",
     topic.note_group_count > 1 ? `${topic.note_group_count} Note Groups` : null
   ].filter(Boolean);
 }
@@ -236,7 +260,7 @@ export function buildMindMapElements(
       status: item.knowledge_node_status,
       reviewReason: item.knowledge_node_review_reason,
       importance: item.importance,
-      badges: item.node_type === "knowledge_node" ? knowledgeNodeBadges(item) : [],
+      badges: item.node_type === "knowledge_node" ? knowledgeNodeBadges(item) : topicBadges(item),
       studyCardIds: item.study_card_ids || [],
       noteGroupIds: item.note_group_ids || [],
       canOpenTopicMindMap: Boolean(canOpenConceptDrilldown && isConceptTreeLinkNode(item.node_type)),
@@ -310,7 +334,7 @@ export function buildMindMapElements(
         status: item.knowledge_node_status,
         reviewReason: item.knowledge_node_review_reason,
         importance: item.importance,
-        badges: [],
+        badges: topicBadges(item),
         actionTopicId: item.concept_ids?.[0] || item.topic_ids?.[0] || item.id,
         actionConceptId: item.concept_ids?.[0] || item.topic_ids?.[0] || item.id,
         canRegenerateKnowledgeNodes: Boolean(isCurrentConceptGroup(item.node_type) && canRegenerateKnowledgeNodes),

@@ -116,6 +116,7 @@ export function StudyAppMainContent({ model }) {
     handleUniqueIdChange,
     handleUseGeneratedUniqueId,
     hasSidebar,
+    includeDescendantStudyCards,
     isAdmin,
     isAdminPanelOpen,
     isGeneratingQuestions,
@@ -213,6 +214,7 @@ export function StudyAppMainContent({ model }) {
     setEditingQuestionCardId,
     setEditingStudyCard,
     setEditingStudyCardId,
+    setIncludeDescendantStudyCards,
     setIsAdminPanelOpen,
     setIsChatOpen,
     setIsConceptSettingsOpen,
@@ -591,6 +593,7 @@ export function StudyAppMainContent({ model }) {
                     readingAvailable={readingAvailable}
                     readingMode={readingMode}
                     activeSourceRangeIndex={activeSourceRangeIndex}
+                    includeDescendantStudyCards={includeDescendantStudyCards}
                     effectiveCleanedText={effectiveCleanedText}
                     readingContentRef={readingContentRef}
                     readingHighlights={readingHighlights}
@@ -631,6 +634,7 @@ export function StudyAppMainContent({ model }) {
                     setReadingMode={setReadingMode}
                     setConceptTitleDraft={setTopicTitleDraft}
                     setConceptDescriptionDraft={setTopicDescriptionDraft}
+                    setIncludeDescendantStudyCards={setIncludeDescendantStudyCards}
                     setEditingStudyCard={setEditingStudyCard}
                     setEditingStudyCardId={setEditingStudyCardId}
                     setEditingQuestionCard={setEditingQuestionCard}

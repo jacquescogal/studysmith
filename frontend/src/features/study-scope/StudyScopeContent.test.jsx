@@ -16,6 +16,85 @@ const getButtonMarkup = (html, ariaLabel) => {
   return match?.[0] || "";
 };
 
+describe("Concept View Cards", () => {
+  test("Concept View Cards renders include descendant Study Cards toggle checked by default", () => {
+    const html = renderToStaticMarkup(
+      <ConceptScopeContent
+        shouldHoldContent={false}
+        isViewCardsPage
+        isMindMapPage={false}
+        isStudyPage={false}
+        isQuestionPage={false}
+        selectedConcept={{ id: "concept-1", label: "Energy" }}
+        studyCards={[]}
+        questionCards={[]}
+        classes={classes}
+        setIncludeDescendantStudyCards={vi.fn()}
+        startReview={vi.fn()}
+      />
+    );
+
+    expect(html).toContain("Include descendant Study Cards");
+    expect(html).toContain("checked");
+  });
+
+  test("Concept View Cards renders include descendant Study Cards toggle unchecked when disabled", () => {
+    const html = renderToStaticMarkup(
+      <ConceptScopeContent
+        shouldHoldContent={false}
+        isViewCardsPage
+        isMindMapPage={false}
+        isStudyPage={false}
+        isQuestionPage={false}
+        selectedConcept={{ id: "concept-1", label: "Energy" }}
+        studyCards={[]}
+        questionCards={[]}
+        classes={classes}
+        includeDescendantStudyCards={false}
+        setIncludeDescendantStudyCards={vi.fn()}
+        startReview={vi.fn()}
+      />
+    );
+
+    expect(html).toContain("Include descendant Study Cards");
+    expect(html).not.toContain("checked");
+  });
+});
+
+describe("Concept Study Cards", () => {
+  test("Concept Study Cards route renders include descendant Study Cards toggle", () => {
+    const html = renderToStaticMarkup(
+      <ConceptScopeContent
+        shouldHoldContent={false}
+        isViewCardsPage={false}
+        isMindMapPage={false}
+        isStudyPage
+        isQuestionPage={false}
+        selectedConcept={{ id: "concept-1", label: "Energy" }}
+        filteredStudyCards={[]}
+        studyCards={[]}
+        concepts={[]}
+        classes={classes}
+        canEditCurrentCards={false}
+        canUseProtectedActions={false}
+        editingStudyCardId=""
+        editingStudyCard={{ title: "", content: "", chipIds: [] }}
+        setIncludeDescendantStudyCards={vi.fn()}
+        setEditingStudyCard={vi.fn()}
+        setEditingStudyCardId={vi.fn()}
+        handleBackToOverview={vi.fn()}
+        handleEditStudyCard={vi.fn()}
+        handleSaveStudyCard={vi.fn()}
+        handleDeleteStudyCard={vi.fn()}
+      />
+    );
+
+    expect(html).toContain("<h2>Study cards</h2>");
+    expect(html).toContain("Include descendant Study Cards");
+    expect(html).toContain("checked");
+  });
+});
+
 describe("NoteGroupScopeContent inline Study route", () => {
   test("defines bounded inline Study reading layout styles", () => {
     const css = fs.readFileSync(
