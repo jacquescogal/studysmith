@@ -4,10 +4,17 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const reactMocks = vi.hoisted(() => ({
   useEffect: vi.fn((effect) => effect()),
-  stateSetters: [],
   useState: vi.fn((initialValue) => {
-    const setter = vi.fn();
-    reactMocks.stateSetters.push(setter);
+    const state = { value: initialValue };
+    const setter = vi.fn((nextValue) => {
+      const resolvedValue =
+        typeof nextValue === "function" ? nextValue(state.value) : nextValue;
+      if (Array.isArray(state.value) && Array.isArray(resolvedValue)) {
+        state.value.splice(0, state.value.length, ...resolvedValue);
+        return;
+      }
+      state.value = resolvedValue;
+    });
     return [initialValue, setter];
   })
 }));
@@ -55,7 +62,6 @@ function TestComponent(props) {
 describe("useStudyScopeData", () => {
   beforeEach(() => {
     globalThis.window = { setTimeout };
-    reactMocks.stateSetters = [];
     lastHookResult = undefined;
   });
 
@@ -102,8 +108,7 @@ describe("useStudyScopeData", () => {
 
     await Promise.resolve();
 
-    expect(lastHookResult).toHaveProperty("studySourceNoteGroups");
-    expect(reactMocks.stateSetters[1]).toHaveBeenCalledWith([
+    expect(lastHookResult.studySourceNoteGroups).toEqual([
       { id: "note-a", study_cards: [] }
     ]);
   });
@@ -127,8 +132,7 @@ describe("useStudyScopeData", () => {
 
     await Promise.resolve();
 
-    expect(lastHookResult).toHaveProperty("studySourceNoteGroups");
-    expect(reactMocks.stateSetters[1]).toHaveBeenCalledWith([
+    expect(lastHookResult.studySourceNoteGroups).toEqual([
       { id: "note-b", study_cards: [] }
     ]);
   });

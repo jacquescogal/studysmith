@@ -387,6 +387,68 @@ useEffect(() => {
     });
     return map;
   }, [studyCards]);
+  const scopedSourceContent = useMemo(() => {
+    let text = "";
+    const sections = [];
+    const rangesByCardId = new Map();
+
+    studySourceNoteGroups.forEach((group, groupIndex) => {
+      const groupText = group.cleaned_text_markdown || "";
+      if (text && groupText) {
+        text += "\n\n";
+      }
+      const groupTextOffset = text.length;
+      text += groupText;
+
+      const noteGroupTitle = group.title || `Note Group ${groupIndex + 1}`;
+      const formattedSourceSections = Array.isArray(group.formatted_sections)
+        ? group.formatted_sections
+        : [];
+      const sourceCards = Array.isArray(group.study_cards) ? group.study_cards : [];
+      const sourceCardIds = new Set(sourceCards.map((card) => card.id));
+      const scopedFormattedSections = sourceCardIds.size
+        ? formattedSourceSections.filter((section) => sourceCardIds.has(section.study_card_id))
+        : formattedSourceSections;
+
+      if (scopedFormattedSections.length) {
+        scopedFormattedSections.forEach((section, sectionIndex) => {
+          sections.push({
+            ...section,
+            source_note_group_id: group.id,
+            source_note_group_title: noteGroupTitle,
+            anchor:
+              section.anchor ||
+              `source-${group.id}-${section.study_card_id || sectionIndex + 1}`
+          });
+        });
+      } else {
+        sourceCards.forEach((card, cardIndex) => {
+          sections.push({
+            study_card_id: card.id,
+            title: card.front || card.title || `Study card ${cardIndex + 1}`,
+            content: card.back || card.content || "",
+            anchor: `source-${group.id}-${card.id}`,
+            source_note_group_id: group.id,
+            source_note_group_title: noteGroupTitle
+          });
+        });
+      }
+
+      sourceCards.forEach((card) => {
+        const sourceRanges = Array.isArray(card.source_ranges) ? card.source_ranges : [];
+        rangesByCardId.set(
+          card.id,
+          sourceRanges.map((range) => ({
+            ...range,
+            start_index: range.start_index + groupTextOffset,
+            end_index: range.end_index + groupTextOffset
+          }))
+        );
+      });
+    });
+
+    return { text, sections, rangesByCardId };
+  }, [studySourceNoteGroups]);
   const fallbackCleanText = useMemo(() => {
     let text = "";
     const rangesByCardId = new Map();
@@ -402,8 +464,15 @@ useEffect(() => {
     });
     return { text, rangesByCardId };
   }, [studyCards]);
-  const effectiveCleanedText = cleanedTextMarkdown || fallbackCleanText.text;
+  const shouldUseScopedSourceContent =
+    isStudyPage && (Boolean(selectedTopicId) || Boolean(selectedModuleId && !selectedNoteGroupId));
+  const effectiveCleanedText = shouldUseScopedSourceContent
+    ? scopedSourceContent.text
+    : cleanedTextMarkdown || fallbackCleanText.text;
   const studyNoteSections = useMemo(() => {
+    if (shouldUseScopedSourceContent) {
+      return scopedSourceContent.sections;
+    }
     if (formattedSections.length) {
       return formattedSections;
     }
@@ -413,8 +482,11 @@ useEffect(() => {
       content: card.content || "",
       anchor: `study-card-${card.id}`,
     }));
-  }, [formattedSections, studyCards]);
+  }, [formattedSections, scopedSourceContent.sections, shouldUseScopedSourceContent, studyCards]);
   const sourceRangesByCardId = useMemo(() => {
+    if (shouldUseScopedSourceContent) {
+      return scopedSourceContent.rangesByCardId;
+    }
     if (!cleanedTextMarkdown) {
       return fallbackCleanText.rangesByCardId;
     }
@@ -423,7 +495,13 @@ useEffect(() => {
       map.set(card.id, Array.isArray(card.source_ranges) ? card.source_ranges : []);
     });
     return map;
-  }, [cleanedTextMarkdown, fallbackCleanText, studyCards]);
+  }, [
+    cleanedTextMarkdown,
+    fallbackCleanText,
+    scopedSourceContent.rangesByCardId,
+    shouldUseScopedSourceContent,
+    studyCards
+  ]);
   const getValidSourceRanges = useCallback((studyCardId) => {
     const ranges = sourceRangesByCardId.get(studyCardId) || [];
     return ranges.filter((range) => Number.isInteger(range.start_index) && Number.isInteger(range.end_index) && range.end_index > range.start_index);
