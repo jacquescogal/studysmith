@@ -38,6 +38,7 @@ export function useStudyScopeData({
   selectedModuleId = "",
   selectedNoteGroupId = "",
   selectedConceptId = "",
+  isInlineStudyPage = false,
   isStudyPage = false,
   includeDescendantStudyCards = true,
   routeNoteGroupId = "",
@@ -63,7 +64,8 @@ export function useStudyScopeData({
   const [conceptDescriptionDraft, setConceptDescriptionDraft] = useState("");
 
   useEffect(() => {
-    const canLoadModuleStudySources = Boolean(selectedModuleId && isStudyPage);
+    const shouldLoadStudySources = isStudyPage || isInlineStudyPage;
+    const canLoadModuleStudySources = Boolean(selectedModuleId && shouldLoadStudySources);
 
     if (!selectedNoteGroupId && !selectedConceptId && !canLoadModuleStudySources) {
       setStudyCards([]);
@@ -181,7 +183,7 @@ export function useStudyScopeData({
         }
       });
 
-    const sourceRequest = isStudyPage
+    const sourceRequest = shouldLoadStudySources
       ? selectedConceptId
         ? getConceptStudySources(selectedConceptId, conceptOptions)
         : selectedNoteGroupId
@@ -238,6 +240,8 @@ export function useStudyScopeData({
     routeConceptId,
     routeNoteGroupId,
     includeDescendantStudyCards,
+    isInlineStudyPage,
+    isStudyPage,
     selectedConceptId,
     selectedModuleId,
     selectedModuleIdRef,
@@ -246,8 +250,7 @@ export function useStudyScopeData({
     setRouteRestoreError,
     setSelectedModuleId,
     setSelectedSubjectId,
-    shouldHoldContent,
-    isStudyPage
+    shouldHoldContent
   ]);
 
   return {

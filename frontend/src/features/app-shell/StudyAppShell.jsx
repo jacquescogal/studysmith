@@ -370,6 +370,7 @@ function StudyAppShell({ routePageModels }) {
     hasAppRouteTarget,
     includeDescendantStudyCards,
     isChatOpen,
+    isInlineStudyPage,
     isQuestionPage,
     isReadingOpen,
     isReorderingNoteGroups,
