@@ -3,11 +3,16 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 from app.config import settings
 
-connect_args = (
-    {"check_same_thread": False, "timeout": 30}
-    if settings.database_url.startswith("sqlite")
-    else {}
-)
+
+def _connect_args_for_database_url(database_url: str) -> dict:
+    if database_url.startswith("sqlite"):
+        return {"check_same_thread": False, "timeout": 30}
+    if database_url.startswith("postgresql+psycopg"):
+        return {"prepare_threshold": None}
+    return {}
+
+
+connect_args = _connect_args_for_database_url(settings.database_url)
 engine = create_engine(
     settings.database_url,
     connect_args=connect_args,

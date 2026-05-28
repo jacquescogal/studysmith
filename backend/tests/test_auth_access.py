@@ -17,7 +17,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.config as config
-from app.db import Base
+from app.db import Base, _connect_args_for_database_url
 from app.models import Subject
 from app.schemas import SubjectAccessOut, SubjectActivityEventOut, UserOut
 
@@ -76,6 +76,20 @@ class AuthConfigTests(unittest.TestCase):
                 )
         finally:
             reload(config)
+
+    def test_psycopg_connect_args_disable_prepared_statements(self):
+        self.assertEqual(
+            _connect_args_for_database_url(
+                "postgresql+psycopg://postgres.project:password@aws-1-ap-southeast-1.pooler.supabase.com:6543/postgres"
+            ),
+            {"prepare_threshold": None},
+        )
+
+    def test_sqlite_connect_args_keep_local_timeout_settings(self):
+        self.assertEqual(
+            _connect_args_for_database_url("sqlite:///./study.db"),
+            {"check_same_thread": False, "timeout": 30},
+        )
 
 
 class AuthSchemaCompatibilityTests(unittest.TestCase):
