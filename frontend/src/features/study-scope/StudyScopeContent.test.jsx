@@ -11,6 +11,11 @@ const classes = {
   mutedText: "muted"
 };
 
+const getButtonMarkup = (html, ariaLabel) => {
+  const match = html.match(new RegExp(`<button[^>]*aria-label="${ariaLabel}"[^>]*>`));
+  return match?.[0] || "";
+};
+
 describe("NoteGroupScopeContent inline Study route", () => {
   test("defines bounded inline Study reading layout styles", () => {
     const css = fs.readFileSync(
@@ -28,10 +33,14 @@ describe("NoteGroupScopeContent inline Study route", () => {
     expect(css).toContain("margin-inline: auto");
     expect(css).toContain(".inline-study-scroll .clean-source.has-pin");
     expect(css).toContain("padding-bottom: 240px");
-    expect(css).toContain(".source-lookup-study-card-body");
+    expect(css).toContain(".source-lookup-study-card-scroll");
     expect(css).toContain("height: 100px");
     expect(css).toContain("\n  height: 100px");
     expect(css).toContain("overflow-y: auto");
+    expect(css).toMatch(
+      /\.source-lookup-study-card-scroll\s*\{[^}]*overscroll-behavior:\s*contain;/s
+    );
+    expect(css).toMatch(/\.source-lookup-nav button:disabled\s*\{[^}]*opacity:\s*0\.42;/s);
   });
 
   test("renders friendly Study mode labels and derived Study Card content", () => {
@@ -149,14 +158,65 @@ describe("NoteGroupScopeContent inline Study route", () => {
     expect(html).toContain("Source range 2 of 2");
     expect(html).toContain("aria-label=\"Pin previous Study Card\"");
     expect(html).toContain("aria-label=\"Pin next Study Card\"");
+    expect(getButtonMarkup(html, "Pin previous Study Card")).toContain("disabled");
+    expect(getButtonMarkup(html, "Pin next Study Card")).not.toContain("disabled");
+    expect(getButtonMarkup(html, "Previous source range")).not.toContain("disabled");
+    expect(getButtonMarkup(html, "Next source range")).toContain("disabled");
     expect(html).toContain("Pinned card");
+    expect(html).toContain("source-lookup-study-card-scroll");
     expect(html).toContain("source-lookup-study-card-body");
     expect(html).toContain('tabindex="0"');
-    expect(html).toContain('aria-label="Pinned Study Card content"');
+    expect(html).toContain('aria-label="Pinned Study Card title and content"');
     expect(html).toContain("Full pinned Study Card content should be visible in a scrollable panel instead of hidden behind hover.");
     expect(html).not.toContain("pinned-study-card-popover");
     expect(html).toContain("aria-label=\"Unpin Study Card\"");
     expect(html).toContain("Back to Derived Study Cards");
+  });
+
+  test("disables pinned navigation at the last Study Card and first source range", () => {
+    const html = renderToStaticMarkup(
+      <NoteGroupScopeContent
+        shouldHoldContent={false}
+        isViewCardsPage={false}
+        isInlineStudyPage
+        isStudyPage={false}
+        isQuestionPage={false}
+        readingAvailable
+        readingMode="clean"
+        effectiveCleanedText="first source\nsecond source"
+        readingPinnedCardId="card-3"
+        activeSourceRangeIndex={0}
+        pinnedSourceRanges={[
+          { start_index: 0, end_index: 5 },
+          { start_index: 13, end_index: 19 }
+        ]}
+        pinnedStudyCard={{
+          id: "card-3",
+          title: "Final card",
+          content: "Final pinned content"
+        }}
+        studyNoteSections={[
+          { study_card_id: "card-1", title: "First card", content: "First content" },
+          { study_card_id: "card-2", title: "Middle card", content: "Middle content" },
+          { study_card_id: "card-3", title: "Final card", content: "Final content" }
+        ]}
+        readingHighlights={[
+          { study_card_id: "card-3", start_index: 0, end_index: 5, kind: "active", range_index: 0 }
+        ]}
+        classes={classes}
+        handleReadingModeChange={vi.fn()}
+        handleReadingPreviousStudyCard={vi.fn()}
+        handleReadingNextStudyCard={vi.fn()}
+        handleReadingSourceRangePrevious={vi.fn()}
+        handleReadingSourceRangeNext={vi.fn()}
+        handleReadingUnpin={vi.fn()}
+      />
+    );
+
+    expect(getButtonMarkup(html, "Pin previous Study Card")).not.toContain("disabled");
+    expect(getButtonMarkup(html, "Pin next Study Card")).toContain("disabled");
+    expect(getButtonMarkup(html, "Previous source range")).toContain("disabled");
+    expect(getButtonMarkup(html, "Next source range")).not.toContain("disabled");
   });
 
   test("keeps pinned Study Card controls visible without source ranges", () => {

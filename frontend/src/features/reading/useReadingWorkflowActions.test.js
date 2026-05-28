@@ -140,10 +140,11 @@ describe("useReadingWorkflowActions", () => {
     globalThis.window = originalWindow;
   });
 
-  test("wraps source range navigation and clears pinned source state", () => {
+  test("keeps source range navigation bounded and clears pinned source state", () => {
     const querySelector = vi.fn(() => ({ scrollIntoView: vi.fn() }));
+    const resolvedActiveSourceRangeIndices = [];
     const setActiveSourceRangeIndex = vi.fn((next) =>
-      typeof next === "function" ? next(2) : next
+      resolvedActiveSourceRangeIndices.push(typeof next === "function" ? next(2) : next)
     );
     const setReadingPinnedCardId = vi.fn();
     const setReadingHoverCardId = vi.fn();
@@ -164,9 +165,8 @@ describe("useReadingWorkflowActions", () => {
 
     actions.handleReadingSourceRangeNext(3);
     expect(setActiveSourceRangeIndex).toHaveBeenCalledWith(expect.any(Function));
-    expect(querySelector).toHaveBeenCalledWith(
-      '[data-clean-card-id="card-4"][data-source-range-index="0"]'
-    );
+    expect(resolvedActiveSourceRangeIndices).toContain(2);
+    expect(querySelector).not.toHaveBeenCalled();
 
     actions.handleReadingUnpin();
     expect(setReadingPinnedCardId).toHaveBeenCalledWith("");
@@ -214,7 +214,7 @@ describe("useReadingWorkflowActions", () => {
     globalThis.window = originalWindow;
   });
 
-  test("wraps adjacent Study Card pinning at the ends", () => {
+  test("keeps adjacent Study Card pinning bounded at the ends", () => {
     const querySelector = vi.fn(() => ({ scrollIntoView: vi.fn() }));
     const setReadingPinnedCardId = vi.fn();
     const originalWindow = globalThis.window;
@@ -238,7 +238,8 @@ describe("useReadingWorkflowActions", () => {
     });
 
     actions.handleReadingNextStudyCard();
-    expect(setReadingPinnedCardId).toHaveBeenCalledWith("card-1");
+    expect(setReadingPinnedCardId).not.toHaveBeenCalled();
+    expect(querySelector).not.toHaveBeenCalled();
     globalThis.window = originalWindow;
   });
 

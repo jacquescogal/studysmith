@@ -1974,6 +1974,18 @@ textarea {
   background: rgba(31, 44, 74, 0.05);
 }
 
+.source-lookup-nav button:disabled {
+  opacity: 0.42;
+  background: rgba(31, 44, 74, 0.04);
+  border-color: rgba(31, 44, 74, 0.08);
+  color: color-mix(in srgb, var(--muted) 72%, #fff);
+}
+
+.source-lookup-nav button:disabled:hover {
+  background: rgba(31, 44, 74, 0.04);
+  color: color-mix(in srgb, var(--muted) 72%, #fff);
+}
+
 .pinned-study-card-preview {
   border-top: 1px solid rgba(31, 44, 74, 0.08);
   padding-top: 8px;
@@ -1988,15 +2000,19 @@ textarea {
 }
 
 .pinned-study-card-preview h3 {
-  margin: 2px 0 4px;
+  margin: 0 0 4px;
   font-size: 0.95rem;
   line-height: 1.25;
 }
 
-.source-lookup-study-card-body {
+.source-lookup-study-card-scroll {
   height: 100px;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding-right: 6px;
+}
+
+.source-lookup-study-card-body {
   white-space: pre-wrap;
   font-size: 0.8rem;
   line-height: 1.45;

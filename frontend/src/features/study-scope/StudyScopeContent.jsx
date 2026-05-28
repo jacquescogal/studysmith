@@ -205,14 +205,20 @@ export function StudyScopeContent({
     .map((section) => section.study_card_id)
     .filter(Boolean);
   const pinnedStudyCardOrderIndex = orderedStudyCardIds.indexOf(readingPinnedCardId);
+  const hasPreviousStudyCard = pinnedStudyCardOrderIndex > 0;
+  const hasNextStudyCard =
+    pinnedStudyCardOrderIndex >= 0 &&
+    pinnedStudyCardOrderIndex < orderedStudyCardIds.length - 1;
+  const activeSourceRangeNumber = Math.min(activeSourceRangeIndex + 1, pinnedSourceRanges.length);
+  const hasPreviousSourceRange = pinnedSourceRanges.length > 0 && activeSourceRangeIndex > 0;
+  const hasNextSourceRange =
+    pinnedSourceRanges.length > 0 && activeSourceRangeIndex < pinnedSourceRanges.length - 1;
   const pinnedStudyCardPositionLabel =
     pinnedStudyCardOrderIndex >= 0
       ? `Study Card ${pinnedStudyCardOrderIndex + 1} of ${orderedStudyCardIds.length}`
       : "Pinned Study Card";
   const sourceRangePositionLabel = pinnedSourceRanges.length
-    ? `Source range ${Math.min(activeSourceRangeIndex + 1, pinnedSourceRanges.length)} of ${
-        pinnedSourceRanges.length
-      }`
+    ? `Source range ${activeSourceRangeNumber} of ${pinnedSourceRanges.length}`
     : "";
 
   if (isMindMapPage || isDefaultNonExplicitRoute) {
@@ -365,6 +371,7 @@ export function StudyScopeContent({
                   <button
                     type="button"
                     aria-label="Pin previous Study Card"
+                    disabled={!hasPreviousStudyCard}
                     onClick={handleReadingPreviousStudyCard}
                   >
                     <ArrowLeft size={15} aria-hidden="true" />
@@ -372,6 +379,7 @@ export function StudyScopeContent({
                   <button
                     type="button"
                     aria-label="Pin next Study Card"
+                    disabled={!hasNextStudyCard}
                     onClick={handleReadingNextStudyCard}
                   >
                     <ArrowRight size={15} aria-hidden="true" />
@@ -379,7 +387,7 @@ export function StudyScopeContent({
                   <button
                     type="button"
                     aria-label="Previous source range"
-                    disabled={!pinnedSourceRanges.length}
+                    disabled={!hasPreviousSourceRange}
                     onClick={() => handleReadingSourceRangePrevious?.(pinnedSourceRanges.length)}
                   >
                     <ArrowUp size={15} aria-hidden="true" />
@@ -387,7 +395,7 @@ export function StudyScopeContent({
                   <button
                     type="button"
                     aria-label="Next source range"
-                    disabled={!pinnedSourceRanges.length}
+                    disabled={!hasNextSourceRange}
                     onClick={() => handleReadingSourceRangeNext?.(pinnedSourceRanges.length)}
                   >
                     <ArrowDown size={15} aria-hidden="true" />
@@ -412,13 +420,15 @@ export function StudyScopeContent({
                 </button>
                 <div className="pinned-study-card-preview">
                   <p className="label">Pinned Study Card</p>
-                  <h3>{pinnedStudyCard.title || "Untitled Study Card"}</h3>
                   <div
-                    className="source-lookup-study-card-body"
+                    className="source-lookup-study-card-scroll"
                     tabIndex={0}
-                    aria-label="Pinned Study Card content"
+                    aria-label="Pinned Study Card title and content"
                   >
-                    {pinnedStudyCard.content || "No Study Card content."}
+                    <h3>{pinnedStudyCard.title || "Untitled Study Card"}</h3>
+                    <div className="source-lookup-study-card-body">
+                      {pinnedStudyCard.content || "No Study Card content."}
+                    </div>
                   </div>
                 </div>
               </div>
