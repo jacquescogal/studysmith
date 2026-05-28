@@ -132,6 +132,23 @@ class AuthSchemaCompatibilityTests(unittest.TestCase):
             columns = {row[1] for row in conn.execute(text("PRAGMA table_info(users)"))}
         self.assertIn("creator_role_requested_at", columns)
 
+    def test_user_creator_role_request_helper_does_not_run_postgres_ddl(self):
+        from app.main import _ensure_user_creator_role_request_columns
+
+        class FakeUrl:
+            @staticmethod
+            def get_backend_name():
+                return "postgresql"
+
+        class FakePostgresEngine:
+            url = FakeUrl()
+
+            @staticmethod
+            def connect():
+                raise AssertionError("Postgres schema changes must run through Supabase migrations")
+
+        _ensure_user_creator_role_request_columns(FakePostgresEngine())
+
 
 class AccessModelTests(unittest.TestCase):
     def setUp(self):
