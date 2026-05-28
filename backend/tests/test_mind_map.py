@@ -1260,6 +1260,10 @@ class MindMapServiceTests(unittest.TestCase):
 
             self.assertEqual(nodes_by_id["topic-auth"].node_type, "concept")
             self.assertIsNone(nodes_by_id["topic-auth"].parent_concept_id)
+            self.assertEqual(nodes_by_id["topic-auth"].direct_study_card_count, 0)
+            self.assertEqual(nodes_by_id["topic-auth"].descendant_study_card_count, 1)
+            self.assertEqual(nodes_by_id["topic-auth"].total_study_card_count, 1)
+            self.assertEqual(nodes_by_id["topic-auth"].study_card_count, 1)
             self.assertEqual(nodes_by_id["topic-magic-links"].node_type, "concept")
             self.assertEqual(nodes_by_id["topic-magic-links"].parent_concept_id, "topic-auth")
             self.assertEqual(nodes_by_id["topic-magic-links"].study_card_ids, ["study-card-1"])
@@ -1268,6 +1272,53 @@ class MindMapServiceTests(unittest.TestCase):
             self.assertEqual(nodes_by_id["node-1"].knowledge_type, "definition")
         finally:
             db.close()
+
+    def test_build_module_mind_map_response_counts_unrendered_descendant_concept_study_cards(self):
+        db = self.SessionLocal()
+        try:
+            owner = self._owner()
+            subject = Subject(id="subject-1", title="Subject", owner_user_id="owner-1")
+            module = Module(id="module-1", subject_id="subject-1", title="Module")
+            note_group = NoteGroup(
+                id="note-group-1",
+                module_id="module-1",
+                title="Auth",
+                raw_text="target",
+                mind_map_status="complete",
+                mind_map_generated_at=datetime.utcnow(),
+            )
+            parent = TopicChip(id="topic-parent", module_id="module-1", label="Authentication")
+            child = TopicChip(
+                id="topic-child",
+                module_id="module-1",
+                label="Magic Links",
+                parent_topic_id="topic-parent",
+            )
+            study_card = StudyCard(
+                id="study-card-1",
+                note_group_id="note-group-1",
+                title="Magic links",
+                content="Magic links are email sign-in links.",
+            )
+            db.add_all([owner, subject, module, note_group, parent, child, study_card])
+            db.commit()
+            db.execute(note_group_topic_chips.insert().values(note_group_id="note-group-1", chip_id="topic-parent"))
+            db.execute(study_card_topic_chips.insert().values(study_card_id="study-card-1", chip_id="topic-child"))
+            db.commit()
+
+            response = build_module_mind_map_response(db, "module-1")
+        finally:
+            db.close()
+
+        nodes_by_id = {node.id: node for node in response.nodes}
+
+        self.assertIn("topic-parent", nodes_by_id)
+        self.assertNotIn("topic-child", nodes_by_id)
+        self.assertEqual(nodes_by_id["topic-parent"].direct_study_card_count, 0)
+        self.assertEqual(nodes_by_id["topic-parent"].descendant_study_card_count, 1)
+        self.assertEqual(nodes_by_id["topic-parent"].total_study_card_count, 1)
+        self.assertEqual(nodes_by_id["topic-parent"].study_card_count, 1)
+        self.assertEqual(nodes_by_id["topic-parent"].study_card_ids, [])
 
     def test_build_topic_mind_map_response_returns_parent_knowledge_children_and_study_cards(self):
         from app.mind_map import build_topic_mind_map_response
@@ -1376,6 +1427,48 @@ class MindMapServiceTests(unittest.TestCase):
             )
         finally:
             db.close()
+
+    def test_topic_mind_map_counts_descendants_without_rendering_descendant_cards(self):
+        from app.mind_map import build_topic_mind_map_response
+
+        db = self.SessionLocal()
+        try:
+            owner = self._owner()
+            subject = Subject(id="subject-1", title="Subject", owner_user_id="owner-1")
+            module = Module(id="module-1", subject_id="subject-1", title="Module")
+            note_group = NoteGroup(id="note-group-1", module_id="module-1", title="Auth", raw_text="target")
+            parent = TopicChip(id="topic-parent", module_id="module-1", label="Authentication")
+            child = TopicChip(id="topic-child", module_id="module-1", label="Child", parent_topic_id="topic-parent")
+            direct_card = StudyCard(id="study-direct", note_group_id="note-group-1", title="Direct", content="Direct")
+            child_card = StudyCard(id="study-child", note_group_id="note-group-1", title="Child", content="Child")
+            shared_card = StudyCard(id="study-shared", note_group_id="note-group-1", title="Shared", content="Shared")
+            db.add_all([owner, subject, module, note_group, parent, child, direct_card, child_card, shared_card])
+            db.commit()
+            db.execute(study_card_topic_chips.insert().values(study_card_id="study-direct", chip_id="topic-parent"))
+            db.execute(study_card_topic_chips.insert().values(study_card_id="study-child", chip_id="topic-child"))
+            db.execute(study_card_topic_chips.insert().values(study_card_id="study-shared", chip_id="topic-parent"))
+            db.execute(study_card_topic_chips.insert().values(study_card_id="study-shared", chip_id="topic-child"))
+            db.commit()
+
+            response = build_topic_mind_map_response(db, "topic-parent")
+        finally:
+            db.close()
+
+        nodes_by_id = {node.id: node for node in response.nodes}
+        current = nodes_by_id["topic-map-current-group:topic-parent"]
+        child_node = nodes_by_id["topic-child"]
+        study_node_ids = [node.id for node in response.nodes if node.node_type == "study_card"]
+
+        self.assertEqual(current.direct_study_card_count, 2)
+        self.assertEqual(current.descendant_study_card_count, 2)
+        self.assertEqual(current.total_study_card_count, 3)
+        self.assertEqual(current.study_card_count, 3)
+        self.assertEqual(child_node.direct_study_card_count, 2)
+        self.assertEqual(child_node.descendant_study_card_count, 0)
+        self.assertEqual(child_node.total_study_card_count, 2)
+        self.assertIn("topic-map-study-card:study-direct", study_node_ids)
+        self.assertIn("topic-map-study-card:study-shared", study_node_ids)
+        self.assertNotIn("topic-map-study-card:study-child", study_node_ids)
 
     def test_build_note_group_mind_map_response_includes_question_cards_through_study_card_refs(self):
         db = self.SessionLocal()
@@ -2791,14 +2884,14 @@ class MindMapJobTests(unittest.TestCase):
             return_value=["Generated Title"],
         ), patch(
             "app.jobs.generate_cleaned_text_markdown",
-            return_value="Cleaned raw source text for generation.",
+            return_value="Cleaned raw source text for generation.\n\nGenerated Study Card content",
         ), patch(
             "app.jobs.generate_study_cards_with_context",
             return_value=[
                 {
                     "title": "Generated Study Card",
                     "content": "Generated Study Card content",
-                    "evidence_snippets": [],
+                    "evidence_snippets": ["Generated Study Card content"],
                 }
             ],
         ) as generate_study_cards, patch(

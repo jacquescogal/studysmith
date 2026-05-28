@@ -1151,6 +1151,44 @@ def _topic_map_knowledge_title(concept: MindMapConcept) -> str:
     return concept.title or (concept.knowledge_type or "Knowledge Node").replace("_", " ").title()
 
 
+def _descendant_topic_ids_for_module(topics: list[TopicChip], topic_id: str) -> list[str]:
+    children_by_parent: dict[str, list[TopicChip]] = {}
+    for topic in topics:
+        if topic.parent_topic_id:
+            children_by_parent.setdefault(topic.parent_topic_id, []).append(topic)
+    descendants: list[str] = []
+    visited = {topic_id}
+    stack = list(reversed(children_by_parent.get(topic_id, [])))
+    while stack:
+        topic = stack.pop()
+        if topic.id in visited:
+            continue
+        visited.add(topic.id)
+        descendants.append(topic.id)
+        stack.extend(reversed(children_by_parent.get(topic.id, [])))
+    return descendants
+
+
+def _aggregate_topic_study_card_counts(
+    topics: list[TopicChip],
+    direct_ids_by_topic_id: dict[str, set[str]],
+) -> dict[str, dict[str, int]]:
+    counts: dict[str, dict[str, int]] = {}
+    for topic in topics:
+        direct_ids = set(direct_ids_by_topic_id.get(topic.id, set()))
+        descendant_ids: set[str] = set()
+        for descendant_id in _descendant_topic_ids_for_module(topics, topic.id):
+            descendant_ids.update(direct_ids_by_topic_id.get(descendant_id, set()))
+        total_ids = direct_ids | descendant_ids
+        counts[topic.id] = {
+            "direct_study_card_count": len(direct_ids),
+            "descendant_study_card_count": len(descendant_ids),
+            "total_study_card_count": len(total_ids),
+            "study_card_count": len(total_ids),
+        }
+    return counts
+
+
 def build_topic_mind_map_response(db: Session, topic_id: str) -> MindMapResponse:
     topic = db.get(TopicChip, topic_id)
     if topic is None:
@@ -1162,6 +1200,29 @@ def build_topic_mind_map_response(db: Session, topic_id: str) -> MindMapResponse
     parent_group_id = f"topic-map-parent-group:{topic.id}"
     children_group_id = f"topic-map-children-group:{topic.id}"
 
+    module_topics = (
+        db.query(TopicChip)
+        .filter(TopicChip.module_id == topic.module_id)
+        .order_by(TopicChip.sort_order.asc(), TopicChip.label.asc(), TopicChip.id.asc())
+        .all()
+    )
+    direct_study_card_ids_by_topic_id: dict[str, set[str]] = {module_topic.id: set() for module_topic in module_topics}
+    topic_link_rows = (
+        db.execute(
+            study_card_topic_chips.select()
+            .join(StudyCard, study_card_topic_chips.c.study_card_id == StudyCard.id)
+            .join(NoteGroup, StudyCard.note_group_id == NoteGroup.id)
+            .where(NoteGroup.module_id == topic.module_id)
+            .where(study_card_topic_chips.c.chip_id.in_([module_topic.id for module_topic in module_topics]))
+            .order_by(study_card_topic_chips.c.chip_id.asc(), study_card_topic_chips.c.study_card_id.asc())
+        ).all()
+        if module_topics
+        else []
+    )
+    for row in topic_link_rows:
+        direct_study_card_ids_by_topic_id.setdefault(row.chip_id, set()).add(row.study_card_id)
+    topic_counts = _aggregate_topic_study_card_counts(module_topics, direct_study_card_ids_by_topic_id)
+
     def topic_node(node_topic: TopicChip, node_type: str, parent_group_id_value: str | None = None) -> dict:
         return {
             "id": node_topic.id,
@@ -1171,6 +1232,8 @@ def build_topic_mind_map_response(db: Session, topic_id: str) -> MindMapResponse
             "parent_group_id": parent_group_id_value,
             "parent_concept_id": node_topic.parent_topic_id,
             "parent_topic_id": node_topic.parent_topic_id,
+            **topic_counts.get(node_topic.id, {}),
+            "study_card_ids": sorted(direct_study_card_ids_by_topic_id.get(node_topic.id, set())),
             "knowledge_node_status": node_topic.knowledge_node_status,
             "knowledge_node_review_reason": node_topic.knowledge_node_review_reason,
         }
@@ -1207,6 +1270,8 @@ def build_topic_mind_map_response(db: Session, topic_id: str) -> MindMapResponse
             "topic_ids": [topic.id],
             "parent_concept_id": topic.parent_topic_id,
             "parent_topic_id": topic.parent_topic_id,
+            **topic_counts.get(topic.id, {}),
+            "study_card_ids": sorted(direct_study_card_ids_by_topic_id.get(topic.id, set())),
             "knowledge_node_status": topic.knowledge_node_status,
             "knowledge_node_review_reason": topic.knowledge_node_review_reason,
         }
@@ -1342,14 +1407,13 @@ def _build_mind_map_response(
             topic_ids.add(row.chip_id)
             note_group_ids_by_topic_id.setdefault(row.chip_id, set()).add(row.note_group_id)
 
-    topics = []
-    if topic_ids:
-        topics = (
-            db.query(TopicChip)
-            .filter(TopicChip.module_id == module_id, TopicChip.id.in_(topic_ids))
-            .order_by(TopicChip.sort_order.asc(), TopicChip.label.asc(), TopicChip.id.asc())
-            .all()
-        )
+    all_module_topics = (
+        db.query(TopicChip)
+        .filter(TopicChip.module_id == module_id)
+        .order_by(TopicChip.sort_order.asc(), TopicChip.label.asc(), TopicChip.id.asc())
+        .all()
+    )
+    topics = [topic for topic in all_module_topics if topic.id in topic_ids]
 
     study_card_links = []
     if concept_ids:
@@ -1374,16 +1438,21 @@ def _build_mind_map_response(
             .all()
         }
     study_card_ids_by_topic_id: dict[str, set[str]] = {topic_id: set() for topic_id in topic_ids}
-    if scoped_study_card_ids and topic_ids:
+    all_module_topic_ids = {topic.id for topic in all_module_topics}
+    count_study_card_ids_by_topic_id: dict[str, set[str]] = {topic.id: set() for topic in all_module_topics}
+    if scoped_study_card_ids and all_module_topic_ids:
         topic_link_rows = db.execute(
             study_card_topic_chips.select()
             .where(study_card_topic_chips.c.study_card_id.in_(scoped_study_card_ids))
-            .where(study_card_topic_chips.c.chip_id.in_(topic_ids))
+            .where(study_card_topic_chips.c.chip_id.in_(all_module_topic_ids))
             .order_by(study_card_topic_chips.c.chip_id.asc(), study_card_topic_chips.c.study_card_id.asc())
         ).all()
         for row in topic_link_rows:
-            study_card_ids.add(row.study_card_id)
-            study_card_ids_by_topic_id.setdefault(row.chip_id, set()).add(row.study_card_id)
+            count_study_card_ids_by_topic_id.setdefault(row.chip_id, set()).add(row.study_card_id)
+            if row.chip_id in topic_ids:
+                study_card_ids.add(row.study_card_id)
+                study_card_ids_by_topic_id.setdefault(row.chip_id, set()).add(row.study_card_id)
+    topic_count_values = _aggregate_topic_study_card_counts(all_module_topics, count_study_card_ids_by_topic_id)
     study_cards = []
     if study_card_ids:
         study_cards = (
@@ -1458,7 +1527,7 @@ def _build_mind_map_response(
             "concept_ids": [topic.id],
             "study_card_ids": sorted(study_card_ids_by_topic_id.get(topic.id, set())),
             "note_group_ids": sorted(note_group_ids_by_topic_id.get(topic.id, set())),
-            "study_card_count": len(study_card_ids_by_topic_id.get(topic.id, set())),
+            **topic_count_values.get(topic.id, {}),
             "note_group_count": len(note_group_ids_by_topic_id.get(topic.id, set())),
             "knowledge_node_status": topic.knowledge_node_status,
             "knowledge_node_review_reason": topic.knowledge_node_review_reason,

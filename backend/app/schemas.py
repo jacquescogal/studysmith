@@ -191,6 +191,9 @@ class MindMapNodeOut(BaseModel):
     study_card_ids: List[str] = []
     note_group_ids: List[str] = []
     study_card_count: int = 0
+    direct_study_card_count: int = 0
+    descendant_study_card_count: int = 0
+    total_study_card_count: int = 0
     note_group_count: int = 0
     knowledge_node_status: Optional[str] = None
     knowledge_node_review_reason: Optional[str] = None
