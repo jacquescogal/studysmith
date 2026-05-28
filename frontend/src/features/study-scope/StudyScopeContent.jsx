@@ -28,6 +28,43 @@ const getSourceGroupRangesByCardId = (sourceGroup) => {
   return map;
 };
 
+const normalizePinnedStudyCard = (card, noteGroupId = "") =>
+  card
+    ? {
+        ...card,
+        title: card.title || card.front || "Untitled Study Card",
+        content: card.content || card.back || "",
+        note_group_id: card.note_group_id || noteGroupId
+      }
+    : null;
+
+export const resolvePinnedStudyCardForModal = ({
+  pinnedStudyCard,
+  readingPinnedCardId = "",
+  studyNoteGroups = [],
+  studySourceNoteGroups = []
+} = {}) => {
+  if (!readingPinnedCardId) {
+    return null;
+  }
+  if (pinnedStudyCard) {
+    return normalizePinnedStudyCard(pinnedStudyCard);
+  }
+  for (const group of studyNoteGroups || []) {
+    const card = (group.studyCards || []).find((item) => item.id === readingPinnedCardId);
+    if (card) {
+      return normalizePinnedStudyCard(card, group.id);
+    }
+  }
+  for (const group of studySourceNoteGroups || []) {
+    const card = (group.study_cards || []).find((item) => item.id === readingPinnedCardId);
+    if (card) {
+      return normalizePinnedStudyCard(card, group.id);
+    }
+  }
+  return null;
+};
+
 export const resolveSourceTextModalPayload = ({
   activeSourceGroup,
   activeSourceRangeIndex = 0,
@@ -392,18 +429,28 @@ export function StudyScopeContent({
       })),
     [studySourceNoteGroups]
   );
+  const pinnedStudyCardForModal = useMemo(
+    () =>
+      resolvePinnedStudyCardForModal({
+        pinnedStudyCard,
+        readingPinnedCardId,
+        studyNoteGroups,
+        studySourceNoteGroups
+      }),
+    [pinnedStudyCard, readingPinnedCardId, studyNoteGroups, studySourceNoteGroups]
+  );
   const pinnedSourceNoteGroupId = useMemo(() => {
     if (!readingPinnedCardId) {
       return "";
     }
-    if (pinnedStudyCard?.note_group_id) {
-      return pinnedStudyCard.note_group_id;
+    if (pinnedStudyCardForModal?.note_group_id) {
+      return pinnedStudyCardForModal.note_group_id;
     }
     const sourceGroup = (studySourceNoteGroups || []).find((group) =>
       (group.study_cards || []).some((card) => card.id === readingPinnedCardId)
     );
     return sourceGroup?.id || "";
-  }, [pinnedStudyCard, readingPinnedCardId, studySourceNoteGroups]);
+  }, [pinnedStudyCardForModal, readingPinnedCardId, studySourceNoteGroups]);
   const activeSourceSelectionId =
     activeSourceNoteGroupId && sourceGroupsById.has(activeSourceNoteGroupId)
       ? activeSourceNoteGroupId
@@ -603,7 +650,7 @@ export function StudyScopeContent({
           handleReadingSourceRangePrevious={handleReadingSourceRangePrevious}
           handleReadingUnpin={handleReadingUnpin}
           pinnedSourceRanges={modalPinnedSourceRanges}
-          pinnedStudyCard={pinnedStudyCard}
+          pinnedStudyCard={pinnedStudyCardForModal}
           pinnedStudyCardPositionLabel={pinnedStudyCardPositionLabel}
           readingAvailable={modalReadingAvailable}
           readingContentRef={readingContentRef}
