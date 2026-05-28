@@ -239,7 +239,9 @@ export function StudyAppMainContent({ model }) {
     startReview,
     studyCardError,
     studyCards,
+    studyNoteGroups,
     studyNoteSections,
+    studySourceNoteGroups,
     subjects,
     topicCardTableRows,
     topicChips,
@@ -605,7 +607,9 @@ export function StudyAppMainContent({ model }) {
                     sourceRangesByCardId={sourceRangesByCardId}
                     pinnedSourceRanges={pinnedSourceRanges}
                     pinnedStudyCard={pinnedStudyCard}
+                    studyNoteGroups={studyNoteGroups}
                     studyNoteSections={studyNoteSections}
+                    studySourceNoteGroups={studySourceNoteGroups}
                     conceptTitleDraft={topicTitleDraft}
                     conceptDescriptionDraft={topicDescriptionDraft}
                     conceptError={topicError}
