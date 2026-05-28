@@ -5,6 +5,7 @@ export function useStudySourceDerivedState({
   cleanedTextMarkdown,
   filteredStudyCards,
   formattedSections,
+  isInlineStudyPage,
   isStudyPage,
   moduleNoteGroupsForDisplay,
   moduleNoteGroupStatsById,
@@ -97,7 +98,8 @@ export function useStudySourceDerivedState({
   }, [studyCards]);
 
   const shouldUseScopedSourceContent =
-    isStudyPage && (Boolean(selectedTopicId) || Boolean(selectedModuleId && !selectedNoteGroupId));
+    (isStudyPage || isInlineStudyPage) &&
+    (Boolean(selectedTopicId) || Boolean(selectedModuleId && !selectedNoteGroupId));
   const effectiveCleanedText = shouldUseScopedSourceContent
     ? scopedSourceContent.text
     : cleanedTextMarkdown || fallbackCleanText.text;
@@ -212,7 +214,7 @@ export function useStudySourceDerivedState({
       }
     });
 
-    return Array.from(cardsByGroup.entries())
+    const groupedCards = Array.from(cardsByGroup.entries())
       .map(([groupId, cards]) => {
         const sourceGroup = sourceGroupsById.get(groupId);
         return {
@@ -222,6 +224,25 @@ export function useStudySourceDerivedState({
           studyCards: cards
         };
       })
+      .sort((a, b) => a.orderIndex - b.orderIndex || a.title.localeCompare(b.title));
+
+    if (groupedCards.length || !studySourceNoteGroups.length) {
+      return groupedCards;
+    }
+
+    return studySourceNoteGroups
+      .map((group, index) => ({
+        id: group.id,
+        title: group.title || resolveNoteGroupLabel(group.id) || "Untitled Note Group",
+        orderIndex: orderIndexByNoteGroupId.get(group.id) ?? index,
+        studyCards: (Array.isArray(group.study_cards) ? group.study_cards : []).map((card) => ({
+          ...card,
+          title: card.title || card.front || "Untitled Study Card",
+          content: card.content || card.back || "",
+          note_group_id: card.note_group_id || group.id
+        }))
+      }))
+      .filter((group) => group.studyCards.length)
       .sort((a, b) => a.orderIndex - b.orderIndex || a.title.localeCompare(b.title));
   }, [
     filteredStudyCards,

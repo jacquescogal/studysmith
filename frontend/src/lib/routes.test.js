@@ -4,6 +4,7 @@ import {
   conceptPath,
   matchAppRoute,
   moduleMindMapPath,
+  moduleStudyPath,
   moduleViewCardsPath,
   noteGroupPath,
   noteGroupMindMapPath
@@ -32,6 +33,18 @@ describe("mind map routes", () => {
     expect(match.subjectCode).toBe("S1");
     expect(match.moduleCode).toBe("M1");
     expect(match.panel).toBe("view-cards");
+  });
+
+  test("builds and matches module Study routes", () => {
+    const pathname = moduleStudyPath("S1", "M1");
+
+    expect(pathname).toBe("/app/subject/S1/module/M1/study");
+
+    const match = matchAppRoute(pathname);
+    expect(match.moduleStudy).toBeTruthy();
+    expect(match.subjectCode).toBe("S1");
+    expect(match.moduleCode).toBe("M1");
+    expect(match.panel).toBe("study");
   });
 
   test("builds and matches note group mind map routes", () => {
@@ -79,9 +92,9 @@ describe("mind map routes", () => {
   });
 
   test("builds and matches concept routes", () => {
-    const pathname = conceptPath("S1", "M1", "C1", "study-cards");
+    const pathname = conceptPath("S1", "M1", "C1", "study");
 
-    expect(pathname).toBe("/app/subject/S1/module/M1/concepts/C1/study-cards");
+    expect(pathname).toBe("/app/subject/S1/module/M1/concepts/C1/study");
 
     const match = matchAppRoute(pathname);
     expect(match.concept).toBeTruthy();
@@ -89,7 +102,9 @@ describe("mind map routes", () => {
     expect(match.moduleCode).toBe("M1");
     expect(match.conceptCode).toBe("C1");
     expect(match.topicCode).toBe("C1");
-    expect(match.panel).toBe("study-cards");
+    expect(match.panel).toBe("study");
+
+    expect(matchAppRoute(conceptPath("S1", "M1", "C1", "study-cards")).panel).toBe("study-cards");
   });
 
   test("matches direct Concept Mind Map routes", () => {

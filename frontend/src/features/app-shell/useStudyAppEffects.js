@@ -406,6 +406,7 @@ useEffect(() => {
     cleanedTextMarkdown,
     filteredStudyCards,
     formattedSections,
+    isInlineStudyPage,
     isStudyPage,
     moduleNoteGroupsForDisplay,
     moduleNoteGroupStatsById,

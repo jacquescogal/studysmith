@@ -15,6 +15,7 @@ import {
   ConceptMindMapPage,
   ModuleCardsPage,
   ModuleMindMapPage,
+  ModuleStudyPage,
   NoteGroupCardsPage,
   NoteGroupCreatePage,
   NoteGroupMindMapPage,
@@ -46,6 +47,11 @@ const conceptChildren = (renderAppShell) => [
     path: "view-cards",
     id: "concept-view-cards",
     element: page(ConceptCardsPage, renderAppShell)
+  },
+  {
+    path: "study",
+    id: "concept-study",
+    element: page(ConceptStudyCardsPage, renderAppShell)
   },
   {
     path: "study-cards",
@@ -100,6 +106,11 @@ export function createAppRouteObjects(renderAppShell = defaultRenderAppShell) {
                   path: "view-cards",
                   id: "module-view-cards",
                   element: page(ModuleCardsPage, renderAppShell)
+                },
+                {
+                  path: "study",
+                  id: "module-study",
+                  element: page(ModuleStudyPage, renderAppShell)
                 },
                 {
                   path: "create-note-group",

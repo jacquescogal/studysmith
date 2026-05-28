@@ -459,6 +459,11 @@ export function StudyScopeContent({
   }
 
   const isDefaultNonExplicitRoute = !isViewCardsPage && !isInlineStudyPage && !isStudyPage && !isQuestionPage;
+  const scopeLabel = isConceptScope
+    ? "Concept"
+    : selectedModuleId && !selectedNoteGroupId
+      ? "Module"
+      : "Note Group";
   const groupedStudyNoteGroups = studyNoteGroups.filter((group) => group.studyCards?.length);
   const shouldRenderGroupedStudyCards = groupedStudyNoteGroups.length > 0;
   const effectiveVisibleStudyCardOrder = visibleStudyCardOrder.length
@@ -717,7 +722,7 @@ export function StudyScopeContent({
             <div>
               <h2>Study</h2>
               <p className={classes.mutedText}>
-                Read this Note Group as Derived Study Cards.
+                Read this {scopeLabel} as Derived Study Cards.
               </p>
             </div>
             <button
@@ -731,7 +736,7 @@ export function StudyScopeContent({
             </button>
           </div>
           {!readingAvailable ? (
-            <p className={classes.mutedText}>Study content is unavailable for this Note Group.</p>
+            <p className={classes.mutedText}>Study content is unavailable for this {scopeLabel}.</p>
           ) : (
             <div className="reading-content inline-reading-content inline-study-scroll">
               {shouldRenderGroupedStudyCards
