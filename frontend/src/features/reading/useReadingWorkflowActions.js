@@ -10,6 +10,27 @@ export function useReadingWorkflowActions({
   setReadingMode,
   setReadingPinnedCardId
 }) {
+  const scrollTargetIntoReadingContainer = (target, block = "start") => {
+    const container = readingContentRef.current;
+    if (!container || !target) {
+      return;
+    }
+    if (typeof container.getBoundingClientRect !== "function" || typeof target.getBoundingClientRect !== "function") {
+      return;
+    }
+    const containerRect = container.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const blockOffset =
+      block === "center" ? (container.clientHeight - targetRect.height) / 2 : 0;
+    const top = Math.max(0, container.scrollTop + targetRect.top - containerRect.top - blockOffset);
+
+    if (typeof container.scrollTo === "function") {
+      container.scrollTo({ top, behavior: "smooth" });
+      return;
+    }
+    container.scrollTop = top;
+  };
+
   const jumpToStudyCard = (studyCardId) => {
     const container = readingContentRef.current;
     if (!container || !studyCardId) {
@@ -17,7 +38,7 @@ export function useReadingWorkflowActions({
     }
     const target = container.querySelector(`#reading-study-${studyCardId}`);
     if (target) {
-      target.scrollIntoView({ behavior: "smooth", block: "start" });
+      scrollTargetIntoReadingContainer(target, "start");
     }
   };
 
@@ -33,7 +54,7 @@ export function useReadingWorkflowActions({
           ) || container.querySelector(`[data-clean-card-id="${studyCardId}"]`)
         : container.querySelector(`[data-clean-card-id="${studyCardId}"]`);
     if (target) {
-      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      scrollTargetIntoReadingContainer(target, "center");
     }
   };
 
