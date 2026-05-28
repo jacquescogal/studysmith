@@ -22,7 +22,8 @@ export function ScopeInteractionDock({
   scopeLabel,
   actions = [],
   review = null,
-  settings = null
+  settings = null,
+  studyCardScope = null
 }) {
   const maxReviewCount = Math.max(0, Number(review?.maxCount) || 0);
   const reviewCount = Number(review?.count) || (maxReviewCount > 0 ? 1 : 0);
@@ -76,10 +77,22 @@ export function ScopeInteractionDock({
           );
         })}
       </div>
+      {studyCardScope ? (
+        <label className="scope-dock-toggle">
+          <input
+            type="checkbox"
+            checked={studyCardScope.includeDescendants !== false}
+            onChange={(event) => studyCardScope.onIncludeDescendantsChange?.(event.target.checked)}
+          />
+          <span>{studyCardScope.label || "Include descendant Study Cards"}</span>
+        </label>
+      ) : null}
       {review ? (
         <div className="scope-dock-review">
+          <div className="scope-dock-review-divider" aria-hidden="true" />
+          <div className="scope-dock-review-title">Review</div>
           <div className="scope-dock-review-header">
-            <span>Review</span>
+            <span>Due</span>
             <span className="scope-dock-count">{Number(review.dueCount) || 0}</span>
           </div>
           <Button
@@ -93,8 +106,8 @@ export function ScopeInteractionDock({
             <span>Review Due</span>
           </Button>
           <label className="scope-dock-slider">
-            <span>Review {boundedReviewCount}</span>
             <input
+              aria-label="Review count"
               type="range"
               min={0}
               max={reviewSliderMax}

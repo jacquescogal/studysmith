@@ -64,7 +64,12 @@ describe("buildMindMapElements", () => {
       "concept-2"
     ]);
     expect(nodes[0].data.title).toBe("StudySmith");
+    expect(nodes[0].width).toBe(260);
+    expect(nodes[0].height).toBe(132);
+    expect(nodes.find((node) => node.id === "mind-map-note-group:note-a").height).toBe(120);
     expect(nodes.find((node) => node.id === "concept-1").data.badges).toContain("2 cards");
+    expect(nodes.find((node) => node.id === "concept-1").width).toBe(280);
+    expect(nodes.find((node) => node.id === "concept-1").height).toBe(164);
     expect(edges.map((edge) => edge.id)).toEqual([
       "mind-map-root-edge:note-a",
       "mind-map-root-edge:note-b",
@@ -471,14 +476,19 @@ describe("buildMindMapElements", () => {
     const studyCardNode = nodes.find((node) => node.id === "concept-map-study-card:study-card-1");
 
     expect(parentGroup.data.nodeType).toBe("concept_parent_group");
+    expect(parentGroup.data.badges).toEqual([]);
+    expect(parentGroup.selectable).toBe(false);
+    expect(parentGroup.draggable).toBe(false);
     expect(parentGroup.zIndex).toBe(0);
     expect(parentGroup.width).toBe(320);
-    expect(parentGroup.height).toBe(136);
+    expect(parentGroup.height).toBe(175);
     expect(currentGroup.data.nodeType).toBe("concept_current_group");
+    expect(currentGroup.selectable).toBe(false);
+    expect(currentGroup.draggable).toBe(false);
     expect(currentGroup.zIndex).toBe(0);
     expect(currentGroup.data.title).toBe("Magic Links");
     expect(currentGroup.width).toBe(596);
-    expect(currentGroup.height).toBe(236);
+    expect(currentGroup.height).toBe(268);
     expect(currentGroup.data.actionConceptId).toBe("concept-auth");
     expect(currentGroup.data.badges).toEqual([
       "2 direct cards",
@@ -490,8 +500,11 @@ describe("buildMindMapElements", () => {
     expect(currentGroup.data.onRegenerateKnowledgeNodes).toBe(regenerate);
     expect(currentGroup.data.regeneratingKnowledgeNodes).toBe(true);
     expect(childrenGroup.data.nodeType).toBe("concept_children_group");
+    expect(childrenGroup.data.badges).toEqual([]);
+    expect(childrenGroup.selectable).toBe(false);
+    expect(childrenGroup.draggable).toBe(false);
     expect(childrenGroup.width).toBe(320);
-    expect(childrenGroup.height).toBe(136);
+    expect(childrenGroup.height).toBe(175);
     expect(parentNode.parentId).toBeUndefined();
     expect(definitionNode.parentId).toBeUndefined();
     expect(exampleNode.parentId).toBeUndefined();
@@ -502,8 +515,8 @@ describe("buildMindMapElements", () => {
     expect(parentNode.zIndex).toBe(2);
     expect(definitionNode.zIndex).toBe(2);
     expect(studyCardNode.zIndex).toBe(2);
-    expect(parentNode.height).toBe(48);
-    expect(childNode.height).toBe(48);
+    expect(parentNode.height).toBe(87);
+    expect(childNode.height).toBe(87);
     expect(parentNode.data.badges).toEqual([
       "0 direct cards",
       "1 descendant card",
@@ -563,18 +576,18 @@ describe("buildMindMapElements", () => {
     const fourthNode = nodes.find((node) => node.id === "node-example");
 
     expect(currentGroup.width).toBe(884);
-    expect(currentGroup.height).toBe(412);
+    expect(currentGroup.height).toBe(444);
     expect(firstNode.position).toEqual({
       x: currentGroup.position.x + 24,
-      y: currentGroup.position.y + 64
+      y: currentGroup.position.y + 96
     });
     expect(thirdNode.position).toEqual({
       x: currentGroup.position.x + 600,
-      y: currentGroup.position.y + 64
+      y: currentGroup.position.y + 96
     });
     expect(fourthNode.position).toEqual({
       x: currentGroup.position.x + 24,
-      y: currentGroup.position.y + 240
+      y: currentGroup.position.y + 272
     });
   });
 
@@ -625,7 +638,10 @@ describe("buildMindMapElements", () => {
             "Covers identity proof, session validation, token exchange, and passwordless sign-in flows in a module.",
           knowledge_node_status: "needs_review",
           knowledge_node_review_reason: "Missing definition Knowledge Node",
-          study_card_count: 12,
+          direct_study_card_count: 12,
+          descendant_study_card_count: 34,
+          total_study_card_count: 46,
+          study_card_count: 46,
           note_group_count: 3
         }
       ],
@@ -639,8 +655,14 @@ describe("buildMindMapElements", () => {
     });
     const conceptNode = nodes.find((node) => node.id === "concept-auth");
 
-    expect(conceptNode.width).toBe(260);
-    expect(conceptNode.height).toBeGreaterThanOrEqual(156);
+    expect(conceptNode.width).toBe(280);
+    expect(conceptNode.data.badges.slice(0, 4)).toEqual([
+      "12 direct cards",
+      "34 descendant cards",
+      "46 total cards",
+      "Needs review"
+    ]);
+    expect(conceptNode.height).toBe(166);
   });
 });
 

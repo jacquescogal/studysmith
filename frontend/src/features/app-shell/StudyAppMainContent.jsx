@@ -324,6 +324,10 @@ export function StudyAppMainContent({ model }) {
             disabled: settingsDisabled,
             disabledReason: canUseProtectedActions ? "Maintainer access is required to edit Concept settings." : "Sign in to edit Concept settings."
           }}
+          studyCardScope={{
+            includeDescendants: includeDescendantStudyCards,
+            onIncludeDescendantsChange: setIncludeDescendantStudyCards
+          }}
           review={reviewDock("topic")}
         />
       );
@@ -634,7 +638,6 @@ export function StudyAppMainContent({ model }) {
                     setReadingMode={setReadingMode}
                     setConceptTitleDraft={setTopicTitleDraft}
                     setConceptDescriptionDraft={setTopicDescriptionDraft}
-                    setIncludeDescendantStudyCards={setIncludeDescendantStudyCards}
                     setEditingStudyCard={setEditingStudyCard}
                     setEditingStudyCardId={setEditingStudyCardId}
                     setEditingQuestionCard={setEditingQuestionCard}

@@ -688,6 +688,23 @@ textarea {
   gap: 8px;
 }
 
+.scope-dock-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border-top: 1px solid hsl(var(--border));
+  padding-top: 12px;
+  color: hsl(var(--foreground));
+  font-size: 0.82rem;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.scope-dock-toggle input {
+  width: auto;
+  margin-top: 1px;
+}
+
 .scope-dock-action {
   width: 100%;
   justify-content: flex-start;
@@ -705,8 +722,20 @@ textarea {
 }
 
 .scope-dock-review {
-  border-top: 1px solid hsl(var(--border));
-  padding-top: 12px;
+  gap: 10px;
+}
+
+.scope-dock-review-divider {
+  height: 1px;
+  background: #cbd5e1;
+}
+
+.scope-dock-review-title {
+  color: hsl(var(--foreground));
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .scope-dock-review-header {
@@ -1105,7 +1134,7 @@ textarea {
   background: #fff;
   box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
   color: #17213a;
-  padding: 12px 38px 12px 12px;
+  padding: 14px 40px 14px 14px;
 }
 
 .mind-map-node-clickable {

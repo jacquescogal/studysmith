@@ -148,7 +148,6 @@ export function StudyScopeContent({
   setReadingMode,
   setConceptTitleDraft,
   setConceptDescriptionDraft,
-  setIncludeDescendantStudyCards,
   setEditingStudyCard,
   setEditingStudyCardId,
   setEditingQuestionCard,
@@ -222,17 +221,6 @@ export function StudyScopeContent({
   const sourceRangePositionLabel = pinnedSourceRanges.length
     ? `Source range ${activeSourceRangeNumber} of ${pinnedSourceRanges.length}`
     : "";
-  const descendantStudyCardToggle = isConceptScope ? (
-    <label className="toggle">
-      <input
-        type="checkbox"
-        checked={includeDescendantStudyCards}
-        onChange={(event) => setIncludeDescendantStudyCards?.(event.target.checked)}
-      />
-      Include descendant Study Cards
-    </label>
-  ) : null;
-
   if (isMindMapPage || isDefaultNonExplicitRoute) {
     if (isConceptScope) {
       return (
@@ -297,7 +285,6 @@ export function StudyScopeContent({
             <p className={classes.mutedText}>
               Study Cards with their linked Question Cards.
             </p>
-            {descendantStudyCardToggle}
           </div>
         </section>
         <NoteGroupViewCards
@@ -311,7 +298,6 @@ export function StudyScopeContent({
           editingStudyCard={editingStudyCard}
           editingQuestionCardId={editingQuestionCardId}
           editingQuestionCard={editingQuestionCard}
-          fixedTopicFilter={isConceptScope ? selectedConcept : null}
           unlinkedQuestionCount={
             isConceptScope
               ? conceptUnlinkedQuestionCount
@@ -319,6 +305,7 @@ export function StudyScopeContent({
           }
           loading={isConceptScope ? false : noteGroupCardTableLoading}
           error={isConceptScope ? studyCardError || questionCardError : noteGroupCardTableError}
+          fixedTopicFilter={isConceptScope && !includeDescendantStudyCards ? selectedConcept : null}
           onEditStudyCard={handleEditStudyCard}
           onEditingStudyCardChange={setEditingStudyCard}
           onSaveStudyCard={handleSaveStudyCard}
@@ -503,7 +490,6 @@ export function StudyScopeContent({
                 ? "Read study cards for this concept."
                 : "Manage study cards for this note group."}
             </p>
-            {descendantStudyCardToggle}
           </div>
         </section>
         <StudyCardList
@@ -554,7 +540,6 @@ export function StudyScopeContent({
           mutedTextClass={classes.mutedText}
           questionTimeline={questionTimeline}
         />
-        {descendantStudyCardToggle}
         <QuestionCardList
           cards={questionCardsForDisplay}
           masteryFilter={masteryFilter}

@@ -17,7 +17,7 @@ const getButtonMarkup = (html, ariaLabel) => {
 };
 
 describe("Concept View Cards", () => {
-  test("Concept View Cards renders include descendant Study Cards toggle checked by default", () => {
+  test("Concept View Cards leaves include descendant Study Cards toggle to the dock", () => {
     const html = renderToStaticMarkup(
       <ConceptScopeContent
         shouldHoldContent={false}
@@ -29,16 +29,15 @@ describe("Concept View Cards", () => {
         studyCards={[]}
         questionCards={[]}
         classes={classes}
-        setIncludeDescendantStudyCards={vi.fn()}
         startReview={vi.fn()}
       />
     );
 
-    expect(html).toContain("Include descendant Study Cards");
-    expect(html).toContain("checked");
+    expect(html).toContain("<h2>View Cards</h2>");
+    expect(html).not.toContain("Include descendant Study Cards");
   });
 
-  test("Concept View Cards renders include descendant Study Cards toggle unchecked when disabled", () => {
+  test("Concept View Cards keeps descendant Study Cards when descendant scope is included", () => {
     const html = renderToStaticMarkup(
       <ConceptScopeContent
         shouldHoldContent={false}
@@ -46,23 +45,109 @@ describe("Concept View Cards", () => {
         isMindMapPage={false}
         isStudyPage={false}
         isQuestionPage={false}
-        selectedConcept={{ id: "concept-1", label: "Energy" }}
-        studyCards={[]}
+        selectedConcept={{ id: "concept-parent", label: "Parent" }}
+        includeDescendantStudyCards
+        conceptCardTableRows={[
+          {
+            study_card: {
+              id: "study-direct",
+              title: "Direct card",
+              topic_chips: [{ id: "concept-parent", label: "Parent" }]
+            },
+            question_cards: []
+          },
+          {
+            study_card: {
+              id: "study-child",
+              title: "Child card",
+              topic_chips: [{ id: "concept-child", label: "Child" }]
+            },
+            question_cards: []
+          }
+        ]}
+        studyCards={[
+          {
+            id: "study-direct",
+            title: "Direct card",
+            topic_chips: [{ id: "concept-parent", label: "Parent" }]
+          },
+          {
+            id: "study-child",
+            title: "Child card",
+            topic_chips: [{ id: "concept-child", label: "Child" }]
+          }
+        ]}
         questionCards={[]}
+        concepts={[
+          { id: "concept-parent", label: "Parent" },
+          { id: "concept-child", label: "Child" }
+        ]}
         classes={classes}
-        includeDescendantStudyCards={false}
-        setIncludeDescendantStudyCards={vi.fn()}
         startReview={vi.fn()}
       />
     );
 
-    expect(html).toContain("Include descendant Study Cards");
-    expect(html).not.toContain("checked");
+    expect(html).toContain("Direct card");
+    expect(html).toContain("Child card");
+  });
+
+  test("Concept View Cards applies fixed Concept filter when descendant scope is disabled", () => {
+    const html = renderToStaticMarkup(
+      <ConceptScopeContent
+        shouldHoldContent={false}
+        isViewCardsPage
+        isMindMapPage={false}
+        isStudyPage={false}
+        isQuestionPage={false}
+        selectedConcept={{ id: "concept-parent", label: "Parent" }}
+        includeDescendantStudyCards={false}
+        conceptCardTableRows={[
+          {
+            study_card: {
+              id: "study-direct",
+              title: "Direct card",
+              topic_chips: [{ id: "concept-parent", label: "Parent" }]
+            },
+            question_cards: []
+          },
+          {
+            study_card: {
+              id: "study-child",
+              title: "Child card",
+              topic_chips: [{ id: "concept-child", label: "Child" }]
+            },
+            question_cards: []
+          }
+        ]}
+        studyCards={[
+          {
+            id: "study-direct",
+            title: "Direct card",
+            topic_chips: [{ id: "concept-parent", label: "Parent" }]
+          },
+          {
+            id: "study-child",
+            title: "Child card",
+            topic_chips: [{ id: "concept-child", label: "Child" }]
+          }
+        ]}
+        questionCards={[]}
+        concepts={[
+          { id: "concept-parent", label: "Parent" },
+          { id: "concept-child", label: "Child" }
+        ]}
+        classes={classes}
+        startReview={vi.fn()}
+      />
+    );
+
+    expect(html).toContain("Direct card");
+    expect(html).not.toContain("Child card");
   });
 });
 
 describe("Concept Study Cards", () => {
-  test("Concept Study Cards route renders include descendant Study Cards toggle", () => {
+  test("Concept Study Cards route leaves include descendant Study Cards toggle to the dock", () => {
     const html = renderToStaticMarkup(
       <ConceptScopeContent
         shouldHoldContent={false}
@@ -79,7 +164,6 @@ describe("Concept Study Cards", () => {
         canUseProtectedActions={false}
         editingStudyCardId=""
         editingStudyCard={{ title: "", content: "", chipIds: [] }}
-        setIncludeDescendantStudyCards={vi.fn()}
         setEditingStudyCard={vi.fn()}
         setEditingStudyCardId={vi.fn()}
         handleBackToOverview={vi.fn()}
@@ -90,8 +174,7 @@ describe("Concept Study Cards", () => {
     );
 
     expect(html).toContain("<h2>Study cards</h2>");
-    expect(html).toContain("Include descendant Study Cards");
-    expect(html).toContain("checked");
+    expect(html).not.toContain("Include descendant Study Cards");
   });
 });
 

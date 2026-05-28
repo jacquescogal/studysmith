@@ -4,13 +4,16 @@ import ELK from "elkjs/lib/elk.bundled.js";
 const elk = new ELK();
 
 const NODE_WIDTH = 260;
+const STANDARD_CONCEPT_NODE_WIDTH = 280;
 const NODE_HEIGHT = 148;
-const ROOT_NODE_HEIGHT = 112;
-const TOPIC_NODE_HEIGHT = 156;
+const ROOT_NODE_HEIGHT = 132;
+const NOTE_GROUP_NODE_HEIGHT = 120;
+const TOPIC_NODE_HEIGHT = 164;
 const RELATIONSHIP_NODE_WIDTH = 120;
 const RELATIONSHIP_NODE_HEIGHT = 58;
 const TOPIC_GROUP_MIN_WIDTH = 320;
 const TOPIC_GROUP_HEADER_HEIGHT = 64;
+const TOPIC_CURRENT_GROUP_HEADER_HEIGHT = 96;
 const TOPIC_GROUP_CHILD_GAP = 28;
 const TOPIC_GROUP_PADDING = 24;
 const TOPIC_GROUP_MAX_COLUMNS = 3;
@@ -119,23 +122,46 @@ function estimatedLineCount(value, charsPerLine, maxLines) {
   return Math.max(1, Math.min(maxLines, Math.ceil(text.length / charsPerLine)));
 }
 
-function estimateMindMapNodeHeight(data) {
+function estimatedBadgeRows(badges, contentWidth = 206) {
+  const visibleBadges = (badges || []).slice(0, 4);
+  if (!visibleBadges.length) {
+    return 0;
+  }
+
+  let rows = 1;
+  let rowWidth = 0;
+  visibleBadges.forEach((badge) => {
+    const badgeWidth = Math.min(contentWidth, Math.max(44, String(badge).length * 5.5 + 14));
+    const nextWidth = rowWidth ? rowWidth + 5 + badgeWidth : badgeWidth;
+    if (nextWidth > contentWidth && rowWidth) {
+      rows += 1;
+      rowWidth = badgeWidth;
+      return;
+    }
+    rowWidth = nextWidth;
+  });
+  return rows;
+}
+
+function estimateMindMapNodeHeight(data, nodeWidth = NODE_WIDTH) {
   const titleLines = estimatedLineCount(data.title, 30, 3);
   const summaryLines = estimatedLineCount(data.summary, 42, 3);
   const warningLines = estimatedLineCount(data.reviewReason, 38, 2);
-  const badgeRows = Math.max(1, Math.ceil((data.badges || []).length / 2));
+  const badgeRows = estimatedBadgeRows(data.badges, nodeWidth - 54);
   const actionHeight = 0;
   const baseHeight =
-    24 +
+    28 +
     titleLines * 20 +
     (summaryLines ? 7 + summaryLines * 17 : 0) +
     (warningLines ? 7 + warningLines * 17 : 0) +
-    10 +
-    badgeRows * 22 +
+    (badgeRows ? 10 + badgeRows * 22 : 0) +
     actionHeight;
 
-  if (data.nodeType === "root" || data.nodeType === "note_group") {
+  if (data.nodeType === "root") {
     return Math.max(ROOT_NODE_HEIGHT, baseHeight);
+  }
+  if (data.nodeType === "note_group") {
+    return Math.max(NOTE_GROUP_NODE_HEIGHT, baseHeight);
   }
   if (data.nodeType === "concept" || data.nodeType === "topic") {
     return Math.max(TOPIC_NODE_HEIGHT, baseHeight);
@@ -151,7 +177,7 @@ function estimateMindMapNodeHeight(data) {
     data.nodeType === "topic_current_group" ||
     data.nodeType === "topic_children_group"
   ) {
-    return TOPIC_GROUP_HEADER_HEIGHT + TOPIC_GROUP_PADDING;
+    return topicGroupHeaderHeight(data.nodeType) + TOPIC_GROUP_PADDING;
   }
   return Math.max(NODE_HEIGHT, baseHeight);
 }
@@ -163,7 +189,13 @@ function estimateTopicTreeNodeHeight(data) {
     data.nodeType === "topic_parent" ||
     data.nodeType === "topic_child"
   ) {
-    return TOPIC_TREE_COMPACT_TOPIC_HEIGHT;
+    const titleLines = estimatedLineCount(data.title, 30, 2);
+    const badgeRows = Math.ceil((data.badges || []).length / 2);
+    const compactHeight =
+      22 +
+      Math.max(1, titleLines) * 17 +
+      (badgeRows ? 8 + badgeRows * 20 : 0);
+    return Math.max(TOPIC_TREE_COMPACT_TOPIC_HEIGHT, compactHeight);
   }
   return estimateMindMapNodeHeight(data);
 }
@@ -189,6 +221,10 @@ function isConceptTreeGroup(nodeType) {
 
 function isCurrentConceptGroup(nodeType) {
   return nodeType === "concept_current_group" || nodeType === "topic_current_group";
+}
+
+function topicGroupHeaderHeight(nodeType) {
+  return isCurrentConceptGroup(nodeType) ? TOPIC_CURRENT_GROUP_HEADER_HEIGHT : TOPIC_GROUP_HEADER_HEIGHT;
 }
 
 function isParentConceptGroup(nodeType) {
@@ -233,6 +269,7 @@ export function buildMindMapElements(
     const currentGroup = groupNodes.find((node) => isCurrentConceptGroup(node.node_type));
     const parentGroup = groupNodes.find((node) => isParentConceptGroup(node.node_type));
     const childrenGroup = groupNodes.find((node) => node.node_type === "concept_children_group" || node.node_type === "topic_children_group");
+    const groupNodeById = new Map(groupNodes.map((node) => [node.id, node]));
     const groupedNodesByParentId = new Map();
     const studyCardNodes = [];
 
@@ -280,6 +317,7 @@ export function buildMindMapElements(
         ? rowHeights.reduce((total, rowHeight) => total + rowHeight, 0) +
           Math.max(0, rowHeights.length - 1) * TOPIC_GROUP_CHILD_GAP
         : 0;
+      const headerHeight = topicGroupHeaderHeight(groupNodeById.get(groupId)?.node_type);
       return {
         children,
         columnCount,
@@ -289,8 +327,8 @@ export function buildMindMapElements(
           TOPIC_GROUP_PADDING * 2 + columnCount * NODE_WIDTH + Math.max(0, columnCount - 1) * TOPIC_GROUP_CHILD_GAP
         ),
         height: Math.max(
-          TOPIC_GROUP_HEADER_HEIGHT + TOPIC_GROUP_PADDING,
-          TOPIC_GROUP_HEADER_HEIGHT + contentHeight + TOPIC_GROUP_PADDING
+          headerHeight + TOPIC_GROUP_PADDING,
+          headerHeight + contentHeight + TOPIC_GROUP_PADDING
         )
       };
     };
@@ -334,7 +372,7 @@ export function buildMindMapElements(
         status: item.knowledge_node_status,
         reviewReason: item.knowledge_node_review_reason,
         importance: item.importance,
-        badges: topicBadges(item),
+        badges: isCurrentConceptGroup(item.node_type) ? topicBadges(item) : [],
         actionTopicId: item.concept_ids?.[0] || item.topic_ids?.[0] || item.id,
         actionConceptId: item.concept_ids?.[0] || item.topic_ids?.[0] || item.id,
         canRegenerateKnowledgeNodes: Boolean(isCurrentConceptGroup(item.node_type) && canRegenerateKnowledgeNodes),
@@ -352,11 +390,14 @@ export function buildMindMapElements(
         data: nodeData,
         width: metrics.width,
         height: metrics.height,
+        selectable: false,
+        draggable: false,
         zIndex: 0
       });
 
       const children = metrics.children;
       const parentPosition = groupPosition(item);
+      const headerHeight = topicGroupHeaderHeight(item.node_type);
       children.forEach((item, index) => {
         const nodeData = topicTreeNodeData(item);
         const rowIndex = Math.floor(index / TOPIC_GROUP_MAX_COLUMNS);
@@ -369,7 +410,7 @@ export function buildMindMapElements(
           type: "mindMapNode",
           position: {
             x: parentPosition.x + TOPIC_GROUP_PADDING + columnIndex * (NODE_WIDTH + TOPIC_GROUP_CHILD_GAP),
-            y: parentPosition.y + TOPIC_GROUP_HEADER_HEIGHT + previousRowsHeight
+            y: parentPosition.y + headerHeight + previousRowsHeight
           },
           data: nodeData,
           width: NODE_WIDTH,
@@ -484,8 +525,8 @@ export function buildMindMapElements(
         type: "mindMapNode",
         position: { x: 0, y: 0 },
         data: nodeData,
-        width: NODE_WIDTH,
-        height: estimateMindMapNodeHeight(nodeData)
+        width: STANDARD_CONCEPT_NODE_WIDTH,
+        height: estimateMindMapNodeHeight(nodeData, STANDARD_CONCEPT_NODE_WIDTH)
       });
     });
 
@@ -574,8 +615,8 @@ export function buildMindMapElements(
       type: "mindMapNode",
       position: { x: 0, y: 0 },
       data: nodeData,
-      width: NODE_WIDTH,
-      height: estimateMindMapNodeHeight(nodeData)
+      width: STANDARD_CONCEPT_NODE_WIDTH,
+      height: estimateMindMapNodeHeight(nodeData, STANDARD_CONCEPT_NODE_WIDTH)
     });
 
     if (graphScope === "note_group") {

@@ -18,7 +18,7 @@ function expectCssDeclaration(rule, property, value) {
 }
 
 describe("ScopeInteractionDock", () => {
-  test("renders scope actions, Review Due, and a bounded Review count slider", () => {
+  test("renders scope actions, Review section, Due count, and a bounded review count slider", () => {
     const html = renderToStaticMarkup(
       <ScopeInteractionDock
         scopeLabel="Note Group"
@@ -43,12 +43,19 @@ describe("ScopeInteractionDock", () => {
     expect(html).toContain(">Mind Map</");
     expect(html).toContain(">View Cards</");
     expect(html).toContain(">Study</");
+    expect(html).toContain("scope-dock-review-divider");
+    expect(html).toContain("scope-dock-review-title");
+    expect(html).toContain(">Review</div>");
+    expect(html).toContain(">Due</span>");
     expect(html).toContain(">Review Due</");
     expect(html).toContain(">4</span>");
     expect(html).toContain("type=\"range\"");
+    expect(html).toContain("aria-label=\"Review count\"");
     expect(html).toContain("min=\"0\"");
     expect(html).toContain("max=\"22\"");
     expect(html).toContain("value=\"9\"");
+    expect(html).toContain(">Review 10</button>");
+    expect(html).not.toContain(">Review 10</span>");
   });
 
   test("maps the slider right endpoint to the full review count", () => {
@@ -70,7 +77,8 @@ describe("ScopeInteractionDock", () => {
       />
     );
 
-    expect(html).toContain(">Review 0</span>");
+    expect(html).toContain(">Review 0</button>");
+    expect(html).not.toContain(">Review 0</span>");
     expect(html).toContain("min=\"0\"");
     expect(html).toContain("max=\"0\"");
     expect(html).toContain("value=\"0\"");
@@ -89,6 +97,13 @@ describe("ScopeInteractionDock", () => {
     expectCssDeclaration(sliderInputRule, "padding", "0");
   });
 
+  test("renders a visible divider above the review dock section", () => {
+    const dividerRule = getCssRule(".scope-dock-review-divider");
+
+    expectCssDeclaration(dividerRule, "height", "1px");
+    expect(dividerRule).toContain("background: #cbd5e1");
+  });
+
   test("omits Study when it is not supplied for a scope", () => {
     const html = renderToStaticMarkup(
       <ScopeInteractionDock
@@ -103,6 +118,41 @@ describe("ScopeInteractionDock", () => {
     expect(html).toContain(">Concept</");
     expect(html).not.toContain(">Study</");
     expect(html).not.toContain("Topic");
+  });
+
+  test("renders include descendant Study Cards control in the dock", () => {
+    const html = renderToStaticMarkup(
+      <ScopeInteractionDock
+        scopeLabel="Concept"
+        actions={[
+          { id: "mind-map", label: "Mind Map", onClick: vi.fn() },
+          { id: "view-cards", label: "View Cards", onClick: vi.fn() }
+        ]}
+        studyCardScope={{
+          includeDescendants: true,
+          onIncludeDescendantsChange: vi.fn()
+        }}
+      />
+    );
+
+    expect(html).toContain("scope-dock-toggle");
+    expect(html).toContain("Include descendant Study Cards");
+    expect(html).toContain("checked");
+  });
+
+  test("renders include descendant Study Cards unchecked when disabled in the dock", () => {
+    const html = renderToStaticMarkup(
+      <ScopeInteractionDock
+        scopeLabel="Concept"
+        studyCardScope={{
+          includeDescendants: false,
+          onIncludeDescendantsChange: vi.fn()
+        }}
+      />
+    );
+
+    expect(html).toContain("Include descendant Study Cards");
+    expect(html).not.toContain("checked");
   });
 
   test("renders a scope settings gear as icon chrome separate from action rows", () => {
