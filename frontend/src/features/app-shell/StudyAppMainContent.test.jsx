@@ -545,7 +545,8 @@ describe("StudyAppMainContent", () => {
 
     expect(html).toContain("max=\"22\"");
     expect(html).toContain("value=\"9\"");
-    expect(html).toContain(">Review 10</span>");
+    expect(html).toContain(">Review 10</button>");
+    expect(html).not.toContain(">Review 10</span>");
   });
 
   test("renders the Concept scope branch from the selected route scope", () => {
@@ -586,6 +587,7 @@ describe("StudyAppMainContent", () => {
           handleSaveStudyCard: vi.fn(),
           handleSaveTopic: vi.fn(),
           hasSidebar: false,
+          includeDescendantStudyCards: false,
           isGeneratingQuestions: false,
           isQuestionPage: false,
           isRestoringRoute: false,
@@ -639,6 +641,7 @@ describe("StudyAppMainContent", () => {
           setEditingQuestionCardId: vi.fn(),
           setEditingStudyCard: vi.fn(),
           setEditingStudyCardId: vi.fn(),
+          setIncludeDescendantStudyCards: vi.fn(),
           setIsChatOpen: vi.fn(),
           setIsReadingOpen: vi.fn(),
           setMasteryFilter: vi.fn(),
@@ -666,6 +669,8 @@ describe("StudyAppMainContent", () => {
     );
 
     expect(html).toContain("Concept scope");
+    expect(html).toContain("Include descendant Study Cards");
+    expect(html).not.toContain("checked");
     expect(ConceptScopeContent).toHaveBeenCalledOnce();
   });
 });
