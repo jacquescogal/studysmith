@@ -381,6 +381,46 @@ describe("NoteGroupScopeContent inline Study route", () => {
     expect(html).toContain("Back to Derived Study Cards");
   });
 
+  test("Source Text modal exposes scoped Note Group selector when unpinned", () => {
+    const html = renderToStaticMarkup(
+      <SourceTextContainer
+        classes={classes}
+        readingAvailable
+        noteGroupOptions={[
+          { value: "note-a", label: "Alpha" },
+          { value: "note-b", label: "Beta" }
+        ]}
+        activeSourceNoteGroupId="note-a"
+        onSourceNoteGroupChange={vi.fn()}
+        readingPinnedCardId=""
+        effectiveCleanedText="source"
+      />
+    );
+
+    expect(html).toContain("aria-label=\"Select source Note Group\"");
+    expect(html).toContain("Alpha");
+    expect(html).not.toContain("disabled");
+  });
+
+  test("Source Text modal disables Note Group selector when pinned", () => {
+    const html = renderToStaticMarkup(
+      <SourceTextContainer
+        classes={classes}
+        readingAvailable
+        noteGroupOptions={[{ value: "note-a", label: "Alpha" }]}
+        activeSourceNoteGroupId="note-a"
+        onSourceNoteGroupChange={vi.fn()}
+        readingPinnedCardId="card-a"
+        pinnedStudyCard={{ id: "card-a", title: "Pinned", content: "Body" }}
+        pinnedStudyCardPositionLabel="Study Card 1 of 1"
+        effectiveCleanedText="source"
+      />
+    );
+
+    expect(html).toContain("aria-label=\"Select source Note Group\"");
+    expect(html).toContain("disabled");
+  });
+
   test("disables pinned navigation at the last Study Card and first source range", () => {
     const html = renderToStaticMarkup(
       <SourceTextContainer

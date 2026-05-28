@@ -1896,6 +1896,20 @@ textarea {
   padding: 6px 2px 24px;
 }
 
+.source-note-group-picker {
+  display: grid;
+  gap: 4px;
+  max-width: 280px;
+  margin-bottom: 12px;
+}
+
+.source-note-group-picker span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 .inline-study-scroll .clean-source.has-pin {
   padding-bottom: 240px;
 }
