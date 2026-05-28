@@ -579,6 +579,19 @@ export function listTopicStudyCards(topicId) {
   return listConceptStudyCards(topicId);
 }
 
+export function getModuleStudySources(moduleId) {
+  return request(`/modules/${moduleId}/study-sources`);
+}
+
+export function getConceptStudySources(conceptId, options = {}) {
+  const query = includeDescendantsParam(options);
+  return request(`/concepts/${conceptId}/study-sources${query ? `?${query}` : ""}`);
+}
+
+export function getTopicStudySources(topicId, options = {}) {
+  return getConceptStudySources(topicId, options);
+}
+
 export function getStudyCard(studyCardId) {
   return request(`/study-cards/${studyCardId}`);
 }
