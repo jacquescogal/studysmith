@@ -95,6 +95,12 @@ export function getCurrentUser() {
   return request("/me");
 }
 
+export function requestCreatorRole() {
+  return request("/me/creator-role-request", {
+    method: "POST"
+  });
+}
+
 export function listAdminUsers() {
   return request("/admin/users");
 }

@@ -160,6 +160,7 @@ class User(Base):
     supabase_user_id = Column(String, nullable=False, unique=True, index=True)
     email = Column(String, nullable=False, unique=True, index=True)
     app_role = Column(String, nullable=False, default=APP_ROLE_READER)
+    creator_role_requested_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

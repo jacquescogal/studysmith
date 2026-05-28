@@ -8,6 +8,7 @@ class UserOut(BaseModel):
     id: str
     email: str
     app_role: str
+    creator_role_requested_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

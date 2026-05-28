@@ -95,6 +95,29 @@ class AuthSchemaCompatibilityTests(unittest.TestCase):
         self.assertIn("owner_user_id", columns)
         self.assertIn("visibility", columns)
 
+    def test_user_creator_role_request_column_is_added_to_existing_sqlite_table(self):
+        from sqlalchemy import text
+        from app.main import _ensure_user_creator_role_request_columns
+
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        with engine.connect() as conn:
+            conn.execute(
+                text(
+                    "CREATE TABLE users ("
+                    "id VARCHAR PRIMARY KEY, "
+                    "supabase_user_id VARCHAR NOT NULL, "
+                    "email VARCHAR NOT NULL, "
+                    "app_role VARCHAR NOT NULL)"
+                )
+            )
+            conn.commit()
+
+        _ensure_user_creator_role_request_columns(engine)
+
+        with engine.connect() as conn:
+            columns = {row[1] for row in conn.execute(text("PRAGMA table_info(users)"))}
+        self.assertIn("creator_role_requested_at", columns)
+
 
 class AccessModelTests(unittest.TestCase):
     def setUp(self):
@@ -479,8 +502,59 @@ class AdminRoutesTests(unittest.TestCase):
             reader = User(id="reader", supabase_user_id="reader-sub", email="reader@example.com", app_role="reader")
             db.add_all([admin, reader])
             db.commit()
+            reader.creator_role_requested_at = datetime.utcnow()
             updated = update_user_role("reader", UserRoleUpdate(app_role=APP_ROLE_CREATOR), db=db, current_user=admin)
             self.assertEqual(updated.app_role, APP_ROLE_CREATOR)
+            self.assertIsNone(updated.creator_role_requested_at)
+        finally:
+            db.close()
+
+    def test_reader_can_request_creator_role_once(self):
+        from app.main import request_creator_role
+        from app.models import APP_ROLE_READER, User
+
+        db = self.SessionLocal()
+        try:
+            reader = User(
+                id="reader",
+                supabase_user_id="reader-sub",
+                email="reader@example.com",
+                app_role=APP_ROLE_READER,
+            )
+            db.add(reader)
+            db.commit()
+
+            result = request_creator_role(db=db, current_user=reader)
+
+            self.assertIsNotNone(result.creator_role_requested_at)
+            first_requested_at = result.creator_role_requested_at
+
+            result = request_creator_role(db=db, current_user=reader)
+
+            self.assertEqual(result.creator_role_requested_at, first_requested_at)
+        finally:
+            db.close()
+
+    def test_creator_cannot_request_creator_role(self):
+        from app.main import request_creator_role
+        from app.models import APP_ROLE_CREATOR, User
+
+        db = self.SessionLocal()
+        try:
+            creator = User(
+                id="creator",
+                supabase_user_id="creator-sub",
+                email="creator@example.com",
+                app_role=APP_ROLE_CREATOR,
+            )
+            db.add(creator)
+            db.commit()
+
+            with self.assertRaises(HTTPException) as exc:
+                request_creator_role(db=db, current_user=creator)
+
+            self.assertEqual(exc.exception.status_code, 400)
+            self.assertEqual(exc.exception.detail, "Only readers can request creator access")
         finally:
             db.close()
 

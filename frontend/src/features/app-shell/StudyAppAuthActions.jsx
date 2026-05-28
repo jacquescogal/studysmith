@@ -8,6 +8,9 @@ export function StudyAppAuthActions({
   authUiError,
   canManageSelectedSubject,
   currentUserError,
+  currentUserProfile,
+  creatorRoleRequesting,
+  handleRequestCreatorRole,
   handleSignIn,
   handleSignOut,
   isAdmin,
@@ -17,12 +20,26 @@ export function StudyAppAuthActions({
   setIsAdminPanelOpen,
   setIsSubjectManagementOpen
 }) {
+  const canRequestCreatorRole =
+    currentUserProfile?.app_role === "reader" && !currentUserProfile?.creator_role_requested_at;
+
   return (
     <div className="flex max-w-sm flex-col items-end gap-2 text-right">
       {auth.isAuthenticated ? (
         <>
           <div className="text-xs text-muted-foreground">{auth.user?.email}</div>
           <div className="flex flex-wrap justify-end gap-2">
+            {canRequestCreatorRole ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleRequestCreatorRole}
+                disabled={creatorRoleRequesting}
+              >
+                {creatorRoleRequesting ? "Requesting..." : "Request creator role"}
+              </Button>
+            ) : null}
             {isAdmin ? (
               <Button
                 type="button"
@@ -59,6 +76,9 @@ export function StudyAppAuthActions({
               Sign out
             </Button>
           </div>
+          {currentUserProfile?.app_role === "reader" && currentUserProfile?.creator_role_requested_at ? (
+            <p className="text-xs text-muted-foreground">Creator role requested.</p>
+          ) : null}
         </>
       ) : auth.isConfigured ? (
         <form className="flex flex-wrap justify-end gap-2" onSubmit={handleSignIn}>

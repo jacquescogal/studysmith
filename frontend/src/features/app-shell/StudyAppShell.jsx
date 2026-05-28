@@ -29,6 +29,7 @@ import { useModuleGenerationWorkflow } from "@/hooks/useModuleGenerationWorkflow
 import { useStudyScopeData } from "@/hooks/useStudyScopeData";
 import { useNoteGroupPageData } from "@/hooks/useNoteGroupPageData";
 import { useConceptPageData } from "@/hooks/useConceptPageData";
+import { useCreatorRoleRequest } from "@/hooks/useCreatorRoleRequest";
 import { useIncludeDescendantStudyCards } from "@/hooks/useIncludeDescendantStudyCards";
 import { useReviewSession } from "@/hooks/useReviewSession";
 import { useSubjectModuleRouteResolution } from "@/routes/useSubjectModuleRouteResolution";
@@ -43,9 +44,7 @@ const generateUniqueId = () => {
   }
   return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 };
-const showFetchToast = (error, fallback) => {
-  toast.error(error?.message || fallback);
-};
+const showFetchToast = (error, fallback) => toast.error(error?.message || fallback);
 const { panel: panelClass, primaryButton: primaryButtonClass, outlineButton: outlineButtonClass, smallOutlineButton: smallOutlineButtonClass, destructiveOutlineButton: destructiveOutlineButtonClass, smallDestructiveOutlineButton: smallDestructiveOutlineButtonClass, buttonRow: buttonRowClass, badge: badgeClass, mutedText: mutedTextClass, smallMutedText: smallMutedTextClass, errorText: errorTextClass
 } = appShellClasses;
 function StudyAppShell({ routePageModels }) {
@@ -57,6 +56,7 @@ function StudyAppShell({ routePageModels }) {
   const [authUiError, setAuthUiError] = useState("");
   const [currentUserProfile, setCurrentUserProfile] = useState(null);
   const [currentUserError, setCurrentUserError] = useState("");
+  const { creatorRoleRequesting, handleRequestCreatorRole } = useCreatorRoleRequest({ setAuthMessage, setAuthUiError, setCurrentUserProfile });
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const [isSubjectManagementOpen, setIsSubjectManagementOpen] = useState(false);
   const handleSubjectsLoadError = useCallback(
@@ -645,7 +645,7 @@ function StudyAppShell({ routePageModels }) {
     />
   ) : null;
   const authActions = (
-    <StudyAppAuthActions auth={auth} authEmail={authEmail} authMessage={authMessage} authSubmitting={authSubmitting} authUiError={authUiError} canManageSelectedSubject={canManageSelectedSubject} currentUserError={currentUserError} handleSignIn={handleSignIn} handleSignOut={handleSignOut} isAdmin={isAdmin} isAdminPanelOpen={isAdminPanelOpen} isSubjectManagementOpen={isSubjectManagementOpen} setAuthEmail={setAuthEmail} setIsAdminPanelOpen={setIsAdminPanelOpen} setIsSubjectManagementOpen={setIsSubjectManagementOpen} />
+    <StudyAppAuthActions auth={auth} authEmail={authEmail} authMessage={authMessage} authSubmitting={authSubmitting} authUiError={authUiError} canManageSelectedSubject={canManageSelectedSubject} currentUserError={currentUserError} currentUserProfile={currentUserProfile} creatorRoleRequesting={creatorRoleRequesting} handleRequestCreatorRole={handleRequestCreatorRole} handleSignIn={handleSignIn} handleSignOut={handleSignOut} isAdmin={isAdmin} isAdminPanelOpen={isAdminPanelOpen} isSubjectManagementOpen={isSubjectManagementOpen} setAuthEmail={setAuthEmail} setIsAdminPanelOpen={setIsAdminPanelOpen} setIsSubjectManagementOpen={setIsSubjectManagementOpen} />
   );
   return <StudyAppView model={{
     activeSourceRangeIndex, authActions,
