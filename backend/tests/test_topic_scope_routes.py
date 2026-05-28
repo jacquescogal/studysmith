@@ -150,6 +150,63 @@ class TopicScopeRoutesTests(unittest.TestCase):
         self.assertEqual(timeline_response["question_count"], 2)
         self.assertEqual(timeline_response["stale_count"], 1)
 
+    def test_concept_study_cards_include_descendants_by_default_and_deduplicate(self):
+        import app.db as db_module
+
+        with patch.object(db_module, "engine", self.engine):
+            from app.main import list_concept_study_cards
+
+        db = self.seed_topic_scope()
+        try:
+            module = db.get(Module, "module-1")
+            parent = db.get(TopicChip, "topic-1")
+            child = TopicChip(id="topic-child", module_id=module.id, label="Child", parent_topic_id=parent.id)
+            grandchild = TopicChip(
+                id="topic-grandchild",
+                module_id=module.id,
+                label="Grandchild",
+                parent_topic_id=child.id,
+            )
+            group = db.get(NoteGroup, "group-b")
+            child_card = StudyCard(id="study-child", note_group_id=group.id, title="Child", content="Child")
+            shared_card = StudyCard(id="study-shared", note_group_id=group.id, title="Shared", content="Shared")
+            grandchild_card = StudyCard(
+                id="study-grandchild",
+                note_group_id=group.id,
+                title="Grandchild",
+                content="Grandchild",
+            )
+            child_card.topic_chips.append(child)
+            shared_card.topic_chips.append(parent)
+            shared_card.topic_chips.append(child)
+            grandchild_card.topic_chips.append(grandchild)
+            db.add_all([child, grandchild, child_card, shared_card, grandchild_card])
+            db.commit()
+
+            user = db.get(User, "user-1")
+            default_response = list_concept_study_cards("topic-1", db=db, current_user=user)
+            direct_response = list_concept_study_cards(
+                "topic-1",
+                include_descendants=False,
+                db=db,
+                current_user=user,
+            )
+        finally:
+            db.close()
+
+        self.assertEqual(
+            {card.id for card in default_response["study_cards"]},
+            {"study-a", "study-b", "study-child", "study-shared", "study-grandchild"},
+        )
+        self.assertEqual(
+            {card.id for card in direct_response["study_cards"]},
+            {"study-a", "study-b", "study-shared"},
+        )
+        self.assertEqual(
+            len([card for card in default_response["study_cards"] if card.id == "study-shared"]),
+            1,
+        )
+
     def test_legacy_topic_routes_delegate_to_concept_handlers(self):
         import app.db as db_module
 
