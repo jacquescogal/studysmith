@@ -193,6 +193,121 @@ describe("buildMindMapElements", () => {
     expectDirectedEdgesWithoutLabels(edges);
   });
 
+  test("renders direct descendant and total Study Card count badges for Concept nodes", () => {
+    const graph = {
+      scope: "module",
+      module_id: "module-1",
+      nodes: [
+        {
+          id: "concept-parent",
+          node_type: "concept",
+          title: "Parent",
+          direct_study_card_count: 2,
+          descendant_study_card_count: 3,
+          total_study_card_count: 4,
+          study_card_count: 4
+        }
+      ],
+      edges: [],
+      study_cards: [],
+      note_groups: []
+    };
+
+    const { nodes } = buildMindMapElements(graph, { title: "Module Mind Map" });
+    const parent = nodes.find((node) => node.id === "concept-parent");
+    expect(parent.data.badges).toContain("2 direct cards");
+    expect(parent.data.badges).toContain("3 descendant cards");
+    expect(parent.data.badges).toContain("4 total cards");
+  });
+
+  test("keeps aggregate Study Card count badges and review status within the visible badge cap", () => {
+    const graph = {
+      scope: "module",
+      module_id: "module-1",
+      nodes: [
+        {
+          id: "concept-parent",
+          node_type: "concept",
+          title: "Parent",
+          direct_study_card_count: 1,
+          descendant_study_card_count: 2,
+          total_study_card_count: 3,
+          study_card_count: 3,
+          knowledge_node_status: "needs_review",
+          note_group_count: 5
+        }
+      ],
+      edges: [],
+      study_cards: [],
+      note_groups: []
+    };
+
+    const { nodes } = buildMindMapElements(graph, { title: "Module Mind Map" });
+    const parent = nodes.find((node) => node.id === "concept-parent");
+    expect(parent.data.badges.slice(0, 4)).toEqual([
+      "1 direct card",
+      "2 descendant cards",
+      "3 total cards",
+      "Needs review"
+    ]);
+    expect(parent.data.badges.slice(0, 4)).not.toContain("Concept");
+  });
+
+  test("uses legacy Study Card count fallback when aggregate counts are default zeros", () => {
+    const graph = {
+      scope: "module",
+      module_id: "module-1",
+      nodes: [
+        {
+          id: "concept-empty",
+          node_type: "concept",
+          title: "Empty Concept",
+          direct_study_card_count: 0,
+          descendant_study_card_count: 0,
+          total_study_card_count: 0,
+          study_card_count: 7
+        }
+      ],
+      edges: [],
+      study_cards: [],
+      note_groups: []
+    };
+
+    const { nodes } = buildMindMapElements(graph, { title: "Module Mind Map" });
+    const concept = nodes.find((node) => node.id === "concept-empty");
+    expect(concept.data.badges).toContain("7 cards");
+    expect(concept.data.badges).not.toContain("0 direct cards");
+    expect(concept.data.badges).not.toContain("0 descendant cards");
+    expect(concept.data.badges).not.toContain("0 total cards");
+  });
+
+  test("renders all-zero aggregate Study Card count badges when counts are meaningful", () => {
+    const graph = {
+      scope: "module",
+      module_id: "module-1",
+      nodes: [
+        {
+          id: "concept-empty",
+          node_type: "concept",
+          title: "Empty Concept",
+          direct_study_card_count: 0,
+          descendant_study_card_count: 0,
+          total_study_card_count: 0,
+          study_card_count: 0
+        }
+      ],
+      edges: [],
+      study_cards: [],
+      note_groups: []
+    };
+
+    const { nodes } = buildMindMapElements(graph, { title: "Module Mind Map" });
+    const concept = nodes.find((node) => node.id === "concept-empty");
+    expect(concept.data.badges).toContain("0 direct cards");
+    expect(concept.data.badges).toContain("0 descendant cards");
+    expect(concept.data.badges).toContain("0 total cards");
+  });
+
   test("adds selected-concept regeneration actions only to concept nodes when enabled", () => {
     const graph = {
       scope: "module",
@@ -246,13 +361,21 @@ describe("buildMindMapElements", () => {
           id: "concept-parent",
           node_type: "concept_parent",
           title: "Authentication",
-          parent_group_id: "concept-map-parent-group:concept-auth"
+          parent_group_id: "concept-map-parent-group:concept-auth",
+          direct_study_card_count: 0,
+          descendant_study_card_count: 1,
+          total_study_card_count: 1,
+          study_card_count: 1
         },
         {
           id: "concept-map-current-group:concept-auth",
           node_type: "concept_current_group",
           title: "Magic Links",
-          concept_ids: ["concept-auth"]
+          concept_ids: ["concept-auth"],
+          direct_study_card_count: 2,
+          descendant_study_card_count: 1,
+          total_study_card_count: 3,
+          study_card_count: 3
         },
         {
           id: "node-definition",
@@ -281,7 +404,11 @@ describe("buildMindMapElements", () => {
           id: "concept-child",
           node_type: "concept_child",
           title: "Link Expiry",
-          parent_group_id: "concept-map-children-group:concept-auth"
+          parent_group_id: "concept-map-children-group:concept-auth",
+          direct_study_card_count: 1,
+          descendant_study_card_count: 0,
+          total_study_card_count: 1,
+          study_card_count: 1
         },
         {
           id: "concept-map-study-card:study-card-1",
@@ -353,6 +480,12 @@ describe("buildMindMapElements", () => {
     expect(currentGroup.width).toBe(596);
     expect(currentGroup.height).toBe(236);
     expect(currentGroup.data.actionConceptId).toBe("concept-auth");
+    expect(currentGroup.data.badges).toEqual([
+      "2 direct cards",
+      "1 descendant card",
+      "3 total cards",
+      "Concept"
+    ]);
     expect(currentGroup.data.canRegenerateKnowledgeNodes).toBe(true);
     expect(currentGroup.data.onRegenerateKnowledgeNodes).toBe(regenerate);
     expect(currentGroup.data.regeneratingKnowledgeNodes).toBe(true);
@@ -371,6 +504,18 @@ describe("buildMindMapElements", () => {
     expect(studyCardNode.zIndex).toBe(2);
     expect(parentNode.height).toBe(48);
     expect(childNode.height).toBe(48);
+    expect(parentNode.data.badges).toEqual([
+      "0 direct cards",
+      "1 descendant card",
+      "1 total card",
+      "Concept"
+    ]);
+    expect(childNode.data.badges).toEqual([
+      "1 direct card",
+      "0 descendant cards",
+      "1 total card",
+      "Concept"
+    ]);
     expect(parentNode.data.canOpenConceptMindMap).toBe(true);
     expect(childNode.data.canOpenConceptMindMap).toBe(true);
     expect(definitionNode.data.canOpenConceptMindMap).toBe(false);
