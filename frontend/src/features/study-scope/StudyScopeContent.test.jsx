@@ -26,7 +26,7 @@ describe("NoteGroupScopeContent inline Study route", () => {
     expect(css).toContain("overscroll-behavior: contain");
     expect(css).toContain(".source-lookup-floating");
     expect(css).toContain("margin-inline: auto");
-    expect(css).toContain(".clean-source.has-pin");
+    expect(css).toContain(".inline-study-scroll .clean-source.has-pin");
     expect(css).toContain("padding-bottom: 240px");
   });
 
