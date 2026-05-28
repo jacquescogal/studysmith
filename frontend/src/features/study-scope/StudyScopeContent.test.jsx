@@ -35,6 +35,9 @@ describe("NoteGroupScopeContent inline Study route", () => {
     expect(html).toContain(">Study</");
     expect(html).toContain("Source Text");
     expect(html).toContain("Derived Study Cards");
+    expect(html).toContain('class="panel inline-study-panel"');
+    expect(html).toContain("inline-study-header");
+    expect(html).toContain("reading-content inline-reading-content inline-study-scroll");
     expect(html).toContain("Derived answer");
     expect(html).not.toContain("Formatted Text");
   });
@@ -114,6 +117,9 @@ describe("NoteGroupScopeContent inline Study route", () => {
 
     expect(html).toContain("source-highlight related");
     expect(html).toContain("source-highlight active");
+    expect(html).toContain('class="panel inline-study-panel"');
+    expect(html).toContain("inline-study-header");
+    expect(html).toContain("reading-content inline-reading-content inline-study-scroll");
     expect(html).toContain("Study Card 1 of 3");
     expect(html).toContain("Source range 2 of 2");
     expect(html).toContain("aria-label=\"Pin previous Study Card\"");

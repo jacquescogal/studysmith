@@ -317,8 +317,8 @@ export function StudyScopeContent({
 
   if (isInlineStudyPage) {
     return (
-      <section className={classes.panel} id="note-group-study">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+      <section className={`${classes.panel} inline-study-panel`} id="note-group-study">
+        <div className="inline-study-header flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2>Study</h2>
             <p className={classes.mutedText}>
@@ -349,7 +349,7 @@ export function StudyScopeContent({
         {!readingAvailable ? (
           <p className={classes.mutedText}>Study content is unavailable for this Note Group.</p>
         ) : readingMode === "clean" ? (
-          <div className="reading-content inline-reading-content" ref={readingContentRef}>
+          <div className="reading-content inline-reading-content inline-study-scroll" ref={readingContentRef}>
             <div className={`clean-source${readingPinnedCardId ? " has-pin" : ""}`}>
               {renderCleanedMarkdown(effectiveCleanedText || "", readingHighlights)}
             </div>
@@ -425,7 +425,7 @@ export function StudyScopeContent({
             ) : null}
           </div>
         ) : (
-          <div className="reading-content inline-reading-content" ref={readingContentRef}>
+          <div className="reading-content inline-reading-content inline-study-scroll" ref={readingContentRef}>
             {studyNoteSections.map((section, index) => {
               const title = section.title || `Section ${index + 1}`;
               const sourceRanges = getValidSourceRanges(sourceRangesByCardId, section.study_card_id);
