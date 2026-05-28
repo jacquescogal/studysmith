@@ -8,6 +8,7 @@ import {
   ConceptScopeContent,
   NoteGroupScopeContent,
   SourceTextContainer,
+  resolvePinnedStudyCardForModal,
   resolveSourceTextModalPayload
 } from "./StudyScopeContent";
 
@@ -607,6 +608,34 @@ describe("NoteGroupScopeContent inline Study route", () => {
     expect(html).toContain("View Source Text");
     expect(html).toContain("disabled");
     expect(html).toContain("Derived Study Cards");
+  });
+
+  test("resolves pinned Study Card preview data from grouped Module Study Cards", () => {
+    const pinnedCard = resolvePinnedStudyCardForModal({
+      readingPinnedCardId: "module-card-1",
+      pinnedStudyCard: null,
+      studyNoteGroups: [
+        {
+          id: "note-a",
+          title: "Module Note Group",
+          studyCards: [
+            {
+              id: "module-card-1",
+              title: "Module grouped card",
+              content: "Grouped card body"
+            }
+          ]
+        }
+      ],
+      studySourceNoteGroups: []
+    });
+
+    expect(pinnedCard).toMatchObject({
+      id: "module-card-1",
+      title: "Module grouped card",
+      content: "Grouped card body",
+      note_group_id: "note-a"
+    });
   });
 });
 
