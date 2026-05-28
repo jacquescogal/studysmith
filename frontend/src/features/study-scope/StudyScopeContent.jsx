@@ -234,6 +234,7 @@ export function StudyScopeContent({
   pinnedSourceRanges = [],
   pinnedStudyCard,
   studyNoteSections = [],
+  studyNoteGroups = [],
   conceptTitleDraft,
   conceptDescriptionDraft,
   conceptError,
@@ -314,9 +315,13 @@ export function StudyScopeContent({
   }
 
   const isDefaultNonExplicitRoute = !isViewCardsPage && !isInlineStudyPage && !isStudyPage && !isQuestionPage;
-  const orderedStudyCardIds = studyNoteSections
-    .map((section) => section.study_card_id)
-    .filter(Boolean);
+  const groupedStudyNoteGroups = studyNoteGroups.filter((group) => group.studyCards?.length);
+  const shouldRenderGroupedStudyCards = groupedStudyNoteGroups.length > 0;
+  const orderedStudyCardIds = shouldRenderGroupedStudyCards
+    ? groupedStudyNoteGroups.flatMap((group) => group.studyCards.map((card) => card.id).filter(Boolean))
+    : studyNoteSections
+        .map((section) => section.study_card_id)
+        .filter(Boolean);
   const pinnedStudyCardOrderIndex = orderedStudyCardIds.indexOf(readingPinnedCardId);
   const hasPreviousStudyCard = pinnedStudyCardOrderIndex > 0;
   const hasNextStudyCard =
@@ -349,6 +354,41 @@ export function StudyScopeContent({
     }
     event.stopPropagation();
     setReadingMode?.("clean");
+  };
+  const renderReadingStudyCard = (card, index, keyPrefix = "study-card") => {
+    const studyCardId = card.id || card.study_card_id || "";
+    const title = card.title || `Study Card ${index + 1}`;
+    const content = card.content || "";
+    const sourceRanges = getValidSourceRanges(sourceRangesByCardId, studyCardId);
+    const sourceDisabled = !sourceRanges.length;
+
+    return (
+      <section
+        key={`${keyPrefix}-${studyCardId || index}`}
+        id={`reading-study-${studyCardId}`}
+        className={`reading-section ${readingPinnedCardId === studyCardId ? "pinned" : ""}`}
+      >
+        <button
+          className="reading-section-toggle"
+          type="button"
+          aria-label={
+            sourceDisabled
+              ? `Source text unavailable for ${title}`
+              : `View source text for ${title}`
+          }
+          disabled={sourceDisabled}
+          onClick={(event) => handleStudyCardSourceOpen(event, studyCardId, 0)}
+        >
+          <Search size={16} aria-hidden="true" />
+        </button>
+        <div className="reading-section-header">
+          <h3>{title}</h3>
+        </div>
+        <div className="reading-section-body">
+          {renderMarkdownBlocks(content)}
+        </div>
+      </section>
+    );
   };
   const sourceTextDialog = (
     <Dialog open={sourceTextOpen} onOpenChange={setSourceTextOpen}>
@@ -510,40 +550,28 @@ export function StudyScopeContent({
             <p className={classes.mutedText}>Study content is unavailable for this Note Group.</p>
           ) : (
             <div className="reading-content inline-reading-content inline-study-scroll">
-              {studyNoteSections.map((section, index) => {
-                const title = section.title || `Section ${index + 1}`;
-                const sourceRanges = getValidSourceRanges(sourceRangesByCardId, section.study_card_id);
-                const sourceDisabled = !sourceRanges.length;
-                return (
-                  <section
-                    key={section.anchor || section.study_card_id || index}
-                    id={`reading-study-${section.study_card_id}`}
-                    className={`reading-section ${
-                      readingPinnedCardId === section.study_card_id ? "pinned" : ""
-                    }`}
-                  >
-                    <button
-                      className="reading-section-toggle"
-                      type="button"
-                      aria-label={
-                        sourceDisabled
-                          ? `Source text unavailable for ${title}`
-                          : `View source text for ${title}`
-                      }
-                      disabled={sourceDisabled}
-                      onClick={(event) => handleStudyCardSourceOpen(event, section.study_card_id, 0)}
-                    >
-                      <Search size={16} aria-hidden="true" />
-                    </button>
-                    <div className="reading-section-header">
-                      <h3>{title}</h3>
-                    </div>
-                    <div className="reading-section-body">
-                      {renderMarkdownBlocks(section.content || "")}
-                    </div>
-                  </section>
-                );
-              })}
+              {shouldRenderGroupedStudyCards
+                ? groupedStudyNoteGroups.map((group) => (
+                    <section className="study-note-group" key={group.id}>
+                      <div className="study-note-group-divider">
+                        {group.title || "Untitled Note Group"}
+                      </div>
+                      {group.studyCards.map((card, index) =>
+                        renderReadingStudyCard(card, index, group.id)
+                      )}
+                    </section>
+                  ))
+                : studyNoteSections.map((section, index) =>
+                    renderReadingStudyCard(
+                      {
+                        id: section.study_card_id,
+                        title: section.title || `Section ${index + 1}`,
+                        content: section.content || ""
+                      },
+                      index,
+                      section.anchor || "section"
+                    )
+                  )}
             </div>
           )}
         </section>

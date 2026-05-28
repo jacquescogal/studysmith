@@ -1791,6 +1791,32 @@ textarea {
   padding-right: 8px;
 }
 
+.study-note-group {
+  display: grid;
+  gap: 12px;
+}
+
+.study-note-group + .study-note-group {
+  margin-top: 18px;
+}
+
+.study-note-group-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.study-note-group-divider::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: #cbd5e1;
+}
+
 .reading-section {
   position: relative;
   padding: 16px 18px;

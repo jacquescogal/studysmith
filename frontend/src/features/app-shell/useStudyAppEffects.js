@@ -523,8 +523,7 @@ useEffect(() => {
     addRanges(readingPinnedCardId, "related", activeSourceRangeIndex);
     return highlights;
   }, [activeSourceRangeIndex, getValidSourceRanges, readingHoverCardId, readingPinnedCardId]);
-  const readingAvailable = studyNoteSections.length > 0 || Boolean(effectiveCleanedText);
-  const resolveNoteGroupLabel = (noteGroupId) => {
+  const resolveNoteGroupLabel = useCallback((noteGroupId) => {
     if (!noteGroupId) {
       return "";
     }
@@ -534,7 +533,51 @@ useEffect(() => {
     }
     const group = noteGroups.find((item) => item.id === noteGroupId);
     return group?.title || noteGroupId.slice(0, 8);
-  };
+  }, [moduleNoteGroupStatsById, noteGroups]);
+  const studyNoteGroups = useMemo(() => {
+    const sourceGroupsById = new Map(
+      (studySourceNoteGroups || []).map((group) => [group.id, group])
+    );
+    const orderIndexByNoteGroupId = new Map(
+      moduleNoteGroupsForDisplay.map((group, index) => [group.id, index])
+    );
+    const cardsByGroup = new Map();
+
+    filteredStudyCards.forEach((card) => {
+      const groupId = card.note_group_id || selectedNoteGroupId || "";
+      if (!groupId) {
+        return;
+      }
+      if (!cardsByGroup.has(groupId)) {
+        cardsByGroup.set(groupId, []);
+      }
+      if (!cardsByGroup.get(groupId).some((item) => item.id === card.id)) {
+        cardsByGroup.get(groupId).push(card);
+      }
+    });
+
+    return Array.from(cardsByGroup.entries())
+      .map(([groupId, cards]) => {
+        const sourceGroup = sourceGroupsById.get(groupId);
+        return {
+          id: groupId,
+          title: sourceGroup?.title || resolveNoteGroupLabel(groupId) || "Untitled Note Group",
+          orderIndex: orderIndexByNoteGroupId.get(groupId) ?? Number.POSITIVE_INFINITY,
+          studyCards: cards
+        };
+      })
+      .sort((a, b) => a.orderIndex - b.orderIndex || a.title.localeCompare(b.title));
+  }, [
+    filteredStudyCards,
+    moduleNoteGroupsForDisplay,
+    resolveNoteGroupLabel,
+    selectedNoteGroupId,
+    studySourceNoteGroups
+  ]);
+  const readingAvailable =
+    studyNoteSections.length > 0 ||
+    studyNoteGroups.some((group) => group.studyCards?.length) ||
+    Boolean(effectiveCleanedText);
   const getSectionAnchor = (section, index) =>
     section.anchor ||
     `section-${index + 1}-${(section.study_card_id || "note").slice(0, 8)}`;
@@ -1061,5 +1104,5 @@ useEffect(() => {
     setTopicSearch("");
     setAutoAdditionalInstructions(getModuleAdditionalInstructions(selectedModule));
   }, [selectedModuleId]);
-  return { autoJobActionId, autoJobsByNoteGroupId, canEditCurrentCards, canReorderNoteGroups, chipFilterValue, chipOptions, clearMindMapDrilldown, effectiveCleanedText, filteredNoteGroupOptions, filteredStudyCards, focusCardType, focusMasteryScore, focusMasteryTier, focusQuestionCard, formatDueAt, formatReviewAt, generationWorkflowsByNoteGroupId, getSectionAnchor, handleCancelAutoJob, handleChipFilterSelect, handleDeleteAutoJob, handleDeleteModule, handleNoteGroupDragEnd, handleNoteGroupDragEnter, handleNoteGroupDragOver, handleNoteGroupDragStart, handleNoteGroupDrop, handleOpenMindMapTopic, handleResetChipFilters, handleRetryAutoJob, handleSaveModuleMetadata, isSourceReady, metadataTitleDraft, moduleGenerationWorkflow, moduleGenerationWorkflowConnection, moduleGenerationWorkflowError, moduleNoteGroupStatsById, moduleNoteGroupsForDisplay, noteGroupCardTable, noteGroupCardTableError, noteGroupCardTableLoading, noteGroupChipIds, noteGroupMindMap, noteGroupMindMapError, noteGroupMindMapGenerating, noteGroupMindMapLoading, noteGroupProgress, noteGroupProgressError, noteGroupProgressLoading, noteGroupStats, noteGroupStatusMeta, openModuleMetadataModal, pinnedSourceRanges, pinnedStudyCard, questionCardError, questionCards, questionCardsForDisplay, questionJobStatus, questionTimeline, readingAvailable, readingHighlights, refreshModuleGeneratedData, refreshModuleGenerationWorkflowSnapshot, resolveNoteGroupLabel, reviewRefsMessage, sectionNavItems, selectedModule, selectedModuleCode, selectedNoteGroup, selectedNoteGroupCode, selectedNoteGroupWorkflow, selectedSubjectCode, selectedTopic, selectedTopicCode, setMetadataTitleDraft, setNoteGroupCardTable, setNoteGroupChipIds, setNoteGroupMindMap, setNoteGroupMindMapError, setNoteGroupMindMapGenerating, setQuestionCardError, setQuestionCards, setQuestionJobStatus, setStudyCardError, setStudyCards, setTopicDescriptionDraft, setTopicTitleDraft, shouldHoldSelectedNoteGroupContent, sidebarTopicOptions, sourceRangesByCardId, studyCardError, studyCardTitleById, studyCards, studyNoteSections, studySourceNoteGroups, topicCardTableRows, topicDescriptionDraft, topicMindMap, topicMindMapError, topicMindMapLoading, topicTitleDraft, topicUnlinkedQuestionCount };
+  return { autoJobActionId, autoJobsByNoteGroupId, canEditCurrentCards, canReorderNoteGroups, chipFilterValue, chipOptions, clearMindMapDrilldown, effectiveCleanedText, filteredNoteGroupOptions, filteredStudyCards, focusCardType, focusMasteryScore, focusMasteryTier, focusQuestionCard, formatDueAt, formatReviewAt, generationWorkflowsByNoteGroupId, getSectionAnchor, handleCancelAutoJob, handleChipFilterSelect, handleDeleteAutoJob, handleDeleteModule, handleNoteGroupDragEnd, handleNoteGroupDragEnter, handleNoteGroupDragOver, handleNoteGroupDragStart, handleNoteGroupDrop, handleOpenMindMapTopic, handleResetChipFilters, handleRetryAutoJob, handleSaveModuleMetadata, isSourceReady, metadataTitleDraft, moduleGenerationWorkflow, moduleGenerationWorkflowConnection, moduleGenerationWorkflowError, moduleNoteGroupStatsById, moduleNoteGroupsForDisplay, noteGroupCardTable, noteGroupCardTableError, noteGroupCardTableLoading, noteGroupChipIds, noteGroupMindMap, noteGroupMindMapError, noteGroupMindMapGenerating, noteGroupMindMapLoading, noteGroupProgress, noteGroupProgressError, noteGroupProgressLoading, noteGroupStats, noteGroupStatusMeta, openModuleMetadataModal, pinnedSourceRanges, pinnedStudyCard, questionCardError, questionCards, questionCardsForDisplay, questionJobStatus, questionTimeline, readingAvailable, readingHighlights, refreshModuleGeneratedData, refreshModuleGenerationWorkflowSnapshot, resolveNoteGroupLabel, reviewRefsMessage, sectionNavItems, selectedModule, selectedModuleCode, selectedNoteGroup, selectedNoteGroupCode, selectedNoteGroupWorkflow, selectedSubjectCode, selectedTopic, selectedTopicCode, setMetadataTitleDraft, setNoteGroupCardTable, setNoteGroupChipIds, setNoteGroupMindMap, setNoteGroupMindMapError, setNoteGroupMindMapGenerating, setQuestionCardError, setQuestionCards, setQuestionJobStatus, setStudyCardError, setStudyCards, setTopicDescriptionDraft, setTopicTitleDraft, shouldHoldSelectedNoteGroupContent, sidebarTopicOptions, sourceRangesByCardId, studyCardError, studyCardTitleById, studyCards, studyNoteGroups, studyNoteSections, studySourceNoteGroups, topicCardTableRows, topicDescriptionDraft, topicMindMap, topicMindMapError, topicMindMapLoading, topicTitleDraft, topicUnlinkedQuestionCount };
 }

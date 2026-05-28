@@ -243,6 +243,55 @@ describe("NoteGroupScopeContent inline Study route", () => {
     expect(html).not.toContain("Formatted Text");
   });
 
+  test("renders scoped Study Cards grouped by Note Group order", () => {
+    const html = renderToStaticMarkup(
+      <NoteGroupScopeContent
+        shouldHoldContent={false}
+        isViewCardsPage={false}
+        isInlineStudyPage
+        isStudyPage={false}
+        isQuestionPage={false}
+        readingAvailable
+        readingMode="study"
+        effectiveCleanedText="# Source"
+        studyNoteGroups={[
+          {
+            id: "note-b",
+            title: "Second Note Group",
+            studyCards: [
+              {
+                id: "card-b",
+                title: "Card B",
+                content: "Body B",
+                note_group_id: "note-b"
+              }
+            ]
+          },
+          {
+            id: "note-a",
+            title: "First Note Group",
+            studyCards: [
+              {
+                id: "card-a",
+                title: "Card A",
+                content: "Body A",
+                note_group_id: "note-a"
+              }
+            ]
+          }
+        ]}
+        sourceRangesByCardId={new Map()}
+        classes={classes}
+        setReadingMode={vi.fn()}
+      />
+    );
+
+    expect(html.indexOf("Second Note Group")).toBeLessThan(html.indexOf("First Note Group"));
+    expect(html).toContain("study-note-group-divider");
+    expect(html).toContain("Card B");
+    expect(html).toContain("Body A");
+  });
+
   test("renders source lookup controls and disables them without valid ranges", () => {
     const html = renderToStaticMarkup(
       <NoteGroupScopeContent
