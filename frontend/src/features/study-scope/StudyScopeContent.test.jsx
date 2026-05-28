@@ -447,6 +447,24 @@ describe("NoteGroupScopeContent inline Study route", () => {
     expect(html).toContain("Back to Derived Study Cards");
   });
 
+  test("marks cross Note Group boundary navigation buttons", () => {
+    const html = renderToStaticMarkup(
+      <SourceTextContainer
+        classes={classes}
+        readingAvailable
+        readingPinnedCardId="card-last-in-group"
+        pinnedStudyCard={{ id: "card-last-in-group", title: "Pinned", content: "Body" }}
+        pinnedStudyCardPositionLabel="Study Card 2 of 4"
+        hasPreviousStudyCard
+        hasNextStudyCard
+        nextStudyCardCrossesNoteGroup
+        effectiveCleanedText="source"
+      />
+    );
+
+    expect(getButtonMarkup(html, "Pin next Study Card")).toContain("source-lookup-boundary");
+  });
+
   test("Source Text modal exposes scoped Note Group selector when unpinned", () => {
     const html = renderToStaticMarkup(
       <SourceTextContainer

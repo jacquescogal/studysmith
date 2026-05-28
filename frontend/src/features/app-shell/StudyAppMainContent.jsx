@@ -242,6 +242,7 @@ export function StudyAppMainContent({ model }) {
     studyNoteGroups,
     studyNoteSections,
     studySourceNoteGroups,
+    visibleStudyCardOrder,
     subjects,
     topicCardTableRows,
     topicChips,
@@ -610,6 +611,7 @@ export function StudyAppMainContent({ model }) {
                     studyNoteGroups={studyNoteGroups}
                     studyNoteSections={studyNoteSections}
                     studySourceNoteGroups={studySourceNoteGroups}
+                    visibleStudyCardOrder={visibleStudyCardOrder}
                     conceptTitleDraft={topicTitleDraft}
                     conceptDescriptionDraft={topicDescriptionDraft}
                     conceptError={topicError}

@@ -5,14 +5,21 @@ export function useReadingWorkflowActions({
   readingMode,
   readingPinnedCardId,
   studyNoteSections = [],
+  visibleStudyCardOrder = [],
   setActiveSourceRangeIndex = () => {},
   setReadingHoverCardId,
   setReadingMode,
   setReadingPinnedCardId
 }) {
-  const orderedStudyCardIds = studyNoteSections
-    .map((section) => section.study_card_id)
-    .filter(Boolean);
+  const orderedStudyCards = visibleStudyCardOrder.length
+    ? visibleStudyCardOrder.filter((item) => item.id)
+    : studyNoteSections
+        .map((section) => ({
+          id: section.study_card_id,
+          noteGroupId: section.note_group_id || section.source_note_group_id || ""
+        }))
+        .filter((item) => item.id);
+  const orderedStudyCardIds = orderedStudyCards.map((item) => item.id);
 
   const scrollTargetIntoReadingContainer = (target, block = "start") => {
     const container = readingContentRef.current;

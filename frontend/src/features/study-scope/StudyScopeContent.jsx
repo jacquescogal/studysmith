@@ -117,9 +117,11 @@ export function SourceTextContainer({
   hasNextStudyCard,
   hasPreviousSourceRange,
   hasPreviousStudyCard,
+  nextStudyCardCrossesNoteGroup,
   noteGroupOptions = [],
   onBackToStudyCards,
   onSourceNoteGroupChange,
+  previousStudyCardCrossesNoteGroup,
   handleReadingNextStudyCard,
   handleReadingPreviousStudyCard,
   handleReadingSourceRangeNext,
@@ -172,6 +174,7 @@ export function SourceTextContainer({
             <button
               type="button"
               aria-label="Pin previous Study Card"
+              className={previousStudyCardCrossesNoteGroup ? "source-lookup-boundary" : ""}
               disabled={!hasPreviousStudyCard}
               onClick={handleReadingPreviousStudyCard}
             >
@@ -180,6 +183,7 @@ export function SourceTextContainer({
             <button
               type="button"
               aria-label="Pin next Study Card"
+              className={nextStudyCardCrossesNoteGroup ? "source-lookup-boundary" : ""}
               disabled={!hasNextStudyCard}
               onClick={handleReadingNextStudyCard}
             >
@@ -311,6 +315,7 @@ export function StudyScopeContent({
   studyNoteSections = [],
   studyNoteGroups = [],
   studySourceNoteGroups = [],
+  visibleStudyCardOrder = [],
   conceptTitleDraft,
   conceptDescriptionDraft,
   conceptError,
@@ -456,16 +461,47 @@ export function StudyScopeContent({
   const isDefaultNonExplicitRoute = !isViewCardsPage && !isInlineStudyPage && !isStudyPage && !isQuestionPage;
   const groupedStudyNoteGroups = studyNoteGroups.filter((group) => group.studyCards?.length);
   const shouldRenderGroupedStudyCards = groupedStudyNoteGroups.length > 0;
-  const orderedStudyCardIds = shouldRenderGroupedStudyCards
-    ? groupedStudyNoteGroups.flatMap((group) => group.studyCards.map((card) => card.id).filter(Boolean))
-    : studyNoteSections
-        .map((section) => section.study_card_id)
-        .filter(Boolean);
+  const effectiveVisibleStudyCardOrder = visibleStudyCardOrder.length
+    ? visibleStudyCardOrder
+    : shouldRenderGroupedStudyCards
+      ? groupedStudyNoteGroups.flatMap((group) =>
+          group.studyCards
+            .map((card) => ({ id: card.id, noteGroupId: group.id }))
+            .filter((item) => item.id)
+        )
+      : studyNoteSections
+          .map((section) => ({
+            id: section.study_card_id,
+            noteGroupId: section.note_group_id || section.source_note_group_id || ""
+          }))
+          .filter((item) => item.id);
+  const orderedStudyCardIds = effectiveVisibleStudyCardOrder.map((item) => item.id);
   const pinnedStudyCardOrderIndex = orderedStudyCardIds.indexOf(readingPinnedCardId);
-  const hasPreviousStudyCard = pinnedStudyCardOrderIndex > 0;
+  const currentVisibleIndex = effectiveVisibleStudyCardOrder.findIndex(
+    (item) => item.id === readingPinnedCardId
+  );
+  const previousVisibleCard =
+    currentVisibleIndex > 0 ? effectiveVisibleStudyCardOrder[currentVisibleIndex - 1] : null;
+  const nextVisibleCard =
+    currentVisibleIndex >= 0 && currentVisibleIndex < effectiveVisibleStudyCardOrder.length - 1
+      ? effectiveVisibleStudyCardOrder[currentVisibleIndex + 1]
+      : null;
+  const currentVisibleCard =
+    currentVisibleIndex >= 0 ? effectiveVisibleStudyCardOrder[currentVisibleIndex] : null;
+  const previousStudyCardCrossesNoteGroup = Boolean(
+    previousVisibleCard &&
+      currentVisibleCard &&
+      previousVisibleCard.noteGroupId !== currentVisibleCard.noteGroupId
+  );
+  const nextStudyCardCrossesNoteGroup = Boolean(
+    nextVisibleCard &&
+      currentVisibleCard &&
+      nextVisibleCard.noteGroupId !== currentVisibleCard.noteGroupId
+  );
+  const hasPreviousStudyCard = currentVisibleIndex > 0;
   const hasNextStudyCard =
-    pinnedStudyCardOrderIndex >= 0 &&
-    pinnedStudyCardOrderIndex < orderedStudyCardIds.length - 1;
+    currentVisibleIndex >= 0 &&
+    currentVisibleIndex < effectiveVisibleStudyCardOrder.length - 1;
   const activeSourceRangeNumber = Math.min(activeSourceRangeIndex + 1, modalPinnedSourceRanges.length);
   const hasPreviousSourceRange = modalPinnedSourceRanges.length > 0 && activeSourceRangeIndex > 0;
   const hasNextSourceRange =
@@ -551,9 +587,11 @@ export function StudyScopeContent({
           hasNextStudyCard={hasNextStudyCard}
           hasPreviousSourceRange={hasPreviousSourceRange}
           hasPreviousStudyCard={hasPreviousStudyCard}
+          nextStudyCardCrossesNoteGroup={nextStudyCardCrossesNoteGroup}
           noteGroupOptions={sourceNoteGroupOptions}
           onBackToStudyCards={() => setSourceTextOpen(false)}
           onSourceNoteGroupChange={setActiveSourceNoteGroupId}
+          previousStudyCardCrossesNoteGroup={previousStudyCardCrossesNoteGroup}
           handleReadingNextStudyCard={handleReadingNextStudyCard}
           handleReadingPreviousStudyCard={handleReadingPreviousStudyCard}
           handleReadingSourceRangeNext={handleReadingSourceRangeNext}
