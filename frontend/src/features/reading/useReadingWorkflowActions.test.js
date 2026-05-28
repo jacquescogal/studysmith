@@ -8,13 +8,23 @@ const immediateWindow = () => ({
 
 describe("useReadingWorkflowActions", () => {
   test("switches reading mode and scrolls to the pinned card in clean text", () => {
-    const scrollIntoView = vi.fn();
-    const querySelector = vi.fn(() => ({ scrollIntoView }));
+    const scrollTo = vi.fn();
+    const querySelector = vi.fn(() => ({
+      getBoundingClientRect: () => ({ top: 420, height: 40 })
+    }));
     const originalWindow = globalThis.window;
     globalThis.window = immediateWindow();
 
     const actions = useReadingWorkflowActions({
-      readingContentRef: { current: { querySelector } },
+      readingContentRef: {
+        current: {
+          clientHeight: 300,
+          scrollTop: 50,
+          querySelector,
+          getBoundingClientRect: () => ({ top: 120 }),
+          scrollTo
+        }
+      },
       readingHoverCardId: "",
       readingMode: "study",
       readingPinnedCardId: "card-1",
@@ -26,7 +36,7 @@ describe("useReadingWorkflowActions", () => {
     actions.handleReadingModeChange("clean");
 
     expect(querySelector).toHaveBeenCalledWith('[data-clean-card-id="card-1"]');
-    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "center" });
+    expect(scrollTo).toHaveBeenCalledWith({ top: 220, behavior: "smooth" });
     globalThis.window = originalWindow;
   });
 
@@ -54,8 +64,10 @@ describe("useReadingWorkflowActions", () => {
   });
 
   test("opens a Study Card source range and scrolls to the active range", () => {
-    const scrollIntoView = vi.fn();
-    const querySelector = vi.fn(() => ({ scrollIntoView }));
+    const scrollTo = vi.fn();
+    const querySelector = vi.fn(() => ({
+      getBoundingClientRect: () => ({ top: 420, height: 40 })
+    }));
     const setActiveSourceRangeIndex = vi.fn();
     const setReadingPinnedCardId = vi.fn();
     const originalWindow = globalThis.window;
@@ -63,7 +75,15 @@ describe("useReadingWorkflowActions", () => {
 
     const actions = useReadingWorkflowActions({
       activeSourceRangeIndex: 0,
-      readingContentRef: { current: { querySelector } },
+      readingContentRef: {
+        current: {
+          clientHeight: 300,
+          scrollTop: 50,
+          querySelector,
+          getBoundingClientRect: () => ({ top: 120 }),
+          scrollTo
+        }
+      },
       readingHoverCardId: "",
       readingMode: "study",
       readingPinnedCardId: "",
@@ -80,7 +100,43 @@ describe("useReadingWorkflowActions", () => {
     expect(querySelector).toHaveBeenCalledWith(
       '[data-clean-card-id="card-3"][data-source-range-index="1"]'
     );
-    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "center" });
+    expect(scrollTo).toHaveBeenCalledWith({ top: 220, behavior: "smooth" });
+    globalThis.window = originalWindow;
+  });
+
+  test("scrolls source ranges inside the reading container without scrolling ancestors", () => {
+    const scrollIntoView = vi.fn();
+    const scrollTo = vi.fn();
+    const target = {
+      getBoundingClientRect: () => ({ top: 420, height: 40 }),
+      scrollIntoView
+    };
+    const container = {
+      clientHeight: 300,
+      scrollTop: 50,
+      querySelector: vi.fn(() => target),
+      getBoundingClientRect: () => ({ top: 120 }),
+      scrollTo
+    };
+    const originalWindow = globalThis.window;
+    globalThis.window = immediateWindow();
+
+    const actions = useReadingWorkflowActions({
+      activeSourceRangeIndex: 0,
+      readingContentRef: { current: container },
+      readingHoverCardId: "",
+      readingMode: "study",
+      readingPinnedCardId: "",
+      setActiveSourceRangeIndex: vi.fn(),
+      setReadingHoverCardId: vi.fn(),
+      setReadingMode: vi.fn(),
+      setReadingPinnedCardId: vi.fn()
+    });
+
+    actions.handleReadingViewInClean({ stopPropagation: vi.fn() }, "card-3", 1);
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 220, behavior: "smooth" });
+    expect(scrollIntoView).not.toHaveBeenCalled();
     globalThis.window = originalWindow;
   });
 
