@@ -132,6 +132,32 @@ class AuthSchemaCompatibilityTests(unittest.TestCase):
             columns = {row[1] for row in conn.execute(text("PRAGMA table_info(users)"))}
         self.assertIn("creator_role_requested_at", columns)
 
+    def test_user_username_columns_are_added_to_existing_sqlite_table(self):
+        from sqlalchemy import text
+        from app.main import _ensure_user_username_columns
+
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        with engine.connect() as conn:
+            conn.execute(
+                text(
+                    "CREATE TABLE users ("
+                    "id VARCHAR PRIMARY KEY, "
+                    "supabase_user_id VARCHAR NOT NULL, "
+                    "email VARCHAR NOT NULL, "
+                    "app_role VARCHAR NOT NULL)"
+                )
+            )
+            conn.commit()
+
+        _ensure_user_username_columns(engine)
+
+        with engine.connect() as conn:
+            columns = {row[1] for row in conn.execute(text("PRAGMA table_info(users)"))}
+            indexes = {row[1] for row in conn.execute(text("PRAGMA index_list(users)"))}
+        self.assertIn("username", columns)
+        self.assertIn("username_normalized", columns)
+        self.assertIn("ix_users_username_normalized", indexes)
+
     def test_user_creator_role_request_helper_does_not_run_postgres_ddl(self):
         from app.main import _ensure_user_creator_role_request_columns
 
@@ -214,6 +240,120 @@ class AccessModelTests(unittest.TestCase):
 
             with self.assertRaises(IntegrityError):
                 db.commit()
+        finally:
+            db.close()
+
+    def test_duplicate_username_normalized_is_rejected(self):
+        from app.models import User
+
+        db = self.SessionLocal()
+        try:
+            db.add_all(
+                [
+                    User(
+                        id="user-1",
+                        supabase_user_id="supabase-1",
+                        email="one@example.com",
+                        username="JacquesC_42",
+                        username_normalized="jacquesc_42",
+                        app_role="reader",
+                    ),
+                    User(
+                        id="user-2",
+                        supabase_user_id="supabase-2",
+                        email="two@example.com",
+                        username="jacquesc_42",
+                        username_normalized="jacquesc_42",
+                        app_role="reader",
+                    ),
+                ]
+            )
+
+            with self.assertRaises(IntegrityError):
+                db.commit()
+        finally:
+            db.close()
+
+    def test_invalid_username_is_rejected_by_model_validation(self):
+        from app.models import User
+
+        db = self.SessionLocal()
+        try:
+            with self.assertRaises(HTTPException) as exc_info:
+                db.add(
+                    User(
+                        id="user-1",
+                        supabase_user_id="supabase-1",
+                        email="one@example.com",
+                        username="has-dash",
+                        app_role="reader",
+                    )
+                )
+                db.commit()
+            self.assertEqual(exc_info.exception.status_code, 400)
+        finally:
+            db.close()
+
+    def test_invalid_username_normalized_is_rejected_by_model_validation(self):
+        from app.models import User
+
+        db = self.SessionLocal()
+        try:
+            with self.assertRaises(HTTPException) as exc_info:
+                db.add(
+                    User(
+                        id="user-1",
+                        supabase_user_id="supabase-1",
+                        email="one@example.com",
+                        username_normalized="JacquesC_42",
+                        app_role="reader",
+                    )
+                )
+                db.commit()
+            self.assertEqual(exc_info.exception.status_code, 400)
+        finally:
+            db.close()
+
+    def test_pending_registration_duplicate_username_normalized_is_rejected(self):
+        from app.models import PendingRegistration
+
+        db = self.SessionLocal()
+        try:
+            db.add_all(
+                [
+                    PendingRegistration(
+                        email="one@example.com",
+                        username="JacquesC_42",
+                        username_normalized="jacquesc_42",
+                    ),
+                    PendingRegistration(
+                        email="two@example.com",
+                        username="jacquesc_42",
+                        username_normalized="jacquesc_42",
+                    ),
+                ]
+            )
+
+            with self.assertRaises(IntegrityError):
+                db.commit()
+        finally:
+            db.close()
+
+    def test_pending_registration_invalid_username_is_rejected_by_model_validation(self):
+        from app.models import PendingRegistration
+
+        db = self.SessionLocal()
+        try:
+            with self.assertRaises(HTTPException) as exc_info:
+                db.add(
+                    PendingRegistration(
+                        email="one@example.com",
+                        username="has-dash",
+                        username_normalized="has-dash",
+                    )
+                )
+                db.commit()
+            self.assertEqual(exc_info.exception.status_code, 400)
         finally:
             db.close()
 
@@ -322,6 +462,7 @@ class AccessModelTests(unittest.TestCase):
             event_out = SubjectActivityEventOut.model_validate(event)
 
             self.assertEqual(user_out.id, "user-1")
+            self.assertEqual(user_out.supabase_user_id, "supabase-1")
             self.assertEqual(user_out.email, "owner@example.com")
             self.assertEqual(user_out.app_role, "creator")
             self.assertEqual(grant_out.id, "access-1")

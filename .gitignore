@@ -23,6 +23,7 @@ frontend/dist/
 
 # Tooling
 docs/superpowers/
+.superpowers/
 .worktrees/
 
 .codex

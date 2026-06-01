@@ -1,42 +1,12 @@
-import { toast } from "sonner";
-
-import { getLocalMailpitUrl } from "@/auth/supabaseClient";
+import { clearGuestMode } from "@/auth/guestMode";
 import { useReadingWorkflowActions } from "@/features/reading/useReadingWorkflowActions";
 import { useSubjectWorkflowActions } from "@/features/subjects/useSubjectWorkflowActions";
-import { conceptPath, createNoteGroupPath, modulePath, noteGroupPath, subjectPath } from "@/lib/routes";
+import { conceptPath, createNoteGroupPath, dashboardPath, modulePath, noteGroupPath, subjectPath } from "@/lib/routes";
 import { countWords, getModuleAdditionalInstructions } from "@/lib/format";
 import { attachConcepts, autoCreateNoteGroup, checkNoteGroupSource, createModule, createSubject, createConcept, detachConcept, getJob, getNoteGroup, regenerateNoteGroupNeedsReviewKnowledgeNodes, sendModuleIntentChat, sendSubjectIntentChat, updateSubject } from "@/api";
 
 export function useStudyAppWorkflowActions(ctx) {
-  const { activeSourceRangeIndex, attachConcepts, auth, authEmail, authSubmitting, autoAdditionalInstructions, autoCreateNoteGroup, autoRawText, canCreateSubjects, canDeleteSubject, canMaintainSubject, canManageSelectedSubject, canUseProtectedActions, checkNoteGroupSource, conceptPath, countWords, createConcept, createModule, createNoteGroupPath, createSubject, deleteSubject, detachConcept, editingQuestionCard, editingStudyCard, generateUniqueId, getLocalMailpitUrl, getModuleAdditionalInstructions, getNoteGroup, handleBreadcrumbModule, isQuestionPage, isStudyPage, isViewCardsPage, metadataTitleDraft, moduleChipDescription, moduleChipLabel, modulePath, moduleWizardCreating, moduleWizardGoal, moduleWizardInput, moduleWizardLoading, moduleWizardMessages, moduleWizardScope, moduleWizardTitle, modules, navigate, newQuestionCorrectIndices, newQuestionOptions, newQuestionPrompt, newQuestionRefs, newQuestionType, newStudyCardChipIds, newStudyCardContent, newStudyCardTitle, newSubjectDescription, newSubjectTitle, noteGroupChipIds, noteGroupMindMapGenerating, noteGroupNeedsReviewRegenerating, noteGroupPath, noteGroupSource, noteGroups, pollJob, readingContentRef, readingHoverCardId, readingMode, readingPinnedCardId, refreshModuleGeneratedData, refreshModuleGenerationWorkflowSnapshot, regenerateNoteGroupNeedsReviewKnowledgeNodes, requestConfirm, routePanel, selectedModule, selectedModuleCode, selectedModuleId, selectedNoteGroup, selectedNoteGroupId, selectedNoteGroupIdRef, selectedSubject, selectedSubjectCode, selectedSubjectId, selectedTopic, selectedTopicId, sendModuleIntentChat, sendSubjectIntentChat, setActiveSourceRangeIndex, setAuthMessage, setAuthSubmitting, setAuthUiError, setAutoAdditionalInstructions, setAutoCreateError, setAutoCreateLoading, setAutoRawText, setChipFilterIds, setCurrentUserProfile, setEditingQuestionCard, setEditingQuestionCardId, setEditingStudyCard, setEditingStudyCardId, setEditingSubjectId, setIsAdminPanelOpen, setIsChatOpen, setIsGeneratingQuestions, setIsMetadataOpen, setIsModuleMetadataOpen, setIsModuleWizardOpen, setIsQuestionCreateOpen, setIsStudyCreateOpen, setIsSubjectManagementOpen, setIsSubjectMetadataOpen, setIsSubjectWizardOpen, setMetadataError, setMetadataSaving, setMetadataTitleDraft, setMindMapRefreshToken, setModuleChipDescription, setModuleChipLabel, setModuleWizardCreating, setModuleWizardError, setModuleWizardGoal, setModuleWizardInput, setModuleWizardLoading, setModuleWizardMessages, setModuleWizardScope, setModuleWizardTitle, setModules, setNewQuestionCorrectIndices, setNewQuestionOptions, setNewQuestionPrompt, setNewQuestionRefs, setNewStudyCardChipIds, setNewStudyCardContent, setNewStudyCardTitle, setNewSubjectDescription, setNewSubjectTitle, setNoteGroupCardTable, setNoteGroupChipIds, setNoteGroupMindMap, setNoteGroupMindMapError, setNoteGroupMindMapGenerating, setNoteGroupMode, setNoteGroupNeedsReviewRegenerating, setNoteGroupSearch, setNoteGroupSource, setNoteGroups, setQuestionCardError, setQuestionCards, setQuestionJobStatus, setReadingHoverCardId, setReadingMode, setReadingPinnedCardId, setReviewSummary, setSelectedModuleId, setSelectedNoteGroupId, setSelectedSubjectId, setSelectedTopicId, setSidebarError, setSidebarScope, setSourceCheckError, setSourceChecked, setSourceChecking, setSourceConfirmed, setSourceDuplicateCount, setSourceDuplicates, setStudyCardError, setStudyCards, setSubjectGoalDraft, setSubjectMetadataError, setSubjectMetadataSaving, setSubjectScopeDraft, setSubjectTitleDraft, setSubjectWizardCreating, setSubjectWizardError, setSubjectWizardGoal, setSubjectWizardInput, setSubjectWizardLoading, setSubjectWizardMessages, setSubjectWizardScope, setSubjectWizardTitle, setSubjects, setTopicChips, setTopicDescriptionDraft, setTopicError, setTopicKnowledgeNodeRegenerating, setTopicKnowledgeNodeRegeneratingId, setTopicSaving, setTopicTitleDraft, sourceConfirmed, studyCards, studyNoteSections, subjectGoalDraft, subjectPath, subjectScopeDraft, subjectTitleDraft, subjectWizardCreating, subjectWizardGoal, subjectWizardInput, subjectWizardLoading, subjectWizardMessages, subjectWizardScope, subjectWizardTitle, subjects, toast, topicChips = [], topicDescriptionDraft, topicKnowledgeNodeRegenerating, topicTitleDraft, updateSubject, useConceptPageActions, useNoteGroupPageActions, visibleStudyCardOrder } = ctx;
-
-const handleSignIn = async (event) => {
-    event.preventDefault();
-    if (authSubmitting) {
-      return;
-    }
-    setAuthSubmitting(true);
-    setAuthUiError("");
-    setAuthMessage("");
-    try {
-      await auth.signInWithEmail(authEmail);
-      setAuthMessage("Check your email for the sign-in link.");
-      const mailpitUrl = getLocalMailpitUrl();
-      if (mailpitUrl) {
-        toast.info("Open Mailpit to finish local sign in.", {
-          description: "Local Supabase captures magic-link emails in Mailpit.",
-          action: {
-            label: "Open Mailpit",
-            onClick: () => window.open(mailpitUrl, "_blank", "noopener,noreferrer")
-          }
-        });
-      }
-    } catch (error) {
-      setAuthUiError(error.message || "Failed to start sign in");
-    } finally {
-      setAuthSubmitting(false);
-    }
-  };
+  const { activeSourceRangeIndex, attachConcepts, auth, autoAdditionalInstructions, autoCreateNoteGroup, autoRawText, canCreateSubjects, canDeleteSubject, canMaintainSubject, canManageSelectedSubject, canUseProtectedActions, checkNoteGroupSource, conceptPath, countWords, createConcept, createModule, createNoteGroupPath, createSubject, deleteSubject, detachConcept, editingQuestionCard, editingStudyCard, generateUniqueId, getModuleAdditionalInstructions, getNoteGroup, handleBreadcrumbModule, isQuestionPage, isStudyPage, isViewCardsPage, metadataTitleDraft, moduleChipDescription, moduleChipLabel, modulePath, moduleWizardCreating, moduleWizardGoal, moduleWizardInput, moduleWizardLoading, moduleWizardMessages, moduleWizardScope, moduleWizardTitle, modules, navigate, newQuestionCorrectIndices, newQuestionOptions, newQuestionPrompt, newQuestionRefs, newQuestionType, newStudyCardChipIds, newStudyCardContent, newStudyCardTitle, newSubjectDescription, newSubjectTitle, noteGroupChipIds, noteGroupMindMapGenerating, noteGroupNeedsReviewRegenerating, noteGroupPath, noteGroupSource, noteGroups, pollJob, readingContentRef, readingHoverCardId, readingMode, readingPinnedCardId, refreshModuleGeneratedData, refreshModuleGenerationWorkflowSnapshot, regenerateNoteGroupNeedsReviewKnowledgeNodes, requestConfirm, routePanel, selectedModule, selectedModuleCode, selectedModuleId, selectedNoteGroup, selectedNoteGroupId, selectedNoteGroupIdRef, selectedSubject, selectedSubjectCode, selectedSubjectId, selectedTopic, selectedTopicId, sendModuleIntentChat, sendSubjectIntentChat, setActiveSourceRangeIndex, setAuthMessage, setAuthSubmitting, setAuthUiError, setAutoAdditionalInstructions, setAutoCreateError, setAutoCreateLoading, setAutoRawText, setChipFilterIds, setCurrentUserProfile, setEditingQuestionCard, setEditingQuestionCardId, setEditingStudyCard, setEditingStudyCardId, setEditingSubjectId, setIsAdminPanelOpen, setIsChatOpen, setIsGeneratingQuestions, setIsMetadataOpen, setIsModuleMetadataOpen, setIsModuleWizardOpen, setIsQuestionCreateOpen, setIsStudyCreateOpen, setIsSubjectManagementOpen, setIsSubjectMetadataOpen, setIsSubjectWizardOpen, setMetadataError, setMetadataSaving, setMetadataTitleDraft, setMindMapRefreshToken, setModuleChipDescription, setModuleChipLabel, setModuleWizardCreating, setModuleWizardError, setModuleWizardGoal, setModuleWizardInput, setModuleWizardLoading, setModuleWizardMessages, setModuleWizardScope, setModuleWizardTitle, setModules, setNewQuestionCorrectIndices, setNewQuestionOptions, setNewQuestionPrompt, setNewQuestionRefs, setNewStudyCardChipIds, setNewStudyCardContent, setNewStudyCardTitle, setNewSubjectDescription, setNewSubjectTitle, setNoteGroupCardTable, setNoteGroupChipIds, setNoteGroupMindMap, setNoteGroupMindMapError, setNoteGroupMindMapGenerating, setNoteGroupMode, setNoteGroupNeedsReviewRegenerating, setNoteGroupSearch, setNoteGroupSource, setNoteGroups, setQuestionCardError, setQuestionCards, setQuestionJobStatus, setReadingHoverCardId, setReadingMode, setReadingPinnedCardId, setReviewSummary, setSelectedModuleId, setSelectedNoteGroupId, setSelectedSubjectId, setSelectedTopicId, setSidebarError, setSidebarScope, setSourceCheckError, setSourceChecked, setSourceChecking, setSourceConfirmed, setSourceDuplicateCount, setSourceDuplicates, setStudyCardError, setStudyCards, setSubjectGoalDraft, setSubjectMetadataError, setSubjectMetadataSaving, setSubjectScopeDraft, setSubjectTitleDraft, setSubjectWizardCreating, setSubjectWizardError, setSubjectWizardGoal, setSubjectWizardInput, setSubjectWizardLoading, setSubjectWizardMessages, setSubjectWizardScope, setSubjectWizardTitle, setSubjects, setTopicChips, setTopicDescriptionDraft, setTopicError, setTopicKnowledgeNodeRegenerating, setTopicKnowledgeNodeRegeneratingId, setTopicSaving, setTopicTitleDraft, sourceConfirmed, studyCards, studyNoteSections, subjectGoalDraft, subjectPath, subjectScopeDraft, subjectTitleDraft, subjectWizardCreating, subjectWizardGoal, subjectWizardInput, subjectWizardLoading, subjectWizardMessages, subjectWizardScope, subjectWizardTitle, subjects, toast, topicChips = [], topicDescriptionDraft, topicKnowledgeNodeRegenerating, topicTitleDraft, updateSubject, useConceptPageActions, useNoteGroupPageActions, visibleStudyCardOrder } = ctx;
 
   const handleSignOut = async () => {
     setAuthSubmitting(true);
@@ -44,6 +14,7 @@ const handleSignIn = async (event) => {
     setAuthMessage("");
     try {
       await auth.signOut();
+      clearGuestMode();
       setSelectedSubjectId("");
       setSelectedModuleId("");
       setSelectedNoteGroupId("");
@@ -93,7 +64,7 @@ const handleSignIn = async (event) => {
         ? modulePath(selectedSubjectCode, module.short_code)
         : selectedSubjectCode
           ? subjectPath(selectedSubjectCode)
-          : "/"
+          : dashboardPath
     );
   };
 
@@ -186,7 +157,7 @@ const handleSignIn = async (event) => {
       navigate(
         selectedSubjectCode && created.short_code
           ? modulePath(selectedSubjectCode, created.short_code)
-          : "/"
+          : dashboardPath
       );
     } catch (error) {
       setModuleWizardError(error.message || "Failed to create module");
@@ -210,7 +181,7 @@ const handleSignIn = async (event) => {
           ? modulePath(selectedSubjectCode, selectedModuleCode)
           : selectedSubjectCode
             ? subjectPath(selectedSubjectCode)
-            : "/"
+            : dashboardPath
       );
       return;
     }
@@ -220,7 +191,7 @@ const handleSignIn = async (event) => {
     navigate(
       selectedSubjectCode && selectedModuleCode && noteGroup?.short_code
         ? noteGroupPath(selectedSubjectCode, selectedModuleCode, noteGroup.short_code, nextPanel)
-        : "/"
+        : dashboardPath
     );
   };
 
@@ -240,7 +211,7 @@ const handleSignIn = async (event) => {
           ? modulePath(selectedSubjectCode, selectedModuleCode)
           : selectedSubjectCode
             ? subjectPath(selectedSubjectCode)
-            : "/",
+            : dashboardPath,
         { state: { sidebarScope: "concepts" } }
       );
       return;
@@ -251,7 +222,7 @@ const handleSignIn = async (event) => {
     navigate(
       selectedSubjectCode && selectedModuleCode && topic?.short_code
         ? conceptPath(selectedSubjectCode, selectedModuleCode, topic.short_code, nextPanel)
-        : "/"
+        : dashboardPath
     );
   };
 
@@ -371,7 +342,7 @@ const handleSignIn = async (event) => {
     navigate(
       selectedSubjectCode && selectedModuleCode
         ? createNoteGroupPath(selectedSubjectCode, selectedModuleCode)
-        : "/"
+        : dashboardPath
     );
   };
 
@@ -446,7 +417,7 @@ const handleSignIn = async (event) => {
           ? noteGroupPath(selectedSubjectCode, selectedModuleCode, createdNoteGroupCode)
           : selectedSubjectCode && selectedModuleCode
             ? modulePath(selectedSubjectCode, selectedModuleCode)
-            : "/"
+            : dashboardPath
       );
       resetSourceState();
     } catch (error) {
@@ -533,5 +504,5 @@ const handleSignIn = async (event) => {
     }
   };
 
-  return { handleAutoCreateNoteGroup, handleCheckSource, handleConfirmDuplicateSource, handleCreateModuleFromWizard, handleCreateSubjectFromWizard, handleDeleteSubject, handleModuleWizardSend, handleOpenModuleWizard, handleOpenSubjectWizard, handleReadingModeChange, handleReadingNextStudyCard, handleReadingPreviousStudyCard, handleReadingSourceRangeNext, handleReadingSourceRangePrevious, handleReadingTitleClick, handleReadingToggleMode, handleReadingUnpin, handleReadingViewInClean, handleSaveSubjectMetadata, handleScrollNavToCard, handleSelectModule, handleSelectNoteGroup, handleSelectSubject, handleSelectTopic, handleSignIn, handleSignOut, handleStartAutoNoteGroup, handleSubjectUpdated, handleSubjectWizardSend, handleUniqueIdChange, handleUseGeneratedUniqueId, navigateToNoteGroup, navigateToTopic, openSubjectMetadataModal };
+  return { handleAutoCreateNoteGroup, handleCheckSource, handleConfirmDuplicateSource, handleCreateModuleFromWizard, handleCreateSubjectFromWizard, handleDeleteSubject, handleModuleWizardSend, handleOpenModuleWizard, handleOpenSubjectWizard, handleReadingModeChange, handleReadingNextStudyCard, handleReadingPreviousStudyCard, handleReadingSourceRangeNext, handleReadingSourceRangePrevious, handleReadingTitleClick, handleReadingToggleMode, handleReadingUnpin, handleReadingViewInClean, handleSaveSubjectMetadata, handleScrollNavToCard, handleSelectModule, handleSelectNoteGroup, handleSelectSubject, handleSelectTopic, handleSignOut, handleStartAutoNoteGroup, handleSubjectUpdated, handleSubjectWizardSend, handleUniqueIdChange, handleUseGeneratedUniqueId, navigateToNoteGroup, navigateToTopic, openSubjectMetadataModal };
 }

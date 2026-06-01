@@ -12,6 +12,7 @@ function makeContext(overrides = {}) {
     isQuestionPage: false,
     isStudyPage: false,
     modulePath: (subjectCode, moduleCode) => `/module/${subjectCode}/${moduleCode}`,
+    dashboardPath: "/app",
     navigate: vi.fn(),
     routePanel: "",
     selectedModuleCode: "module-a",
@@ -32,6 +33,12 @@ function makeContext(overrides = {}) {
 }
 
 describe("useStudyAppWorkflowActions concept navigation", () => {
+  test("does not expose header magic-link sign-in actions", () => {
+    const actions = useStudyAppWorkflowActions(makeContext());
+
+    expect(actions.handleSignIn).toBeUndefined();
+  });
+
   test("navigates to the selected Concept route from loaded concepts", () => {
     const ctx = makeContext({
       topicChips: [{ id: "topic-1", short_code: "concept-a" }]
@@ -48,6 +55,6 @@ describe("useStudyAppWorkflowActions concept navigation", () => {
     expect(() =>
       useStudyAppWorkflowActions(ctx).handleSelectTopic({ value: "topic-1" })
     ).not.toThrow();
-    expect(ctx.navigate).toHaveBeenCalledWith("/");
+    expect(ctx.navigate).toHaveBeenCalledWith("/app");
   });
 });

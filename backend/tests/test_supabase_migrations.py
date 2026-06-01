@@ -26,9 +26,20 @@ def test_baseline_migration_installs_vector_and_disables_rls_for_app_tables():
     sql = _migration_sql().lower()
 
     assert "create extension if not exists vector" in sql
-    assert "enable row level security" not in sql
+    rls_enabled_auth_metadata_tables = {"pending_registrations", "username_reservations"}
     for table_name in sorted(Base.metadata.tables):
+        if table_name in rls_enabled_auth_metadata_tables:
+            continue
         assert f"alter table public.{table_name} disable row level security" in sql
+
+
+def test_auth_metadata_migrations_enable_rls_and_revoke_client_access():
+    sql = _migration_sql().lower()
+
+    for table_name in ("pending_registrations", "username_reservations"):
+        assert f"alter table public.{table_name} enable row level security" in sql
+        assert f"revoke all on table public.{table_name} from anon, authenticated" in sql
+        assert f"alter table public.{table_name} disable row level security" not in sql
 
 
 def test_subject_access_migration_uses_reader_maintainer_owner_roles():

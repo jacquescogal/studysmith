@@ -44,6 +44,7 @@ export function useSubjectWorkflowActions(ctx) {
     setSubjectWizardScope,
     setSubjectWizardTitle,
     setSubjects,
+    dashboardPath,
     subjectGoalDraft,
     subjectPath,
     subjectScopeDraft,
@@ -80,7 +81,7 @@ export function useSubjectWorkflowActions(ctx) {
     setIsMetadataOpen(false);
     setIsModuleMetadataOpen(false);
     setIsSubjectManagementOpen(false);
-    navigate(subject?.short_code ? subjectPath(subject.short_code) : "/");
+    navigate(subject?.short_code ? subjectPath(subject.short_code) : dashboardPath);
   };
 
   const handleCreateSubject = async () => {
@@ -110,7 +111,7 @@ export function useSubjectWorkflowActions(ctx) {
       setIsChatOpen(false);
       setIsMetadataOpen(false);
       setIsModuleMetadataOpen(false);
-      navigate(subject.short_code ? subjectPath(subject.short_code) : "/");
+      navigate(subject.short_code ? subjectPath(subject.short_code) : dashboardPath);
       setNewSubjectTitle("");
       setNewSubjectDescription("");
     } catch (error) {
@@ -204,7 +205,7 @@ export function useSubjectWorkflowActions(ctx) {
       setIsMetadataOpen(false);
       setIsModuleMetadataOpen(false);
       setIsSubjectWizardOpen(false);
-      navigate(created.short_code ? subjectPath(created.short_code) : "/");
+      navigate(created.short_code ? subjectPath(created.short_code) : dashboardPath);
     } catch (error) {
       setSubjectWizardError(error.message || "Failed to create subject");
     } finally {
@@ -297,7 +298,7 @@ export function useSubjectWorkflowActions(ctx) {
         setIsChatOpen(false);
         setIsMetadataOpen(false);
         setIsModuleMetadataOpen(false);
-        navigate("/");
+        navigate(dashboardPath);
       }
     } catch (error) {
       setSidebarError(error.message || "Failed to delete subject");

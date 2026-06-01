@@ -22,6 +22,7 @@ export function SubjectLayout() {
 export function ModuleLayout({ renderAppShell }) {
   return (
     <AppRouteContextProvider scope="module">
+      {/* The app shell owns module/note-group/concept rendering from route state. */}
       {renderAppShell ? <ModuleWorkspacePage renderAppShell={renderAppShell} /> : <Outlet />}
     </AppRouteContextProvider>
   );

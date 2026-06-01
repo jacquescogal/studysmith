@@ -213,6 +213,7 @@ SUPABASE_SECRET_KEY=
 SUPABASE_JWKS_URL=https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json
 SUPABASE_JWT_ISSUER=https://<project-ref>.supabase.co/auth/v1
 SUPABASE_JWT_AUDIENCE=authenticated
+FRONTEND_BASE_URL=https://<your-app-host>
 
 VITE_SUPABASE_URL=https://<project-ref>.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=

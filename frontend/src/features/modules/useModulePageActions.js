@@ -2,7 +2,7 @@ import { toast } from "sonner";
 
 import { deleteModule, updateModule, updateNoteGroupOrder } from "@/api";
 import { countWords, getModuleAdditionalInstructions } from "@/lib/format";
-import { modulePath, subjectPath } from "@/lib/routes";
+import { dashboardPath, modulePath, subjectPath } from "@/lib/routes";
 
 export function reorderNoteGroups(items, sourceId, targetId) {
   if (sourceId === targetId) {
@@ -108,7 +108,7 @@ export function useModulePageActions({
         setIsChatOpen(false);
         setIsMetadataOpen(false);
         setIsModuleMetadataOpen(false);
-        navigate(selectedSubjectCode ? subjectPath(selectedSubjectCode) : "/");
+        navigate(selectedSubjectCode ? subjectPath(selectedSubjectCode) : dashboardPath);
       }
     } catch (error) {
       setSidebarError(error.message || "Failed to delete module");
@@ -258,7 +258,7 @@ export function useModulePageActions({
         ? modulePath(selectedSubjectCode, selectedModuleCode)
         : selectedSubjectCode
           ? subjectPath(selectedSubjectCode)
-          : "/"
+          : dashboardPath
     );
   };
 

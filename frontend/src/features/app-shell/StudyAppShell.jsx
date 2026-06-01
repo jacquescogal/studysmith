@@ -3,9 +3,10 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { StudyAppView } from "@/features/app-shell/StudyAppView";
 import { StudyAppAuthActions } from "@/features/app-shell/StudyAppAuthActions";
+import { RequireUsernameDialog } from "@/features/auth/RequireUsernameDialog";
+import { canUseProtectedAppActions } from "@/features/app-shell/appAuthGate";
 import { appShellClasses, generationWorkflowStageLabel, generationWorkflowStatusLabel, generationWorkflowTitle, selectStyles } from "@/features/app-shell/appShellUi";
 import { useAuth } from "@/auth/AuthProvider";
-import { getLocalMailpitUrl } from "@/auth/supabaseClient";
 import { ContextSidebar } from "@/components/layout/ContextSidebar";
 import { useModulePageActions } from "@/features/modules/useModulePageActions";
 import { useReviewWorkflowActions } from "@/features/review/useReviewWorkflowActions";
@@ -15,7 +16,7 @@ import { useStudyAppEffects } from "@/features/app-shell/useStudyAppEffects";
 import { useStudyAppPageActions } from "@/features/app-shell/useStudyAppPageActions";
 import { useStudyAppWorkflowActions } from "@/features/app-shell/useStudyAppWorkflowActions";
 import { shouldBlockForRouteRestore, shouldClearSelectedSubject } from "@/routes/routeRestore";
-import { createNoteGroupPath, matchAppRoute, modulePath, noteGroupPath, subjectPath, conceptPath } from "@/lib/routes";
+import { createNoteGroupPath, dashboardPath, matchAppRoute, modulePath, noteGroupPath, subjectPath, conceptPath } from "@/lib/routes";
 import { countWords, formatAnswerLabels, formatCreatedAt, getModuleAdditionalInstructions, getNoteGroupStatusMeta, normalizeNoteGroups, normalizeTimeline } from "@/lib/format";
 import { buildReviewCard, getMasteryScore, getMasteryTier } from "@/lib/review";
 import { buildConceptDirectoryRows } from "@/lib/conceptDirectory";
@@ -49,22 +50,17 @@ const { panel: panelClass, primaryButton: primaryButtonClass, outlineButton: out
 } = appShellClasses;
 function StudyAppShell({ routePageModels }) {
   const auth = useAuth();
-  const canUseProtectedActions = auth.isAuthenticated;
-  const [authEmail, setAuthEmail] = useState("");
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
   const [authUiError, setAuthUiError] = useState("");
   const [currentUserProfile, setCurrentUserProfile] = useState(null);
   const [currentUserError, setCurrentUserError] = useState("");
+  const canUseProtectedActions = canUseProtectedAppActions(auth, currentUserProfile);
   const { creatorRoleRequesting, handleRequestCreatorRole } = useCreatorRoleRequest({ setAuthMessage, setAuthUiError, setCurrentUserProfile });
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const [isSubjectManagementOpen, setIsSubjectManagementOpen] = useState(false);
-  const handleSubjectsLoadError = useCallback(
-    (error) => showFetchToast(error, "Failed to load subjects"), []
-  );
-  const handleModulesLoadError = useCallback(
-    (error) => showFetchToast(error, "Failed to load modules"), []
-  );
+  const handleSubjectsLoadError = useCallback((error) => showFetchToast(error, "Failed to load subjects"), []);
+  const handleModulesLoadError = useCallback((error) => showFetchToast(error, "Failed to load modules"), []);
   const { subjects, setSubjects } = useSubjects({
     authLoading: auth.loading, isAuthenticated: auth.isAuthenticated, userId: auth.user?.id, onError: handleSubjectsLoadError
   });
@@ -244,13 +240,13 @@ function StudyAppShell({ routePageModels }) {
   );
   const selectedSubjectCodeForActions = selectedSubject?.short_code || routeSubjectCode || "", selectedModuleCodeForActions = selectedModuleForActions?.short_code || routeModuleCode || "";
   const refreshModuleGeneratedDataRef = useRef(() => {}), refreshModuleGenerationWorkflowSnapshotRef = useRef(async () => null), nextReviewCardRef = useRef(() => {}), submitReviewAnswerRef = useRef(() => {}), toggleReviewAnswerRef = useRef(() => {});
-  const isAdmin = currentUserProfile?.app_role === "admin";
+  const isAdmin = canUseProtectedActions && currentUserProfile?.app_role === "admin";
   const canCreateSubjects = Boolean(
-    auth.isAuthenticated && (isAdmin || currentUserProfile?.app_role === "creator")
+    canUseProtectedActions && (isAdmin || currentUserProfile?.app_role === "creator")
   );
   const canMaintainSubject = (subject) =>
     Boolean(
-      auth.isAuthenticated &&
+      canUseProtectedActions &&
         subject &&
         (isAdmin ||
           subject.current_user_access_level === "owner" ||
@@ -258,7 +254,7 @@ function StudyAppShell({ routePageModels }) {
     );
   const canDeleteSubject = (subject) =>
     Boolean(
-      auth.isAuthenticated &&
+      canUseProtectedActions &&
         subject &&
         (isAdmin || subject.current_user_access_level === "owner")
     );
@@ -303,7 +299,7 @@ function StudyAppShell({ routePageModels }) {
     setIsChatOpen(false);
     setIsMetadataOpen(false);
     setIsModuleMetadataOpen(false);
-    navigate("/");
+    navigate(dashboardPath);
   };
   const handleBreadcrumbSubject = () => {
     setSelectedModuleId("");
@@ -314,7 +310,7 @@ function StudyAppShell({ routePageModels }) {
     setIsChatOpen(false);
     setIsMetadataOpen(false);
     setIsModuleMetadataOpen(false);
-    navigate(selectedSubjectCode ? subjectPath(selectedSubjectCode) : "/");
+    navigate(selectedSubjectCode ? subjectPath(selectedSubjectCode) : dashboardPath);
   };
   function handleBreadcrumbModule() {
     const nextSidebarScope = selectedTopicId || sidebarScope === "concepts" ? "concepts" : "note-groups";
@@ -328,7 +324,7 @@ function StudyAppShell({ routePageModels }) {
     navigate(
       selectedSubjectCode && selectedModuleCode
         ? modulePath(selectedSubjectCode, selectedModuleCode)
-        : "/",
+        : dashboardPath,
       { state: { sidebarScope: nextSidebarScope } }
     );
   }
@@ -343,7 +339,7 @@ function StudyAppShell({ routePageModels }) {
           ? noteGroupPath(selectedSubjectCode, selectedModuleCode, selectedNoteGroupCode)
         : selectedSubjectCode && selectedModuleCode
           ? modulePath(selectedSubjectCode, selectedModuleCode)
-          : "/"
+          : dashboardPath
     );
   };
   const { autoJobActionId, autoJobsByNoteGroupId, canEditCurrentCards, canReorderNoteGroups, chatCardCache, chatCardError, chatCardId, chatCardLoading, chatError, chatInput, chatListRef, chatLoading, chatMessages, chatView, chipFilterValue, chipOptions, clearMindMapDrilldown, effectiveCleanedText, filteredNoteGroupOptions, filteredStudyCards, focusCardType, focusMasteryScore, focusMasteryTier, focusQuestionCard, formatDueAt, formatReviewAt, generationWorkflowsByNoteGroupId, getSectionAnchor, handleBackToChat, handleCancelAutoJob, handleChatKeyDown, handleChipFilterSelect, handleDeleteAutoJob, handleDeleteModule, handleNoteGroupDragEnd, handleNoteGroupDragEnter, handleNoteGroupDragOver, handleNoteGroupDragStart, handleNoteGroupDrop, handleOpenMindMapTopic, handleResetChipFilters, handleRetryAutoJob, handleSaveModuleMetadata, handleSendChat, isSourceReady, metadataTitleDraft, moduleGenerationWorkflow, moduleGenerationWorkflowConnection, moduleGenerationWorkflowError, moduleNoteGroupStatsById, moduleNoteGroupsForDisplay, noteGroupCardTable, noteGroupCardTableError, noteGroupCardTableLoading, noteGroupChipIds, noteGroupMindMap, noteGroupMindMapError, noteGroupMindMapGenerating, noteGroupMindMapLoading, noteGroupProgress, noteGroupProgressError, noteGroupProgressLoading, noteGroupStats, noteGroupStatusMeta, openChatStudyCard, openModuleMetadataModal, pinnedSourceRanges, pinnedStudyCard, questionCardError, questionCards, questionCardsForDisplay, questionJobStatus, questionTimeline, readingAvailable, readingHighlights, refreshModuleGeneratedData, refreshModuleGenerationWorkflowSnapshot, resolveNoteGroupLabel, reviewRefsMessage, sectionNavItems, selectedModule, selectedModuleCode, selectedNoteGroup, selectedNoteGroupCode, selectedNoteGroupWorkflow, selectedSubjectCode, selectedTopic, selectedTopicCode, setChatInput, setMetadataTitleDraft, setNoteGroupCardTable, setNoteGroupChipIds, setNoteGroupMindMap, setNoteGroupMindMapError, setNoteGroupMindMapGenerating, setQuestionCardError, setQuestionCards, setQuestionJobStatus, setStudyCardError, setStudyCards, setTopicDescriptionDraft, setTopicTitleDraft, shouldHoldSelectedNoteGroupContent, sidebarTopicOptions, sourceRangesByCardId, studyCardError, studyCardTitleById, studyCards, studyNoteGroups, studyNoteSections, studySourceNoteGroups, topicCardTableRows, topicDescriptionDraft, topicMindMap, topicMindMapError, topicMindMapLoading, topicTitleDraft, topicUnlinkedQuestionCount, visibleStudyCardOrder } = useStudyAppEffects({
@@ -540,7 +536,6 @@ function StudyAppShell({ routePageModels }) {
     handleSelectNoteGroup,
     handleSelectSubject,
     handleSelectTopic,
-    handleSignIn,
     handleSignOut,
     handleStartAutoNoteGroup,
     handleSubjectUpdated,
@@ -550,7 +545,7 @@ function StudyAppShell({ routePageModels }) {
     navigateToNoteGroup,
     navigateToTopic,
     openSubjectMetadataModal
-  } = useStudyAppWorkflowActions({ activeSourceRangeIndex, attachConcepts, auth, authEmail, authSubmitting, autoAdditionalInstructions, autoCreateNoteGroup, autoRawText, canCreateSubjects, canDeleteSubject, canMaintainSubject, canManageSelectedSubject, canUseProtectedActions, checkNoteGroupSource, conceptPath, countWords, createConcept, createModule, createNoteGroupPath, createSubject, deleteSubject, detachConcept, generateUniqueId, getLocalMailpitUrl, getModuleAdditionalInstructions, getNoteGroup, handleBreadcrumbModule, isQuestionPage, isStudyPage, isViewCardsPage, moduleChipDescription, moduleChipLabel, modulePath, moduleWizardCreating, moduleWizardGoal, moduleWizardInput, moduleWizardLoading, moduleWizardMessages, moduleWizardScope, moduleWizardTitle, modules, navigate, newSubjectDescription, newSubjectTitle, noteGroupNeedsReviewRegenerating, noteGroupPath, noteGroupSource, noteGroups, pollJob, readingContentRef, readingHoverCardId, readingMode, readingPinnedCardId, refreshModuleGeneratedData: (...args) => refreshModuleGeneratedDataRef.current(...args), refreshModuleGenerationWorkflowSnapshot: (...args) => refreshModuleGenerationWorkflowSnapshotRef.current(...args), regenerateNoteGroupNeedsReviewKnowledgeNodes, requestConfirm, routePanel, selectedModule: selectedModuleForActions, selectedModuleCode: selectedModuleCodeForActions, selectedModuleId, selectedNoteGroup: selectedNoteGroupForActions, selectedNoteGroupId, selectedNoteGroupIdRef, selectedSubject, selectedSubjectCode: selectedSubjectCodeForActions, selectedSubjectId, selectedTopic: selectedTopicForActions, selectedTopicId, sendModuleIntentChat, sendSubjectIntentChat, setActiveSourceRangeIndex, setAuthMessage, setAuthSubmitting, setAuthUiError, setAutoAdditionalInstructions, setAutoCreateError, setAutoCreateLoading, setAutoRawText, setChipFilterIds, setCurrentUserProfile, setEditingSubjectId, setIsAdminPanelOpen, setIsChatOpen, setIsMetadataOpen, setIsModuleMetadataOpen, setIsModuleWizardOpen, setIsSubjectManagementOpen, setIsSubjectMetadataOpen, setIsSubjectWizardOpen, setMetadataError, setMetadataSaving, setMindMapRefreshToken, setModuleChipDescription, setModuleChipLabel, setModuleWizardCreating, setModuleWizardError, setModuleWizardGoal, setModuleWizardInput, setModuleWizardLoading, setModuleWizardMessages, setModuleWizardScope, setModuleWizardTitle, setModules, setNewSubjectDescription, setNewSubjectTitle, setNoteGroupMode, setNoteGroupNeedsReviewRegenerating, setNoteGroupSearch, setNoteGroupSource, setNoteGroups, setReadingHoverCardId, setReadingMode, setReadingPinnedCardId, setReviewSummary, setSelectedModuleId, setSelectedNoteGroupId, setSelectedSubjectId, setSelectedTopicId, setSidebarError, setSidebarScope, setSourceCheckError, setSourceChecked, setSourceChecking, setSourceConfirmed, setSourceDuplicateCount, setSourceDuplicates, setSubjectGoalDraft, setSubjectMetadataError, setSubjectMetadataSaving, setSubjectScopeDraft, setSubjectTitleDraft, setSubjectWizardCreating, setSubjectWizardError, setSubjectWizardGoal, setSubjectWizardInput, setSubjectWizardLoading, setSubjectWizardMessages, setSubjectWizardScope, setSubjectWizardTitle, setSubjects, setTopicChips, sourceConfirmed, studyNoteSections, subjectGoalDraft, subjectPath, subjectScopeDraft, subjectTitleDraft, subjectWizardCreating, subjectWizardGoal, subjectWizardInput, subjectWizardLoading, subjectWizardMessages, subjectWizardScope, subjectWizardTitle, subjects, toast, topicChips, updateSubject, visibleStudyCardOrder });
+  } = useStudyAppWorkflowActions({ activeSourceRangeIndex, attachConcepts, auth, autoAdditionalInstructions, autoCreateNoteGroup, autoRawText, canCreateSubjects, canDeleteSubject, canMaintainSubject, canManageSelectedSubject, canUseProtectedActions, checkNoteGroupSource, conceptPath, countWords, createConcept, createModule, createNoteGroupPath, createSubject, dashboardPath, deleteSubject, detachConcept, generateUniqueId, getModuleAdditionalInstructions, getNoteGroup, handleBreadcrumbModule, isQuestionPage, isStudyPage, isViewCardsPage, moduleChipDescription, moduleChipLabel, modulePath, moduleWizardCreating, moduleWizardGoal, moduleWizardInput, moduleWizardLoading, moduleWizardMessages, moduleWizardScope, moduleWizardTitle, modules, navigate, newSubjectDescription, newSubjectTitle, noteGroupNeedsReviewRegenerating, noteGroupPath, noteGroupSource, noteGroups, pollJob, readingContentRef, readingHoverCardId, readingMode, readingPinnedCardId, refreshModuleGeneratedData: (...args) => refreshModuleGeneratedDataRef.current(...args), refreshModuleGenerationWorkflowSnapshot: (...args) => refreshModuleGenerationWorkflowSnapshotRef.current(...args), regenerateNoteGroupNeedsReviewKnowledgeNodes, requestConfirm, routePanel, selectedModule: selectedModuleForActions, selectedModuleCode: selectedModuleCodeForActions, selectedModuleId, selectedNoteGroup: selectedNoteGroupForActions, selectedNoteGroupId, selectedNoteGroupIdRef, selectedSubject, selectedSubjectCode: selectedSubjectCodeForActions, selectedSubjectId, selectedTopic: selectedTopicForActions, selectedTopicId, sendModuleIntentChat, sendSubjectIntentChat, setActiveSourceRangeIndex, setAuthMessage, setAuthSubmitting, setAuthUiError, setAutoAdditionalInstructions, setAutoCreateError, setAutoCreateLoading, setAutoRawText, setChipFilterIds, setCurrentUserProfile, setEditingSubjectId, setIsAdminPanelOpen, setIsChatOpen, setIsMetadataOpen, setIsModuleMetadataOpen, setIsModuleWizardOpen, setIsSubjectManagementOpen, setIsSubjectMetadataOpen, setIsSubjectWizardOpen, setMetadataError, setMetadataSaving, setMindMapRefreshToken, setModuleChipDescription, setModuleChipLabel, setModuleWizardCreating, setModuleWizardError, setModuleWizardGoal, setModuleWizardInput, setModuleWizardLoading, setModuleWizardMessages, setModuleWizardScope, setModuleWizardTitle, setModules, setNewSubjectDescription, setNewSubjectTitle, setNoteGroupMode, setNoteGroupNeedsReviewRegenerating, setNoteGroupSearch, setNoteGroupSource, setNoteGroups, setReadingHoverCardId, setReadingMode, setReadingPinnedCardId, setReviewSummary, setSelectedModuleId, setSelectedNoteGroupId, setSelectedSubjectId, setSelectedTopicId, setSidebarError, setSidebarScope, setSourceCheckError, setSourceChecked, setSourceChecking, setSourceConfirmed, setSourceDuplicateCount, setSourceDuplicates, setSubjectGoalDraft, setSubjectMetadataError, setSubjectMetadataSaving, setSubjectScopeDraft, setSubjectTitleDraft, setSubjectWizardCreating, setSubjectWizardError, setSubjectWizardGoal, setSubjectWizardInput, setSubjectWizardLoading, setSubjectWizardMessages, setSubjectWizardScope, setSubjectWizardTitle, setSubjects, setTopicChips, sourceConfirmed, studyNoteSections, subjectGoalDraft, subjectPath, subjectScopeDraft, subjectTitleDraft, subjectWizardCreating, subjectWizardGoal, subjectWizardInput, subjectWizardLoading, subjectWizardMessages, subjectWizardScope, subjectWizardTitle, subjects, toast, topicChips, updateSubject, visibleStudyCardOrder });
   const { cancelReviewDelete, closeQuestionFocus, confirmReviewDelete, endReview, executeReviewDelete, handleBackToReviewChat, handleReviewChatKeyDown, handleSendReviewChat, nextReviewCard, openQuestionFocus, openReviewStudyCard, requestReviewDelete, startReview, submitReviewAnswer, toggleReviewAnswer, toggleReviewExplanation } = useReviewWorkflowActions({ buildReviewCard, canUseProtectedActions, currentReviewCard, deleteQuestionCard, formatAnswerLabels, getStudyCard, includeDescendantStudyCards, listConceptReviewQuestionCards, listModuleReviewQuestionCards, listReviewQuestionCards, requestConfirm, reviewAnswer, reviewChatCardCache, reviewChatInput, reviewChatLoading, reviewChatMessages, reviewCount, reviewDeleteLoading, reviewFeedback, reviewIndex, reviewMode, reviewNoteGroupId, reviewQuestionCard, reviewQueue, reviewScope, reviewStartTime, reviewStats, selectedModuleId, selectedNoteGroupId, selectedTopicId, sendChat, setFocusQuestionCardId, setIsQuestionFocusOpen, setIsReviewing, setQuestionCards, setReviewAnswer, setReviewChatCardCache, setReviewChatCardError, setReviewChatCardId, setReviewChatCardLoading, setReviewChatError, setReviewChatInput, setReviewChatLoading, setReviewChatMessages, setReviewChatView, setReviewDeleteLoading, setReviewDeleteStep, setReviewError, setReviewExplanationOpen, setReviewFeedback, setReviewIndex, setReviewMode, setReviewQueue, setReviewRefreshToken, setReviewScope, setReviewStartTime, setReviewStats, setReviewSummary });
   nextReviewCardRef.current = nextReviewCard; submitReviewAnswerRef.current = submitReviewAnswer; toggleReviewAnswerRef.current = toggleReviewAnswer;
   const {
@@ -645,9 +640,10 @@ function StudyAppShell({ routePageModels }) {
     />
   ) : null;
   const authActions = (
-    <StudyAppAuthActions auth={auth} authEmail={authEmail} authMessage={authMessage} authSubmitting={authSubmitting} authUiError={authUiError} canManageSelectedSubject={canManageSelectedSubject} currentUserError={currentUserError} currentUserProfile={currentUserProfile} creatorRoleRequesting={creatorRoleRequesting} handleRequestCreatorRole={handleRequestCreatorRole} handleSignIn={handleSignIn} handleSignOut={handleSignOut} isAdmin={isAdmin} isAdminPanelOpen={isAdminPanelOpen} isSubjectManagementOpen={isSubjectManagementOpen} setAuthEmail={setAuthEmail} setIsAdminPanelOpen={setIsAdminPanelOpen} setIsSubjectManagementOpen={setIsSubjectManagementOpen} />
+    <StudyAppAuthActions auth={auth} authMessage={authMessage} authSubmitting={authSubmitting} authUiError={authUiError} canManageSelectedSubject={canManageSelectedSubject} canUseProtectedActions={canUseProtectedActions} currentUserError={currentUserError} currentUserProfile={currentUserProfile} creatorRoleRequesting={creatorRoleRequesting} handleRequestCreatorRole={handleRequestCreatorRole} handleSignOut={handleSignOut} isAdmin={isAdmin} isAdminPanelOpen={isAdminPanelOpen} isSubjectManagementOpen={isSubjectManagementOpen} setIsAdminPanelOpen={setIsAdminPanelOpen} setIsSubjectManagementOpen={setIsSubjectManagementOpen} />
   );
-  return <StudyAppView model={{
+  return <>
+    <StudyAppView model={{
     activeSourceRangeIndex, authActions,
     autoAdditionalInstructions,
     autoCreateError,
@@ -993,6 +989,8 @@ function StudyAppShell({ routePageModels }) {
     topicTitleDraft,
     topicUnlinkedQuestionCount,
     wizardChatRef
-  }} />;
+    }} />
+    <RequireUsernameDialog open={Boolean(auth.isAuthenticated && currentUserProfile && !currentUserProfile.username)} profile={currentUserProfile} onUpdated={setCurrentUserProfile} onSignOut={handleSignOut} signOutError={authUiError} signOutSubmitting={authSubmitting} />
+  </>;
 }
 export { StudyAppShell };

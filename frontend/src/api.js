@@ -95,6 +95,34 @@ export function getCurrentUser() {
   return request("/me");
 }
 
+export function registerWithPassword(payload) {
+  return request("/auth/register", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function loginWithPassword(payload) {
+  return request("/auth/login", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function forgotPassword(email) {
+  return request("/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ email })
+  });
+}
+
+export function updateUsername(username) {
+  return request("/auth/update-username", {
+    method: "POST",
+    body: JSON.stringify({ username })
+  });
+}
+
 export function requestCreatorRole() {
   return request("/me/creator-role-request", {
     method: "POST"

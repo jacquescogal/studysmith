@@ -13,6 +13,8 @@ import {
   ConceptQuestionCardsPage,
   ConceptStudyCardsPage,
   ConceptMindMapPage,
+  ForgotPasswordRoutePage,
+  LoginLandingRoutePage,
   ModuleCardsPage,
   ModuleMindMapPage,
   ModuleStudyPage,
@@ -22,8 +24,10 @@ import {
   NoteGroupStudyPage,
   NoteGroupQuestionCardsPage,
   NoteGroupStudyCardsPage,
+  RegisterRoutePage,
   SubjectIndexPage,
-  SubjectModulesPage
+  SubjectModulesPage,
+  UpdatePasswordRoutePage
 } from "./pages";
 
 const defaultRenderAppShell = () => null;
@@ -69,6 +73,36 @@ export function createAppRouteObjects(renderAppShell = defaultRenderAppShell) {
   return [
     {
       path: "/",
+      children: [
+        {
+          index: true,
+          id: "login-landing",
+          element: <LoginLandingRoutePage />
+        },
+        {
+          path: "register",
+          id: "register",
+          element: <RegisterRoutePage />
+        },
+        {
+          path: "forgot-password",
+          id: "forgot-password",
+          element: <ForgotPasswordRoutePage />
+        },
+        {
+          path: "account/update-password",
+          id: "update-password",
+          element: <UpdatePasswordRoutePage />
+        },
+        {
+          path: "*",
+          id: "fallback",
+          element: <LoginLandingRoutePage />
+        }
+      ]
+    },
+    {
+      path: "/app",
       id: "app-root",
       element: <AppRouteRootLayout />,
       children: [
@@ -78,7 +112,7 @@ export function createAppRouteObjects(renderAppShell = defaultRenderAppShell) {
           element: page(SubjectIndexPage, renderAppShell)
         },
         {
-          path: "app/subject/:subjectCode",
+          path: "subject/:subjectCode",
           id: "subject-layout",
           element: <SubjectLayout />,
           children: [
@@ -172,7 +206,7 @@ export function createAppRouteObjects(renderAppShell = defaultRenderAppShell) {
         },
         {
           path: "*",
-          id: "fallback",
+          id: "app-fallback",
           element: page(SubjectIndexPage, renderAppShell)
         }
       ]

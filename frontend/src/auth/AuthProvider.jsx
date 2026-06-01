@@ -15,6 +15,26 @@ export function createSupabaseAccessTokenProvider(supabase) {
   };
 }
 
+export async function installSupabasePasswordSession(supabase, sessionPayload) {
+  if (!supabase) {
+    throw new Error("Supabase authentication is not configured");
+  }
+  const authSession = sessionPayload?.session || sessionPayload;
+  const accessToken = String(authSession?.access_token || "").trim();
+  const refreshToken = String(authSession?.refresh_token || "").trim();
+  if (!accessToken || !refreshToken) {
+    throw new Error("Password session requires access and refresh tokens");
+  }
+  const { data, error } = await supabase.auth.setSession({
+    access_token: accessToken,
+    refresh_token: refreshToken
+  });
+  if (error) {
+    throw error;
+  }
+  return data?.session || null;
+}
+
 export function AuthProvider({ children }) {
   const isConfigured = isSupabaseConfigured();
   const supabase = useMemo(() => getSupabaseClient(), []);
@@ -78,6 +98,20 @@ export function AuthProvider({ children }) {
       loading,
       session,
       user: session?.user || null,
+      async installPasswordSession(sessionPayload) {
+        const nextSession = await installSupabasePasswordSession(supabase, sessionPayload);
+        setSession(nextSession);
+        return nextSession;
+      },
+      async updatePassword(password) {
+        if (!supabase) {
+          throw new Error("Supabase authentication is not configured");
+        }
+        const { error: updateError } = await supabase.auth.updateUser({ password });
+        if (updateError) {
+          throw updateError;
+        }
+      },
       async signInWithEmail(email) {
         if (!supabase) {
           throw new Error("Supabase authentication is not configured");

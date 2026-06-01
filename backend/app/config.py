@@ -45,6 +45,7 @@ class Settings:
     supabase_jwks_url = _get_env("SUPABASE_JWKS_URL", "")
     supabase_jwt_issuer = _get_env("SUPABASE_JWT_ISSUER", "")
     supabase_jwt_audience = _get_env("SUPABASE_JWT_AUDIENCE", "authenticated")
+    frontend_base_url = _get_env("FRONTEND_BASE_URL", "http://localhost:5173")
     admin_emails = _get_csv_set("ADMIN_EMAILS")
 
 

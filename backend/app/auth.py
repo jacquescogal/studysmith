@@ -9,7 +9,14 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import get_db
-from app.models import APP_ROLE_ADMIN, APP_ROLE_CREATOR, APP_ROLE_READER, User
+from app.models import (
+    APP_ROLE_ADMIN,
+    APP_ROLE_CREATOR,
+    APP_ROLE_READER,
+    PendingRegistration,
+    User,
+    UsernameReservation,
+)
 
 SUPABASE_JWT_ALGORITHMS = ["ES256", "RS256"]
 
@@ -91,9 +98,39 @@ def get_or_create_user_from_claims(
     if existing_email_owner:
         raise _email_collision()
 
+    pending_registration = (
+        db.query(PendingRegistration)
+        .filter(PendingRegistration.email == email)
+        .one_or_none()
+    )
     role = APP_ROLE_ADMIN if email in (admin_emails or settings.admin_emails) else APP_ROLE_READER
-    user = User(supabase_user_id=supabase_user_id, email=email, app_role=role)
+    user = User(
+        supabase_user_id=supabase_user_id,
+        email=email,
+        username=pending_registration.username if pending_registration else None,
+        username_normalized=(
+            pending_registration.username_normalized if pending_registration else None
+        ),
+        app_role=role,
+    )
     db.add(user)
+    if pending_registration:
+        if pending_registration.username_normalized:
+            reservation = (
+                db.query(UsernameReservation)
+                .filter(
+                    UsernameReservation.username_normalized
+                    == pending_registration.username_normalized
+                )
+                .one_or_none()
+            )
+            if reservation is None:
+                db.add(
+                    UsernameReservation(
+                        username_normalized=pending_registration.username_normalized
+                    )
+                )
+        db.delete(pending_registration)
     try:
         db.commit()
         db.refresh(user)

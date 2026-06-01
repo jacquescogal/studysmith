@@ -1,3 +1,7 @@
+import { ForgotPasswordPage as AuthForgotPasswordPage } from "@/features/auth/ForgotPasswordPage";
+import { LoginLandingPage as AuthLoginLandingPage } from "@/features/auth/LoginLandingPage";
+import { RegisterPage as AuthRegisterPage } from "@/features/auth/RegisterPage";
+import { UpdatePasswordPage as AuthUpdatePasswordPage } from "@/features/auth/UpdatePasswordPage";
 import { useConceptPageModel } from "@/features/concepts/useConceptPageModel";
 import { useModulePageModel } from "@/features/modules/useModulePageModel";
 import { useNoteGroupPageModel } from "@/features/note-groups/useNoteGroupPageModel";
@@ -15,8 +19,26 @@ function AppShellRoutePage({ renderAppShell }) {
   return renderAppShell({ routePageModels });
 }
 
+// App-shell route pages are route metadata shims. The StudyAppShell reads the
+// current URL and renders the active module, note group, or Concept surface.
 export function ModuleWorkspacePage(props) {
   return <AppShellRoutePage {...props} />;
+}
+
+export function LoginLandingRoutePage() {
+  return <AuthLoginLandingPage />;
+}
+
+export function RegisterRoutePage() {
+  return <AuthRegisterPage />;
+}
+
+export function ForgotPasswordRoutePage() {
+  return <AuthForgotPasswordPage />;
+}
+
+export function UpdatePasswordRoutePage() {
+  return <AuthUpdatePasswordPage />;
 }
 
 export function SubjectIndexPage(props) {

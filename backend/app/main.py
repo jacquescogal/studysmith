@@ -43,7 +43,8 @@ from app.access import (
     READABLE_NOTE_GROUP_GENERATION_STATUSES,
     subject_access_level,
 )
-from app.auth import optional_user, require_admin, require_creator, require_user
+from app.auth import get_or_create_user_from_claims, optional_user, require_admin, require_creator, require_user
+from app.config import settings
 from app.auto_queue import enqueue_auto_job, remove_auto_job, resume_auto_jobs, start_auto_worker
 from app.generation_events import generation_event_bus
 from app.generation_workflow import (
@@ -84,6 +85,7 @@ from app.models import (
     NoteGroupMindMapConcept,
     NoteGroup,
     NoteGroupShortCode,
+    PendingRegistration,
     QuestionCard,
     QuestionCardLearningState,
     QuestionCardReviewEvent,
@@ -109,6 +111,7 @@ from app.models import (
     TopicChip,
     TopicChipShortCode,
     User,
+    UsernameReservation,
     note_group_topic_chips,
     study_card_topic_chips,
 )
@@ -122,6 +125,8 @@ from app.short_codes import (
     ensure_topic_chip_short_code,
     ensure_topic_chip_short_codes,
 )
+from app.supabase_auth_client import SupabaseAuthClient, get_supabase_auth_client
+from app.username import normalize_username, validate_username
 from app.fsrs_utils import initialize_question_card, review_question_card
 from app.progress import build_note_group_progress, build_question_card_performance
 from app.openai_client import (
@@ -131,14 +136,21 @@ from app.openai_client import (
     generate_module_intent_response,
     generate_subject_intent_response,
 )
+from app.password_policy import PASSWORD_POLICY_MESSAGE, password_meets_policy
 from app.vector_store import (
     delete_study_card_embeddings,
     query_study_card_embeddings,
     upsert_study_card_embedding,
 )
 from app.schemas import (
+    AuthLoginOut,
+    AuthLoginPayload,
+    AuthMessageOut,
+    AuthRegisterPayload,
+    AuthSessionOut,
     ChatRequest,
     ChatResponse,
+    ForgotPasswordPayload,
     AppRouteContext,
     IntentChatRequest,
     IntentChatResponse,
@@ -187,6 +199,7 @@ from app.schemas import (
     TopicChipAttach,
     TopicChipCreate,
     TopicChipOut,
+    UsernameUpdatePayload,
     UserOut,
     UserRoleUpdate,
 )
@@ -333,6 +346,108 @@ def _ensure_user_creator_role_request_columns(target_engine=engine) -> None:
                 conn.commit()
 
 
+def _ensure_user_username_columns(target_engine=engine) -> None:
+    if target_engine.url.get_backend_name() != "sqlite":
+        return
+    with target_engine.connect() as conn:
+        columns = {row[1] for row in conn.execute(text("PRAGMA table_info(users)"))}
+        if "username" not in columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN username VARCHAR"))
+        if "username_normalized" not in columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN username_normalized VARCHAR"))
+        indexes = {row[1] for row in conn.execute(text("PRAGMA index_list(users)"))}
+        if "ix_users_username_normalized" not in indexes:
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX ix_users_username_normalized "
+                    "ON users(username_normalized)"
+                )
+            )
+        conn.commit()
+
+
+def _ensure_pending_registration_table(target_engine=engine) -> None:
+    if target_engine.url.get_backend_name() != "sqlite":
+        return
+    with target_engine.connect() as conn:
+        tables = {row[0] for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))}
+        if "pending_registrations" not in tables:
+            conn.execute(
+                text(
+                    "CREATE TABLE pending_registrations ("
+                    "id VARCHAR PRIMARY KEY, "
+                    "email VARCHAR NOT NULL UNIQUE, "
+                    "username VARCHAR NOT NULL, "
+                    "username_normalized VARCHAR NOT NULL UNIQUE, "
+                    "created_at DATETIME, "
+                    "updated_at DATETIME)"
+                )
+            )
+        indexes = {
+            row[1]
+            for row in conn.execute(text("PRAGMA index_list(pending_registrations)"))
+        }
+        if "ix_pending_registrations_email" not in indexes:
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX ix_pending_registrations_email "
+                    "ON pending_registrations(email)"
+                )
+            )
+        if "ix_pending_registrations_username_normalized" not in indexes:
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX ix_pending_registrations_username_normalized "
+                    "ON pending_registrations(username_normalized)"
+                )
+            )
+        conn.commit()
+
+
+def _ensure_username_reservation_table(target_engine=engine) -> None:
+    if target_engine.url.get_backend_name() != "sqlite":
+        return
+    with target_engine.connect() as conn:
+        tables = {
+            row[0]
+            for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+        }
+        if "username_reservations" not in tables:
+            conn.execute(
+                text(
+                    "CREATE TABLE username_reservations ("
+                    "username_normalized VARCHAR NOT NULL PRIMARY KEY, "
+                    "created_at DATETIME, "
+                    "updated_at DATETIME)"
+                )
+            )
+        indexes = {
+            row[1]
+            for row in conn.execute(text("PRAGMA index_list(username_reservations)"))
+        }
+        if "ix_username_reservations_username_normalized" not in indexes:
+            conn.execute(
+                text(
+                    "CREATE INDEX ix_username_reservations_username_normalized "
+                    "ON username_reservations(username_normalized)"
+                )
+            )
+        conn.execute(
+            text(
+                "INSERT OR IGNORE INTO username_reservations (username_normalized) "
+                "SELECT username_normalized FROM users WHERE username_normalized IS NOT NULL"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT OR IGNORE INTO username_reservations (username_normalized) "
+                "SELECT username_normalized FROM pending_registrations "
+                "WHERE username_normalized IS NOT NULL"
+            )
+        )
+        conn.commit()
+
+
 def _ensure_pgvector_extension(target_engine=engine) -> None:
     if target_engine.url.get_backend_name() != "postgresql":
         return
@@ -388,6 +503,9 @@ _ensure_topic_chip_description_column()
 _ensure_subject_intent_columns()
 _ensure_subject_access_columns()
 _ensure_user_creator_role_request_columns()
+_ensure_user_username_columns()
+_ensure_pending_registration_table()
+_ensure_username_reservation_table()
 
 app = FastAPI(title="Study System API")
 
@@ -398,6 +516,249 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+GENERIC_LOGIN_ERROR = "Invalid username/email or password"
+REGISTER_SUCCESS_MESSAGE = "Check your email to confirm your account."
+
+
+def _normalize_email(value: str) -> str:
+    email = str(value or "").strip().lower()
+    if "@" not in email:
+        raise HTTPException(status_code=400, detail="Valid email is required")
+    return email
+
+
+def _auth_session_from_supabase(data: dict) -> AuthSessionOut:
+    access_token = data.get("access_token")
+    refresh_token = data.get("refresh_token")
+    if not access_token or not refresh_token:
+        raise HTTPException(status_code=401, detail=GENERIC_LOGIN_ERROR)
+    return AuthSessionOut(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_in=data.get("expires_in"),
+        token_type=data.get("token_type") or "bearer",
+    )
+
+
+def _frontend_auth_redirect(path: str) -> str:
+    return f"{settings.frontend_base_url.rstrip('/')}/{path.lstrip('/')}"
+
+
+def _registration_username_taken(db: Session, username_normalized: str) -> bool:
+    return bool(
+        db.query(UsernameReservation)
+        .filter(UsernameReservation.username_normalized == username_normalized)
+        .one_or_none()
+        or db.query(User)
+        .filter(User.username_normalized == username_normalized)
+        .one_or_none()
+        or db.query(PendingRegistration)
+        .filter(PendingRegistration.username_normalized == username_normalized)
+        .one_or_none()
+    )
+
+
+@app.post("/auth/register", response_model=AuthMessageOut)
+def register_with_password(
+    payload: AuthRegisterPayload,
+    db: Session = Depends(get_db),
+    supabase_auth: SupabaseAuthClient = Depends(get_supabase_auth_client),
+):
+    email = _normalize_email(payload.email)
+    username, username_normalized = validate_username(payload.username)
+    if not password_meets_policy(payload.password):
+        raise HTTPException(status_code=400, detail=PASSWORD_POLICY_MESSAGE)
+
+    email_seen = (
+        db.query(User).filter(User.email == email).one_or_none()
+        or db.query(PendingRegistration).filter(PendingRegistration.email == email).one_or_none()
+    )
+    if email_seen:
+        return {"message": REGISTER_SUCCESS_MESSAGE}
+
+    if _registration_username_taken(db, username_normalized):
+        raise HTTPException(status_code=409, detail="Username is already taken")
+
+    db.add_all(
+        [
+            UsernameReservation(username_normalized=username_normalized),
+            PendingRegistration(
+                email=email,
+                username=username,
+                username_normalized=username_normalized,
+            ),
+        ]
+    )
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        email_taken = (
+            db.query(User).filter(User.email == email).one_or_none()
+            or db.query(PendingRegistration).filter(PendingRegistration.email == email).one_or_none()
+        )
+        if email_taken:
+            return {"message": REGISTER_SUCCESS_MESSAGE}
+        if _registration_username_taken(db, username_normalized):
+            raise HTTPException(status_code=409, detail="Username is already taken") from exc
+        return {"message": REGISTER_SUCCESS_MESSAGE}
+
+    try:
+        supabase_auth.sign_up(email=email, password=payload.password)
+    except ValueError as exc:
+        try:
+            cleanup_registration = (
+                db.query(PendingRegistration)
+                .filter(
+                    PendingRegistration.email == email,
+                    PendingRegistration.username_normalized == username_normalized,
+                )
+                .one_or_none()
+            )
+            if cleanup_registration:
+                db.delete(cleanup_registration)
+            cleanup_reservation = (
+                db.query(UsernameReservation)
+                .filter(UsernameReservation.username_normalized == username_normalized)
+                .one_or_none()
+            )
+            if cleanup_reservation:
+                db.delete(cleanup_reservation)
+            if cleanup_registration or cleanup_reservation:
+                db.commit()
+        except Exception:
+            db.rollback()
+        raise HTTPException(status_code=400, detail="Registration failed") from exc
+    return {"message": REGISTER_SUCCESS_MESSAGE}
+
+
+@app.post("/auth/login", response_model=AuthLoginOut)
+def login_with_password(
+    payload: AuthLoginPayload,
+    db: Session = Depends(get_db),
+    supabase_auth: SupabaseAuthClient = Depends(get_supabase_auth_client),
+):
+    identifier = str(payload.identifier or "").strip()
+    is_email_identifier = "@" in identifier
+    if is_email_identifier:
+        email = _normalize_email(identifier)
+        user = None
+    else:
+        username_normalized = normalize_username(identifier)
+        user = (
+            db.query(User)
+            .filter(User.username_normalized == username_normalized)
+            .one_or_none()
+        )
+        pending_registration = None
+        if user is None:
+            pending_registration = (
+                db.query(PendingRegistration)
+                .filter(PendingRegistration.username_normalized == username_normalized)
+                .one_or_none()
+            )
+        email = user.email if user else pending_registration.email if pending_registration else None
+
+    if not email:
+        raise HTTPException(status_code=401, detail=GENERIC_LOGIN_ERROR)
+
+    try:
+        supabase_data = supabase_auth.sign_in_with_password(
+            email=email,
+            password=payload.password,
+        )
+        session = _auth_session_from_supabase(supabase_data)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=GENERIC_LOGIN_ERROR) from exc
+    if user is None:
+        supabase_user = supabase_data.get("user") or {}
+        supabase_user_id = str(supabase_user.get("id") or "").strip()
+        supabase_email = _normalize_email(supabase_user.get("email") or email)
+        try:
+            user = get_or_create_user_from_claims(
+                db,
+                {"sub": supabase_user_id, "email": supabase_email},
+            )
+        except HTTPException as exc:
+            if exc.status_code == 409:
+                raise HTTPException(
+                    status_code=409,
+                    detail="User profile could not be created",
+                ) from exc
+            raise HTTPException(status_code=401, detail=GENERIC_LOGIN_ERROR) from exc
+    return {"session": session, "user": user}
+
+
+@app.post("/auth/forgot-password", response_model=AuthMessageOut)
+def forgot_password(
+    payload: ForgotPasswordPayload,
+    supabase_auth: SupabaseAuthClient = Depends(get_supabase_auth_client),
+):
+    email = _normalize_email(payload.email)
+    redirect_to = _frontend_auth_redirect("/account/update-password")
+    try:
+        supabase_auth.reset_password_for_email(email=email, redirect_to=redirect_to)
+    except ValueError:
+        pass
+    return {"message": "If an account exists for that email, a reset link has been sent."}
+
+
+@app.post("/auth/update-username", response_model=UserOut)
+def update_username(
+    payload: UsernameUpdatePayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    username, username_normalized = validate_username(payload.username)
+    db_current_user = db.query(User).filter(User.id == current_user.id).one_or_none()
+    if db_current_user is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    old_username_normalized = db_current_user.username_normalized
+    if old_username_normalized != username_normalized:
+        db.add(UsernameReservation(username_normalized=username_normalized))
+        try:
+            db.flush()
+        except IntegrityError as exc:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Username is already taken") from exc
+    else:
+        existing_reservation = (
+            db.query(UsernameReservation)
+            .filter(UsernameReservation.username_normalized == username_normalized)
+            .one_or_none()
+        )
+        if existing_reservation is None:
+            db.add(UsernameReservation(username_normalized=username_normalized))
+            try:
+                db.flush()
+            except IntegrityError as exc:
+                db.rollback()
+                raise HTTPException(status_code=409, detail="Username is already taken") from exc
+
+    db_current_user.username = username
+    db_current_user.username_normalized = username_normalized
+    if old_username_normalized and old_username_normalized != username_normalized:
+        pending_uses_old_username = (
+            db.query(PendingRegistration)
+            .filter(PendingRegistration.username_normalized == old_username_normalized)
+            .one_or_none()
+        )
+        old_reservation = (
+            db.query(UsernameReservation)
+            .filter(UsernameReservation.username_normalized == old_username_normalized)
+            .one_or_none()
+        )
+        if old_reservation and not pending_uses_old_username:
+            db.delete(old_reservation)
+    try:
+        db.commit()
+        db.refresh(db_current_user)
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Username is already taken") from exc
+    return db_current_user
 
 
 @app.get("/me", response_model=UserOut)

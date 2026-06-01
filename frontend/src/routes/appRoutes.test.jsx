@@ -1,7 +1,9 @@
 import { matchRoutes } from "react-router-dom";
+import { renderToStaticMarkup } from "react-dom/server";
+import { MemoryRouter } from "react-router-dom";
 import { describe, expect, test } from "vitest";
 
-import { createAppRouteObjects } from "./appRoutes";
+import { AppRoutes, createAppRouteObjects } from "./appRoutes";
 
 const routeIdsFor = (pathname) =>
   (matchRoutes(createAppRouteObjects(), pathname) || []).map((match) => match.route.id);
@@ -23,7 +25,11 @@ const findRouteById = (routes, id) => {
 
 describe("app route tree", () => {
   test.each([
-    ["/", "subject-index"],
+    ["/", "login-landing"],
+    ["/register", "register"],
+    ["/forgot-password", "forgot-password"],
+    ["/account/update-password", "update-password"],
+    ["/app", "subject-index"],
     ["/app/subject/S1", "subject-modules"],
     ["/app/subject/S1/module/M1", "module-default-mind-map"],
     ["/app/subject/S1/module/M1/mind-map", "module-mind-map"],
@@ -109,5 +115,15 @@ describe("app route tree", () => {
     const moduleRoute = findRouteById(createAppRouteObjects(renderAppShell), "module-layout");
 
     expect(moduleRoute?.element.props.renderAppShell).toBe(renderAppShell);
+  });
+
+  test("renders deep app links through the Module layout app shell", () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={["/app/subject/S1/module/M1/note-groups/N1/view-cards"]}>
+        <AppRoutes renderAppShell={() => <span data-app-shell="module-boundary">shell</span>} />
+      </MemoryRouter>
+    );
+
+    expect(html).toContain('data-app-shell="module-boundary"');
   });
 });

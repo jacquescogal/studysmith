@@ -2,37 +2,38 @@ import { Button } from "@/components/ui/button";
 
 export function StudyAppAuthActions({
   auth,
-  authEmail,
   authMessage,
   authSubmitting,
   authUiError,
   canManageSelectedSubject,
+  canUseProtectedActions,
   currentUserError,
   currentUserProfile,
   creatorRoleRequesting,
   handleRequestCreatorRole,
-  handleSignIn,
   handleSignOut,
   isAdmin,
   isAdminPanelOpen,
   isSubjectManagementOpen,
-  setAuthEmail,
   setIsAdminPanelOpen,
   setIsSubjectManagementOpen
 }) {
   const canRequestCreatorRole =
-    currentUserProfile?.app_role === "reader" && !currentUserProfile?.creator_role_requested_at;
+    canUseProtectedActions &&
+    currentUserProfile?.app_role === "reader" &&
+    !currentUserProfile?.creator_role_requested_at;
+  const identity = currentUserProfile?.username || auth.user?.email;
 
   return (
     <div className="flex max-w-sm flex-col items-end gap-2 text-right">
       {auth.isAuthenticated ? (
         <>
-          <div className="text-xs text-muted-foreground">{auth.user?.email}</div>
+          <div className="text-xs text-muted-foreground">{identity}</div>
           <div className="flex flex-wrap justify-end gap-2">
             {canRequestCreatorRole ? (
               <Button
                 type="button"
-                variant="outline"
+                variant="default"
                 size="sm"
                 onClick={handleRequestCreatorRole}
                 disabled={creatorRoleRequesting}
@@ -77,27 +78,15 @@ export function StudyAppAuthActions({
             </Button>
           </div>
           {currentUserProfile?.app_role === "reader" && currentUserProfile?.creator_role_requested_at ? (
-            <p className="text-xs text-muted-foreground">Creator role requested.</p>
+            <p className="text-xs text-muted-foreground">Creator role request pending.</p>
           ) : null}
         </>
-      ) : auth.isConfigured ? (
-        <form className="flex flex-wrap justify-end gap-2" onSubmit={handleSignIn}>
-          <input
-            className="h-9 min-w-48 rounded-md border bg-background px-3 text-sm"
-            type="email"
-            value={authEmail}
-            onChange={(event) => setAuthEmail(event.target.value)}
-            placeholder="Email"
-            disabled={auth.loading || authSubmitting}
-          />
-          <Button type="submit" size="sm" disabled={auth.loading || authSubmitting || !authEmail.trim()}>
-            {authSubmitting ? "Sending..." : "Sign in"}
-          </Button>
-        </form>
       ) : (
-        <p className="max-w-xs text-xs text-muted-foreground">
-          Supabase env vars are required for sign in.
-        </p>
+        <div className="flex justify-end">
+          <Button asChild size="sm">
+            <a href="/">Sign in</a>
+          </Button>
+        </div>
       )}
       {authMessage ? <p className="text-xs text-muted-foreground">{authMessage}</p> : null}
       {authUiError || auth.error ? (

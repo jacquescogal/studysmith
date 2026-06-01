@@ -2,7 +2,7 @@ import { useCallback, useEffect } from "react";
 import { toast } from "sonner";
 import { getConceptMindMap, getCurrentUser, getModuleQuestionTimeline, getStudyCard, listConcepts } from "@/api";
 import { getModuleAdditionalInstructions, normalizeTimeline } from "@/lib/format";
-import { modulePath } from "@/lib/routes";
+import { dashboardPath, modulePath } from "@/lib/routes";
 import { shouldClearSelectedSubject } from "@/routes/routeRestore";
 import { useConceptRouteResolution } from "@/routes/useConceptRouteResolution";
 import { useNoteGroupRouteResolution } from "@/routes/useNoteGroupRouteResolution";
@@ -29,7 +29,7 @@ useEffect(() => {
     setSelectedNoteGroupId("");
     setSelectedTopicId("");
     setNoteGroupMode("overview");
-    navigate("/");
+    navigate(dashboardPath);
   }, [hasAppRouteTarget, navigate, routeSubjectId, selectedSubjectId, subjects]);
   useEffect(() => {
     if (!canManageSelectedSubject) {
@@ -94,7 +94,7 @@ useEffect(() => {
         navigate(
           selectedSubjectCode && selectedModuleCode
             ? modulePath(selectedSubjectCode, selectedModuleCode)
-            : "/"
+            : dashboardPath
         );
       }
     }
@@ -528,6 +528,7 @@ useEffect(() => {
       return;
     }
     let cancelled = false;
+    setCurrentUserProfile(null);
     setCurrentUserError("");
     getCurrentUser()
       .then((profile) => {

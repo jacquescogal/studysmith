@@ -1,3 +1,5 @@
+export const dashboardPath = "/app";
+
 export const subjectPath = (subjectCode) => `/app/subject/${subjectCode}`;
 
 export const modulePath = (subjectCode, moduleCode) =>

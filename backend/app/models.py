@@ -2,6 +2,7 @@ import json
 import uuid
 from datetime import datetime
 
+from fastapi import HTTPException
 from sqlalchemy import (
     and_,
     Boolean,
@@ -19,11 +20,12 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.orm import foreign, relationship
+from sqlalchemy.orm import foreign, relationship, validates
 from pgvector.sqlalchemy import Vector
 
 from app.config import settings
 from app.db import Base
+from app.username import normalize_username, validate_username
 
 DEFAULT_MODULE_SETTINGS = {
     "auto_question_count": 30,
@@ -159,6 +161,10 @@ class User(Base):
     id = Column(String, primary_key=True, default=_uuid)
     supabase_user_id = Column(String, nullable=False, unique=True, index=True)
     email = Column(String, nullable=False, unique=True, index=True)
+    # Display username format is app-validated in app.username; normalized value is
+    # unique-indexed for case-insensitive lookup across SQLite and Postgres.
+    username = Column(String, nullable=True)
+    username_normalized = Column(String, nullable=True, unique=True, index=True)
     app_role = Column(String, nullable=False, default=APP_ROLE_READER)
     creator_role_requested_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -177,6 +183,81 @@ class User(Base):
     )
     question_card_review_events = relationship("QuestionCardReviewEvent", back_populates="user")
     subject_activity_events = relationship("SubjectActivityEvent", back_populates="actor")
+
+    @validates("username")
+    def _validate_username(self, key, value):
+        if value is None:
+            return None
+        display, _ = validate_username(value)
+        return display
+
+    @validates("username_normalized")
+    def _validate_username_normalized(self, key, value):
+        if value is None:
+            return None
+        normalized = normalize_username(value)
+        _, validated_normalized = validate_username(value)
+        if value != normalized or value != validated_normalized:
+            raise HTTPException(
+                status_code=400,
+                detail="Username must be 3-30 characters and use only letters, numbers, and underscores",
+            )
+        return value
+
+
+class PendingRegistration(Base):
+    __tablename__ = "pending_registrations"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    email = Column(String, nullable=False, unique=True, index=True)
+    username = Column(String, nullable=False)
+    username_normalized = Column(String, nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    @validates("email")
+    def _validate_email(self, key, value):
+        return str(value or "").strip().lower()
+
+    @validates("username")
+    def _validate_username(self, key, value):
+        display, _ = validate_username(value)
+        return display
+
+    @validates("username_normalized")
+    def _validate_username_normalized(self, key, value):
+        normalized = normalize_username(value)
+        _, validated_normalized = validate_username(value)
+        if value != normalized or value != validated_normalized:
+            raise HTTPException(
+                status_code=400,
+                detail="Username must be 3-30 characters and use only letters, numbers, and underscores",
+            )
+        return value
+
+
+class UsernameReservation(Base):
+    __tablename__ = "username_reservations"
+
+    username_normalized = Column(String, primary_key=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    @validates("username_normalized")
+    def _validate_username_normalized(self, key, value):
+        if value is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Username must be 3-30 characters and use only letters, numbers, and underscores",
+            )
+        normalized = normalize_username(value)
+        _, validated_normalized = validate_username(value)
+        if value != normalized or value != validated_normalized:
+            raise HTTPException(
+                status_code=400,
+                detail="Username must be 3-30 characters and use only letters, numbers, and underscores",
+            )
+        return value
 
 
 class SubjectAccess(Base):

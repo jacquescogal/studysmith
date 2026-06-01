@@ -6,7 +6,9 @@ from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 class UserOut(BaseModel):
     id: str
+    supabase_user_id: str
     email: str
+    username: Optional[str] = None
     app_role: str
     creator_role_requested_at: Optional[datetime] = None
 
@@ -16,6 +18,41 @@ class UserOut(BaseModel):
 
 class UserRoleUpdate(BaseModel):
     app_role: str
+
+
+class AuthRegisterPayload(BaseModel):
+    email: str
+    username: str
+    password: str
+
+
+class AuthLoginPayload(BaseModel):
+    identifier: str
+    password: str
+
+
+class ForgotPasswordPayload(BaseModel):
+    email: str
+
+
+class UsernameUpdatePayload(BaseModel):
+    username: str
+
+
+class AuthMessageOut(BaseModel):
+    message: str
+
+
+class AuthSessionOut(BaseModel):
+    access_token: str
+    refresh_token: str
+    expires_in: Optional[int] = None
+    token_type: str = "bearer"
+
+
+class AuthLoginOut(BaseModel):
+    session: AuthSessionOut
+    user: UserOut
 
 
 class SubjectAccessOut(BaseModel):

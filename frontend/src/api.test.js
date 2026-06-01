@@ -5,6 +5,7 @@ import {
   approvePublicSubject,
   createSubject,
   deleteSubjectAccess,
+  forgotPassword,
   generateNoteGroupMindMap,
   getCurrentUser,
   getConceptQuestionTimeline,
@@ -21,10 +22,13 @@ import {
   listSubjectActivity,
   listSubjectSharingUsers,
   listSubjects,
+  loginWithPassword,
+  registerWithPassword,
   requestSubjectPublic,
   requestCreatorRole,
   setAccessTokenProvider,
   updateAdminUserRole,
+  updateUsername,
   upsertSubjectAccess
 } from "./api";
 
@@ -271,6 +275,70 @@ describe("API auth headers", () => {
       expect.objectContaining({
         headers: expect.not.objectContaining({
           Authorization: expect.any(String)
+        })
+      })
+    );
+  });
+});
+
+describe("password auth API calls", () => {
+  test("registerWithPassword posts the registration payload", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ id: "user-1" }));
+    const payload = { email: "student@example.com", password: "secret123", username: "student" };
+
+    await registerWithPassword(payload);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/auth/register",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify(payload)
+      })
+    );
+  });
+
+  test("loginWithPassword posts the login payload", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ access_token: "token" }));
+    const payload = { email: "student@example.com", password: "secret123" };
+
+    await loginWithPassword(payload);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/auth/login",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify(payload)
+      })
+    );
+  });
+
+  test("forgotPassword posts the email payload", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ ok: true }));
+
+    await forgotPassword("student@example.com");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/auth/forgot-password",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ email: "student@example.com" })
+      })
+    );
+  });
+
+  test("updateUsername posts with bearer token from the access token provider", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ username: "student" }));
+    setAccessTokenProvider(() => "test-token");
+
+    await updateUsername("student");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/auth/update-username",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ username: "student" }),
+        headers: expect.objectContaining({
+          Authorization: "Bearer test-token"
         })
       })
     );
