@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 from collections import Counter, defaultdict
 from datetime import datetime, timezone, timedelta
@@ -203,6 +204,8 @@ from app.schemas import (
     UserOut,
     UserRoleUpdate,
 )
+
+logger = logging.getLogger(__name__)
 
 MIND_MAP_ACTIVE_JOB_STATUSES = ("queued", "running")
 MIND_MAP_RUNNING_JOB_TIMEOUT = timedelta(minutes=30)
@@ -608,6 +611,7 @@ def register_with_password(
     try:
         supabase_auth.sign_up(email=email, password=payload.password)
     except ValueError as exc:
+        logger.exception("Supabase signup failed for email=%s", email)
         try:
             cleanup_registration = (
                 db.query(PendingRegistration)
@@ -701,6 +705,11 @@ def forgot_password(
     try:
         supabase_auth.reset_password_for_email(email=email, redirect_to=redirect_to)
     except ValueError:
+        logger.exception(
+            "Supabase password reset failed for email=%s redirect_to=%s",
+            email,
+            redirect_to,
+        )
         pass
     return {"message": "If an account exists for that email, a reset link has been sent."}
 

@@ -20,6 +20,7 @@ class FakeSupabaseAuthClient:
         self.logins = []
         self.password_resets = []
         self.fail_signup = False
+        self.fail_password_reset = False
 
     def sign_up(self, *, email, password):
         self.signups.append({"email": email, "password": password})
@@ -41,6 +42,8 @@ class FakeSupabaseAuthClient:
 
     def reset_password_for_email(self, *, email, redirect_to):
         self.password_resets.append({"email": email, "redirect_to": redirect_to})
+        if self.fail_password_reset:
+            raise ValueError("Supabase rejected recovery")
 
 
 def build_client():
@@ -336,6 +339,26 @@ def test_register_signup_failure_returns_controlled_error():
         db.close()
 
 
+def test_register_signup_failure_logs_supabase_error(caplog):
+    client, _, fake_supabase = build_client()
+    fake_supabase.fail_signup = True
+
+    with caplog.at_level("ERROR", logger="app.main"):
+        response = client.post(
+            "/auth/register",
+            json={
+                "email": "new@example.com",
+                "username": "Reader_One",
+                "password": "Secretpass1",
+            },
+        )
+
+    assert response.status_code == 400
+    assert "Supabase signup failed" in caplog.text
+    assert "new@example.com" in caplog.text
+    assert "Supabase rejected signup" in caplog.text
+
+
 def test_login_with_email_creates_confirmed_user_from_pending_registration():
     client, SessionLocal, fake_supabase = build_client()
     db = SessionLocal()
@@ -560,6 +583,25 @@ def test_forgot_password_returns_generic_success_and_records_reset_request():
             "redirect_to": "http://localhost:5173/account/update-password",
         }
     ]
+
+
+def test_forgot_password_failure_logs_supabase_error_but_returns_generic_success(caplog):
+    client, _, fake_supabase = build_client()
+    fake_supabase.fail_password_reset = True
+
+    with caplog.at_level("ERROR", logger="app.main"):
+        response = client.post(
+            "/auth/forgot-password",
+            json={"email": "reader@example.com"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "message": "If an account exists for that email, a reset link has been sent."
+    }
+    assert "Supabase password reset failed" in caplog.text
+    assert "reader@example.com" in caplog.text
+    assert "Supabase rejected recovery" in caplog.text
 
 
 def test_update_username_rejects_duplicate_normalized_username():
