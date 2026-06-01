@@ -22,7 +22,8 @@ frontend/dist/
 .DS_Store
 
 # Tooling
-docs/superpowers/
+docs/
+openspec/
 .superpowers/
 .worktrees/
 
