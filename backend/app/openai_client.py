@@ -28,8 +28,12 @@ STUDY_CARD_CONTEXT_PROMPT = (
 )
 
 QUESTION_SYSTEM_PROMPT = (
-    "Generate assessment questions answerable using the provided Study Cards only. "
-    "Every question must reference which Study Cards support the answer. "
+    "Generate natural, direct assessment questions from the provided Study Cards. "
+    "Use the Study Cards only as hidden source material. "
+    "Do not mention 'study cards', 'provided material', 'the text', or 'the notes' "
+    "in the question prompt or options. "
+    "Ask questions as normal exam or study questions. "
+    "Every question must still include study_card_refs identifying which Study Cards support the answer. "
     "Create MCQ or multi-answer questions. Avoid ambiguity; test understanding. "
     "Prefer scenario-based questions when appropriate. "
     "Focus questions on the module's learning goal and scope. "

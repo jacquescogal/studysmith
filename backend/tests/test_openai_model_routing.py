@@ -88,6 +88,36 @@ class OpenAIResponseRoutingTests(unittest.TestCase):
         self.assertEqual(fake_responses.calls[0]["model"], "strong-model")
         self.assertEqual(fake_responses.calls[0]["reasoning"], {"effort": "medium"})
 
+    def test_question_card_prompt_keeps_source_framing_hidden(self):
+        import app.openai_client as openai_client
+
+        fake_responses = FakeResponses('{"question_cards": []}')
+        openai_client.client = SimpleNamespace(responses=fake_responses)
+        openai_client.settings = SimpleNamespace(
+            openai_weak_model="weak-model",
+            openai_strong_model="strong-model",
+            openai_embedding_model="embedding-model",
+        )
+
+        result = openai_client.generate_question_cards(
+            study_cards=[
+                {
+                    "studyCardId": "card-1",
+                    "title": "Example",
+                    "content": "The service retries transient failures.",
+                }
+            ],
+            existing_questions=[],
+            difficulty="mixed",
+        )
+
+        self.assertEqual(result, [])
+        messages = fake_responses.calls[0]["input"]
+        system_prompt = messages[0]["content"]
+        self.assertIn("Use the Study Cards only as hidden source material", system_prompt)
+        self.assertIn("Do not mention 'study cards'", system_prompt)
+        self.assertIn("Every question must still include study_card_refs", system_prompt)
+
 
 if __name__ == "__main__":
     unittest.main()
