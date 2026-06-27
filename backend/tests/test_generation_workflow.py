@@ -1163,6 +1163,49 @@ class AutoQueueModuleGatingTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_worker_loop_logs_and_continues_after_dequeue_exception(self):
+        import app.auto_queue as auto_queue
+
+        with patch.object(
+            auto_queue,
+            "_dequeue_next_runnable_job",
+            side_effect=[RuntimeError("dequeue exploded"), KeyboardInterrupt()],
+        ), patch.object(auto_queue.logger, "exception") as log_exception, patch.object(
+            auto_queue,
+            "run_auto_note_group_generation",
+        ) as run_auto:
+            with self.assertRaises(KeyboardInterrupt):
+                auto_queue._worker_loop()
+
+        self.assertEqual(run_auto.call_count, 0)
+        self.assertEqual(log_exception.call_count, 1)
+        self.assertIn(
+            "failed while dequeuing next runnable job",
+            log_exception.call_args.args[0],
+        )
+
+    def test_worker_loop_logs_and_continues_after_run_exception(self):
+        import app.auto_queue as auto_queue
+
+        with patch.object(
+            auto_queue,
+            "_dequeue_next_runnable_job",
+            side_effect=["job-123", KeyboardInterrupt()],
+        ), patch.object(
+            auto_queue,
+            "run_auto_note_group_generation",
+            side_effect=RuntimeError("run exploded"),
+        ) as run_auto, patch.object(auto_queue.logger, "exception") as log_exception:
+            with self.assertRaises(KeyboardInterrupt):
+                auto_queue._worker_loop()
+
+        self.assertEqual(run_auto.call_count, 1)
+        self.assertEqual(log_exception.call_count, 1)
+        self.assertIn(
+            "failed while running job",
+            log_exception.call_args.args[0],
+        )
+
 
 class DraftFirstAutoGenerationTests(unittest.TestCase):
     def setUp(self):

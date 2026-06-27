@@ -1,9 +1,12 @@
 from collections import deque
+import logging
 from threading import Condition, Thread
 
 from app.db import SessionLocal
 from app.jobs import JOB_TYPE_NOTE_GROUP_AUTO_GENERATION, run_auto_note_group_generation
 from app.models import Job, Module, NoteGroup
+
+logger = logging.getLogger(__name__)
 
 _queue: deque[str] = deque()
 _queue_set: set[str] = set()
@@ -16,9 +19,12 @@ def start_auto_worker() -> None:
     global _started, _worker_thread
     if _started and _worker_thread is not None and _worker_thread.is_alive():
         return
+    if _worker_thread is not None and not _worker_thread.is_alive():
+        logger.warning("Auto generation worker thread was not alive; starting a replacement thread")
     _started = True
     _worker_thread = Thread(target=_worker_loop, daemon=True)
     _worker_thread.start()
+    logger.info("Auto generation worker thread started")
 
 
 def resume_auto_jobs() -> None:
@@ -37,6 +43,7 @@ def resume_auto_jobs() -> None:
             if job.status == "running":
                 job.status = "queued"
         db.commit()
+        logger.info("Resuming auto generation jobs", extra={"job_count": len(jobs)})
         for job in jobs:
             enqueue_auto_job(job.id)
     finally:
@@ -149,6 +156,7 @@ def _enqueue_persisted_queued_jobs() -> None:
 
     if not job_ids:
         return
+    logger.info("Loaded persisted queued auto generation jobs", extra={"job_count": len(job_ids)})
     with _condition:
         for job_id in job_ids:
             _enqueue_auto_job_unlocked(job_id)
@@ -194,7 +202,13 @@ def _dequeue_next_runnable_job(wait: bool = True) -> str | None:
 
 def _worker_loop() -> None:
     while True:
-        job_id = _dequeue_next_runnable_job(wait=False)
+        try:
+            job_id = _dequeue_next_runnable_job(wait=False)
+        except Exception:
+            logger.exception("Auto generation worker failed while dequeuing next runnable job")
+            with _condition:
+                _condition.wait(timeout=0.25)
+            continue
         if not job_id:
             with _condition:
                 _condition.wait(timeout=0.25)
@@ -203,4 +217,8 @@ def _worker_loop() -> None:
         try:
             run_auto_note_group_generation(job_id)
         except Exception:
+            logger.exception(
+                "Auto generation worker failed while running job",
+                extra={"job_id": job_id},
+            )
             continue
