@@ -1,12 +1,22 @@
 SHELL := /bin/bash
 
-.PHONY: run run-backend run-frontend build run-prod docker-up docker-down supabase-start supabase-stop supabase-status stop status open
+# Pinned Supabase CLI. Bump deliberately; setup.sh reads this value too.
+SUPABASE_CLI_VERSION := 3.2.0
+SUPABASE := npx --yes supabase@$(SUPABASE_CLI_VERSION)
+
+.PHONY: setup test run run-backend run-frontend build run-prod docker-up docker-down supabase-start supabase-stop supabase-status supabase-reset stop status open
+
+setup:
+	@./setup.sh
+
+test:
+	@cd backend && uv run pytest
 
 run:
 	@echo "Starting backend (http://localhost:8000) and frontend (http://localhost:5173)."
 	@echo "Press Ctrl+C to stop both."
 	@set -euo pipefail; \
-	( cd backend && if [ -f .venv/bin/activate ]; then . .venv/bin/activate; fi && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 ) & \
+	( cd backend && uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 ) & \
 	( cd frontend && npm run dev ) & \
 	wait
 
@@ -17,7 +27,7 @@ build:
 
 run-prod:
 	@echo "Starting production server at http://localhost:8000"
-	@cd backend && if [ -f .venv/bin/activate ]; then . .venv/bin/activate; fi && uvicorn app.main:app --host 0.0.0.0 --port 8000
+	@cd backend && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 docker-up:
 	@docker compose up --build
@@ -26,16 +36,19 @@ docker-down:
 	@docker compose down
 
 supabase-start:
-	@npx supabase@latest start
+	@$(SUPABASE) start
 
 supabase-stop:
-	@npx supabase@latest stop
+	@$(SUPABASE) stop
 
 supabase-status:
-	@npx supabase@latest status
+	@$(SUPABASE) status
+
+supabase-reset:
+	@$(SUPABASE) db reset
 
 run-backend:
-	@cd backend && if [ -f .venv/bin/activate ]; then . .venv/bin/activate; fi && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+	@cd backend && uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 run-frontend:
 	@cd frontend && npm run dev
