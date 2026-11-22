@@ -1,0 +1,31 @@
+[project]
+name = "flashcard-study-backend"
+version = "0.1.0"
+description = "FastAPI backend for Flashcard Study"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.136.3",
+    "fsrs>=6.3.1",
+    "httpx>=0.28.1",
+    "openai>=2.38.0",
+    "pgvector>=0.4.2",
+    "psycopg[binary]>=3.3.4",
+    "pydantic>=2.13.4",
+    "pyjwt[crypto]>=2.10.1",
+    "python-dotenv>=1.2.2",
+    "sqlalchemy>=2.0.50",
+    "uvicorn[standard]>=0.48.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
+
+[tool.uv]
+# The backend runs from source (uvicorn app.main:app); it is not an installable package.
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

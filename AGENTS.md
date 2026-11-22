@@ -21,16 +21,19 @@
 
 ## Build, Test, and Development Commands
 Repo root:
+- `make setup` for the guided first-run setup (configures `.env`, starts Supabase, installs deps, runs the app).
+- `make test` to run backend tests.
 - `make run` to run backend on `http://localhost:8000` and frontend on `http://localhost:5173`.
 - `make build` to build the frontend for production.
 - `make run-prod` to serve the built frontend and API from one backend process on `http://localhost:8000`.
 - `docker compose up --build` to run the Docker setup using repo-root `.env`.
 
 Backend (from `backend/`):
-- `python -m venv .venv` and `source .venv/bin/activate` to create/activate a venv.
-- `pip install -r requirements.txt` to install dependencies.
-- `uvicorn app.main:app --reload --port 8000` to run the API.
-- `python -m pytest tests` to run backend tests, if `pytest` is installed in the active environment.
+- Python dependencies are managed with uv (`pyproject.toml` + `uv.lock`); do not use pip or `requirements.txt`.
+- `uv sync` to create `.venv` and install locked dependencies.
+- `uv add <package>` / `uv add --dev <package>` to add dependencies; commit `pyproject.toml` and `uv.lock` together.
+- `uv run uvicorn app.main:app --reload --port 8000` to run the API.
+- `uv run pytest` to run backend tests (or `make test` from the repo root).
 
 Frontend (from `frontend/`):
 - `npm install` to install dependencies.

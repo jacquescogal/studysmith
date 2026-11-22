@@ -15,7 +15,7 @@ COPY frontend/ ./
 RUN npm run build
 
 
-FROM python:3.11-slim AS app
+FROM python:3.12-slim AS app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -26,8 +26,16 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY backend/requirements.txt /app/backend/requirements.txt
-RUN pip install --no-cache-dir -r /app/backend/requirements.txt
+COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /usr/local/bin/uv
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_PROJECT_ENVIRONMENT=/app/backend/.venv
+
+# Install locked dependencies first so this layer caches across code changes.
+COPY backend/pyproject.toml backend/uv.lock backend/.python-version /app/backend/
+RUN cd /app/backend && uv sync --frozen --no-dev --no-install-project
+ENV PATH="/app/backend/.venv/bin:$PATH"
 
 COPY backend /app/backend
 COPY --from=frontend-build /app/frontend/dist /app/frontend/dist
